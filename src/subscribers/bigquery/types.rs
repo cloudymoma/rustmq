@@ -187,7 +187,7 @@ pub enum ConnectionStatus {
 }
 
 /// Metrics collected by the BigQuery subscriber
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriberMetrics {
     /// Total messages received
     pub messages_received: u64,

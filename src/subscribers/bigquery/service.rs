@@ -4,11 +4,10 @@ use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, Semaphore};
-use tokio::time::{interval, sleep, Instant};
+use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -37,7 +36,7 @@ pub struct BigQuerySubscriberService {
 /// Message processor that handles batching and retries
 struct MessageProcessor {
     config: BigQuerySubscriberConfig,
-    bigquery_writer: Arc<dyn BigQueryWriter>,
+    bigquery_writer: Arc<Box<dyn BigQueryWriter>>,
     metrics: Arc<RwLock<SubscriberMetrics>>,
     message_queue: Arc<Mutex<VecDeque<BigQueryMessage>>>,
     active_batches: Arc<DashMap<String, BigQueryBatch>>,
@@ -130,9 +129,12 @@ impl BigQuerySubscriberService {
         let mut message_stream = consumer.start_consuming().await?;
         
         // Create message processor
+        // Create a new BigQuery writer for the processor (since we can't move from self)
+        let bigquery_writer = create_bigquery_writer(self.config.clone()).await?;
+        let bigquery_writer_arc = Arc::new(bigquery_writer);
         let processor = MessageProcessor {
             config: self.config.clone(),
-            bigquery_writer: Arc::from(self.bigquery_writer.as_ref()),
+            bigquery_writer: bigquery_writer_arc,
             metrics: self.metrics.clone(),
             message_queue: self.message_queue.clone(),
             active_batches: self.active_batches.clone(),
@@ -282,7 +284,7 @@ impl BigQuerySubscriberService {
     }
     
     /// Update error metrics
-    async fn update_error_metrics<E: std::fmt::Display>(&self, error: &E) {
+    async fn update_error_metrics<E: std::fmt::Display>(&self, _error: &E) {
         let mut metrics = self.metrics.write();
         metrics.messages_failed += 1;
         
@@ -362,7 +364,7 @@ impl BigQuerySubscriberService {
     
     /// Start health monitor task
     fn start_health_monitor(&self) -> tokio::task::JoinHandle<()> {
-        let health_status = self.health_status.clone();
+        let _health_status = self.health_status.clone();
         
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(30));
@@ -625,7 +627,7 @@ impl MessageProcessor {
                 // TODO: Implement dead letter queue
                 warn!("Dead letter queue not implemented, logging instead");
             }
-            DeadLetterAction::File { path } => {
+            DeadLetterAction::File { path: _ } => {
                 // TODO: Implement file-based dead letter handling
                 warn!("File-based dead letter handling not implemented, logging instead");
             }
