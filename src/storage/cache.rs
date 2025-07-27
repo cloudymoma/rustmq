@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,7 @@ struct CacheEntry {
 
 pub struct LruCache {
     entries: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    order: Arc<RwLock<VecDeque<String>>>,
     max_size_bytes: u64,
     current_size: Arc<parking_lot::Mutex<u64>>,
 }
@@ -23,6 +24,7 @@ impl LruCache {
     pub fn new(max_size_bytes: u64) -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
+            order: Arc::new(RwLock::new(VecDeque::new())),
             max_size_bytes,
             current_size: Arc::new(parking_lot::Mutex::new(0)),
         }
@@ -30,36 +32,18 @@ impl LruCache {
 
     fn evict_if_needed(&self, new_entry_size: u64) -> Result<()> {
         let mut current_size = self.current_size.lock();
-        
-        if *current_size + new_entry_size <= self.max_size_bytes {
-            return Ok(());
-        }
-
-        // Collect candidates for eviction first to minimize lock time
-        let candidates: Vec<(String, std::time::Instant)> = {
-            let entries = self.entries.read();
-            entries
-                .iter()
-                .map(|(k, v)| (k.clone(), v.last_accessed))
-                .collect()
-        };
-
-        // Sort by access time outside the lock
-        let mut sorted_candidates = candidates;
-        sorted_candidates.sort_by_key(|(_, time)| *time);
-
-        // Now evict entries with minimal lock time
         let mut entries = self.entries.write();
-        for (key, _) in sorted_candidates {
-            if *current_size + new_entry_size <= self.max_size_bytes {
+        let mut order = self.order.write();
+
+        while *current_size + new_entry_size > self.max_size_bytes {
+            if let Some(key_to_evict) = order.pop_front() {
+                if let Some(evicted_entry) = entries.remove(&key_to_evict) {
+                    *current_size -= evicted_entry.data.len() as u64;
+                }
+            } else {
                 break;
             }
-            
-            if let Some(entry) = entries.remove(&key) {
-                *current_size -= entry.data.len() as u64;
-            }
         }
-
         Ok(())
     }
 }
@@ -68,10 +52,18 @@ impl LruCache {
 impl Cache for LruCache {
     async fn get(&self, key: &str) -> Result<Option<Bytes>> {
         let mut entries = self.entries.write();
-        
+        let mut order = self.order.write();
+
         if let Some(entry) = entries.get_mut(key) {
             entry.last_accessed = Instant::now();
             entry.access_count += 1;
+
+            // Move the accessed key to the back of the queue
+            if let Some(pos) = order.iter().position(|x| x == key) {
+                order.remove(pos);
+            }
+            order.push_back(key.to_string());
+
             Ok(Some(entry.data.clone()))
         } else {
             Ok(None)
@@ -83,10 +75,13 @@ impl Cache for LruCache {
         self.evict_if_needed(entry_size)?;
 
         let mut entries = self.entries.write();
+        let mut order = self.order.write();
         let mut current_size = self.current_size.lock();
 
         if let Some(old_entry) = entries.get(key) {
             *current_size -= old_entry.data.len() as u64;
+        } else {
+            order.push_back(key.to_string());
         }
 
         let entry = CacheEntry {

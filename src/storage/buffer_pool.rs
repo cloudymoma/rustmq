@@ -64,13 +64,25 @@ impl BufferPool for AlignedBufferPool {
     fn get_aligned_buffer(&self, size: usize) -> Result<Vec<u8>> {
         let class_index = self.size_class_index(size);
         let mut pool = self.pools[class_index].lock();
-        
-        if let Some(buffer) = pool.pop_front() {
+
+        if let Some(mut buffer) = pool.pop_front() {
             if buffer.len() >= size {
+                buffer.truncate(size);
                 return Ok(buffer);
             }
         }
-        
+
+        // If no suitable buffer is found, try the next size class up
+        if class_index + 1 < self.pools.len() {
+            let mut next_pool = self.pools[class_index + 1].lock();
+            if let Some(mut buffer) = next_pool.pop_front() {
+                if buffer.len() >= size {
+                    buffer.truncate(size);
+                    return Ok(buffer);
+                }
+            }
+        }
+
         Ok(self.allocate_aligned(size))
     }
 

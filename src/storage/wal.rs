@@ -65,43 +65,53 @@ impl DirectIOWal {
     }
 
     async fn recover(&mut self) -> Result<()> {
+        const RECOVERY_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4MB buffer
+
         #[cfg(not(feature = "io-uring"))]
         {
             let mut file = self.file.lock().await;
             let file_size = file.metadata().await?.len();
-            if file_size > 0 {
-                let mut buffer = vec![0u8; file_size as usize];
-                file.seek(SeekFrom::Start(0)).await?;
-                file.read_exact(&mut buffer).await?;
-                
-                let mut offset = 0u64;
-                let mut file_offset = 0u64;
-                
-                while file_offset < file_size {
-                    if let Ok(record_size) = self.read_record_size(&buffer[file_offset as usize..]) {
-                        if file_offset + record_size > file_size {
-                            break;
+            if file_size == 0 {
+                return Ok(());
+            }
+
+            file.seek(SeekFrom::Start(0)).await?;
+            let mut buffer = vec![0u8; RECOVERY_BUFFER_SIZE];
+            let mut logical_offset = 0u64;
+            let mut file_offset = 0u64;
+
+            while file_offset < file_size {
+                let bytes_to_read = (file_size - file_offset).min(RECOVERY_BUFFER_SIZE as u64) as usize;
+                let mut read_buffer = &mut buffer[..bytes_to_read];
+                file.read_exact(&mut read_buffer).await?;
+
+                let mut buffer_pos = 0;
+                while buffer_pos < bytes_to_read {
+                    if let Ok(record_size) = self.read_record_size(&read_buffer[buffer_pos..]) {
+                        if buffer_pos + record_size as usize > bytes_to_read {
+                            break; // Incomplete record in buffer
                         }
-                        
+
                         let segment_meta = WalSegmentMetadata {
-                            start_offset: offset,
-                            end_offset: offset + 1,
-                            file_offset,
+                            start_offset: logical_offset,
+                            end_offset: logical_offset + 1,
+                            file_offset: file_offset + buffer_pos as u64,
                             size_bytes: record_size,
                         };
-                        
+
                         self.segments.write().push(segment_meta);
-                        offset += 1;
-                        file_offset += record_size;
+                        logical_offset += 1;
+                        buffer_pos += record_size as usize;
                     } else {
-                        break;
+                        break; // Could not read record size
                     }
                 }
-                
-                self.current_offset.store(offset, Ordering::SeqCst);
+                file_offset += buffer_pos as u64;
             }
+
+            self.current_offset.store(logical_offset, Ordering::SeqCst);
         }
-        
+
         Ok(())
     }
 
