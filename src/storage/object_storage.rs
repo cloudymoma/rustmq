@@ -16,15 +16,30 @@ impl LocalObjectStorage {
         Ok(Self { base_path })
     }
 
-    fn key_to_path(&self, key: &str) -> PathBuf {
-        self.base_path.join(key)
+    fn key_to_path(&self, key: &str) -> Result<PathBuf> {
+        // Sanitize path to prevent traversal attacks
+        let sanitized = key.chars()
+            .filter(|c| c.is_alphanumeric() || *c == '/' || *c == '-' || *c == '_' || *c == '.')
+            .collect::<String>();
+        
+        // Check for path traversal attempts
+        if sanitized.contains("..") || sanitized.starts_with('/') {
+            return Err(crate::error::RustMqError::InvalidConfig("Invalid object key".to_string()));
+        }
+        
+        // Ensure key is not empty after sanitization
+        if sanitized.is_empty() {
+            return Err(crate::error::RustMqError::InvalidConfig("Empty object key".to_string()));
+        }
+        
+        Ok(self.base_path.join(sanitized))
     }
 }
 
 #[async_trait]
 impl ObjectStorage for LocalObjectStorage {
     async fn put(&self, key: &str, data: Bytes) -> Result<()> {
-        let path = self.key_to_path(key);
+        let path = self.key_to_path(key)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
@@ -37,13 +52,13 @@ impl ObjectStorage for LocalObjectStorage {
     }
 
     async fn get(&self, key: &str) -> Result<Bytes> {
-        let path = self.key_to_path(key);
+        let path = self.key_to_path(key)?;
         let data = fs::read(&path).await?;
         Ok(Bytes::from(data))
     }
 
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {
-        let path = self.key_to_path(key);
+        let path = self.key_to_path(key)?;
         let mut file = fs::File::open(&path).await?;
         
         file.seek(tokio::io::SeekFrom::Start(range.start)).await?;
@@ -55,7 +70,7 @@ impl ObjectStorage for LocalObjectStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let path = self.key_to_path(key);
+        let path = self.key_to_path(key)?;
         if path.exists() {
             fs::remove_file(&path).await?;
         }
@@ -63,14 +78,14 @@ impl ObjectStorage for LocalObjectStorage {
     }
 
     async fn list(&self, prefix: &str) -> Result<Vec<String>> {
-        let prefix_path = self.key_to_path(prefix);
+        let prefix_path = self.key_to_path(prefix)?;
         let mut results = Vec::new();
         
         if prefix_path.is_dir() {
             let mut entries = fs::read_dir(&prefix_path).await?;
             while let Some(entry) = entries.next_entry().await? {
                 if let Some(name) = entry.file_name().to_str() {
-                    results.push(format!("{}/{}", prefix, name));
+                    results.push(format!("{prefix}/{name}"));
                 }
             }
         }
@@ -79,7 +94,7 @@ impl ObjectStorage for LocalObjectStorage {
     }
 
     async fn exists(&self, key: &str) -> Result<bool> {
-        let path = self.key_to_path(key);
+        let path = self.key_to_path(key)?;
         Ok(path.exists())
     }
 }
@@ -104,6 +119,7 @@ impl BandwidthLimiter {
     pub async fn acquire(&self, bytes: usize) -> Result<()> {
         use std::sync::atomic::Ordering;
         
+        // Try to acquire tokens without waiting first
         loop {
             let current_tokens = self.tokens.load(Ordering::SeqCst);
             if current_tokens >= bytes as u64 {
@@ -114,11 +130,18 @@ impl BandwidthLimiter {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => return Ok(()),
-                    Err(_) => continue,
+                    Err(_) => continue, // Retry due to race condition
                 }
             } else {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                // Not enough tokens, refill and wait intelligently
                 self.refill_tokens().await;
+                
+                // Calculate wait time based on how many tokens we need
+                let needed_tokens = bytes as u64 - current_tokens;
+                let wait_ms = (needed_tokens * 1000) / self.refill_rate.max(1);
+                let wait_duration = tokio::time::Duration::from_millis(wait_ms.min(100)); // Cap at 100ms
+                
+                tokio::time::sleep(wait_duration).await;
             }
         }
     }
@@ -185,7 +208,7 @@ impl UploadManagerImpl {
         while offset < data.len() {
             let end = (offset + chunk_size).min(data.len());
             let chunk = &data[offset..end];
-            let chunk_key = format!("{}.part{}", key, offset / chunk_size);
+            let chunk_key = format!("{key}.part{}", offset / chunk_size);
             
             self.storage.put(&chunk_key, Bytes::copy_from_slice(chunk)).await?;
             offset = end;

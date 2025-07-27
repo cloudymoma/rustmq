@@ -35,20 +35,28 @@ impl LruCache {
             return Ok(());
         }
 
-        let mut entries = self.entries.write();
-        let mut keys_to_evict = Vec::new();
-
-        while *current_size + new_entry_size > self.max_size_bytes && !entries.is_empty() {
-            if let Some((oldest_key, oldest_entry)) = entries
+        // Collect candidates for eviction first to minimize lock time
+        let candidates: Vec<(String, std::time::Instant)> = {
+            let entries = self.entries.read();
+            entries
                 .iter()
-                .min_by_key(|(_, entry)| entry.last_accessed)
-                .map(|(k, v)| (k.clone(), v.clone()))
-            {
-                keys_to_evict.push(oldest_key.clone());
-                *current_size -= oldest_entry.data.len() as u64;
-                entries.remove(&oldest_key);
-            } else {
+                .map(|(k, v)| (k.clone(), v.last_accessed))
+                .collect()
+        };
+
+        // Sort by access time outside the lock
+        let mut sorted_candidates = candidates;
+        sorted_candidates.sort_by_key(|(_, time)| *time);
+
+        // Now evict entries with minimal lock time
+        let mut entries = self.entries.write();
+        for (key, _) in sorted_candidates {
+            if *current_size + new_entry_size <= self.max_size_bytes {
                 break;
+            }
+            
+            if let Some(entry) = entries.remove(&key) {
+                *current_size -= entry.data.len() as u64;
             }
         }
 

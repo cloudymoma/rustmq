@@ -2821,6 +2821,7 @@ dependencies = [
  "bytes",
  "chrono",
  "config",
+ "crc32fast",
  "criterion",
  "dashmap 5.5.3",
  "futures",

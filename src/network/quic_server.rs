@@ -154,7 +154,7 @@ impl TryFrom<u8> for RequestType {
             1 => Ok(RequestType::Produce),
             2 => Ok(RequestType::Fetch),
             3 => Ok(RequestType::Metadata),
-            _ => Err(crate::error::RustMqError::Network(format!("Invalid request type: {}", value))),
+            _ => Err(crate::error::RustMqError::Network(format!("Invalid request type: {value}"))),
         }
     }
 }
@@ -168,7 +168,7 @@ impl QuicServer {
     ) -> Result<Self> {
         let server_config = Self::create_server_config()?;
         let addr: SocketAddr = config.quic_listen.parse()
-            .map_err(|e| crate::error::RustMqError::Config(format!("Invalid QUIC address: {}", e)))?;
+            .map_err(|e| crate::error::RustMqError::Config(format!("Invalid QUIC address: {e}")))?;
         
         let endpoint = Endpoint::server(server_config, addr)?;
         
@@ -258,7 +258,7 @@ impl QuicServer {
                             }
                             Err(e) => {
                                 tracing::error!("Request processing error: {}", e);
-                                let error_response = format!("Error: {}", e);
+                                let error_response = format!("Error: {e}");
                                 let mut error_with_type = vec![255u8]; // Error indicator
                                 error_with_type.extend_from_slice(error_response.as_bytes());
                                 

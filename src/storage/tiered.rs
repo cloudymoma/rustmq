@@ -113,7 +113,7 @@ impl CompactionManager for CompactionManagerImpl {
             }
         }
 
-        let compacted_key = format!("compacted_{}_{}.seg", start_offset, end_offset);
+        let compacted_key = format!("compacted_{start_offset}_{end_offset}.seg");
         self.object_storage
             .put(&compacted_key, Bytes::from(combined_data))
             .await?;
@@ -188,18 +188,41 @@ impl TieredStorageEngine {
         }
     }
 
+    fn calculate_crc32(record: &Record) -> u32 {
+        let mut hasher = crc32fast::Hasher::new();
+        
+        // Hash the record value
+        hasher.update(&record.value);
+        
+        // Hash the key if present
+        if let Some(ref key) = record.key {
+            hasher.update(key);
+        }
+        
+        // Hash headers
+        for header in &record.headers {
+            hasher.update(header.key.as_bytes());
+            hasher.update(&header.value);
+        }
+        
+        // Hash timestamp as bytes
+        hasher.update(&record.timestamp.to_le_bytes());
+        
+        hasher.finalize()
+    }
+
     pub async fn append(&self, topic_partition: TopicPartition, record: Record) -> Result<Offset> {
         let wal_record = WalRecord {
             topic_partition: topic_partition.clone(),
             offset: 0, // Will be set by WAL
-            record,
-            crc32: 0, // TODO: Calculate CRC32
+            record: record.clone(),
+            crc32: Self::calculate_crc32(&record),
         };
 
         let record_copy = wal_record.record.clone();
         let offset = self.wal.append(wal_record).await?;
 
-        let cache_key = format!("{}:{}", topic_partition, offset);
+        let cache_key = format!("{topic_partition}:{offset}");
         let serialized = bincode::serialize(&record_copy)?;
         self.cache_manager
             .cache_write(&cache_key, Bytes::from(serialized))
@@ -214,7 +237,7 @@ impl TieredStorageEngine {
         offset: Offset,
         max_bytes: usize,
     ) -> Result<Vec<Record>> {
-        let cache_key = format!("{}:{}", topic_partition, offset);
+        let cache_key = format!("{topic_partition}:{offset}");
 
         if let Some(cached_data) = self.cache_manager.serve_read(&cache_key).await? {
             let record: Record = bincode::deserialize(&cached_data)?;
@@ -280,12 +303,6 @@ impl TieredStorageEngine {
 
         let segment_clone = segment.clone();
         let object_key = self.upload_manager.upload_segment(segment).await?;
-
-        self.metadata_store.update_segment_status(
-            &topic_partition,
-            start_offset,
-            SegmentStatus::InObjectStore,
-        )?;
 
         self.metadata_store.update_segment_status(
             &topic_partition,
