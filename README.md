@@ -1,6 +1,6 @@
 # RustMQ: Cloud-Native Distributed Message Queue System
 
-[![Build Status](https://github.com/rustmq/rustmq/workflows/CI/badge.svg)](https://github.com/rustmq/rustmq/actions)
+[![Build Status](https://github.com/cloudymoma/rustmq/workflows/Rust/badge.svg)](https://github.com/cloudymoma/rustmq/actions)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust Version](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 
@@ -45,7 +45,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 
 ```bash
 # Clone the repository
-git clone https://github.com/rustmq/rustmq.git
+git clone https://github.com/cloudymoma/rustmq.git
 cd rustmq
 
 # Build the project
@@ -1294,7 +1294,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone and setup
-git clone https://github.com/rustmq/rustmq.git
+git clone https://github.com/cloudymoma/rustmq.git
 cd rustmq
 
 # Install development dependencies
@@ -1333,7 +1333,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - [API Reference](https://api.rustmq.dev)
 - [Performance Benchmarks](https://benchmarks.rustmq.dev)
 - [Community Forum](https://community.rustmq.dev)
-- [Issue Tracker](https://github.com/rustmq/rustmq/issues)
+- [Issue Tracker](https://github.com/cloudymoma/rustmq/issues)
 
 ---
 
