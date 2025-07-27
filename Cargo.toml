@@ -35,6 +35,15 @@ rcgen = "0.11"
 object_store = "0.8"
 aws-sdk-s3 = "0.35"
 
+# Google Cloud
+gcp-bigquery-client = "0.20"
+google-cloud-auth = "0.13"
+google-cloud-googleapis = "0.11"
+
+# Additional dependencies for BigQuery subscriber
+warp = "0.3"
+clap = { version = "4.0", features = ["derive"] }
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -92,6 +101,10 @@ path = "src/bin/controller.rs"
 [[bin]]
 name = "rustmq-admin"
 path = "src/bin/admin.rs"
+
+[[bin]]
+name = "rustmq-bigquery-subscriber"
+path = "src/bin/bigquery_subscriber.rs"
 
 [profile.release]
 opt-level = 3

@@ -279,6 +279,73 @@ services:
       - rustmq-network
     command: tail -f /dev/null # Keep container running for interactive use
 
+  # BigQuery Subscriber (optional)
+  rustmq-bigquery-subscriber:
+    build:
+      context: .
+      dockerfile: Dockerfile.bigquery-subscriber
+    container_name: rustmq-bigquery-subscriber
+    environment:
+      # Required BigQuery configuration
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - BIGQUERY_DATASET=${BIGQUERY_DATASET:-}
+      - BIGQUERY_TABLE=${BIGQUERY_TABLE:-}
+      
+      # RustMQ configuration
+      - RUSTMQ_TOPIC=${RUSTMQ_TOPIC:-test-events}
+      - RUSTMQ_BROKERS=rustmq-broker-1:9092,rustmq-broker-2:9092,rustmq-broker-3:9092
+      - CONSUMER_GROUP=bigquery-subscriber
+      - START_OFFSET=latest
+      
+      # Authentication (use one of the following)
+      - AUTH_METHOD=${AUTH_METHOD:-application_default}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      
+      # Batching configuration
+      - MAX_ROWS_PER_BATCH=1000
+      - MAX_BATCH_SIZE_BYTES=10485760  # 10MB
+      - MAX_BATCH_LATENCY_MS=1000
+      - MAX_CONCURRENT_BATCHES=10
+      
+      # Schema configuration
+      - SCHEMA_MAPPING=direct
+      - AUTO_CREATE_TABLE=false
+      
+      # Error handling
+      - MAX_RETRIES=3
+      - DEAD_LETTER_ACTION=log
+      - RETRY_BASE_MS=1000
+      - RETRY_MAX_MS=30000
+      
+      # Monitoring
+      - ENABLE_METRICS=true
+      - ENABLE_HEALTH_CHECK=true
+      - HEALTH_CHECK_ADDR=0.0.0.0:8080
+      - LOG_LEVEL=info
+      - LOG_SUCCESSFUL_INSERTS=false
+      
+      - RUST_LOG=info
+    ports:
+      - "8080:8080"  # Health check endpoint
+    depends_on:
+      rustmq-broker-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      # Mount Google Cloud service account key if using service account auth
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/etc/gcp/service-account.json:ro
+      # Mount custom configuration if needed
+      - ${BIGQUERY_CONFIG_FILE:-/dev/null}:/etc/rustmq/custom-config.toml:ro
+    profiles:
+      - bigquery  # Only start when 'bigquery' profile is specified
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
   # MinIO client for bucket initialization
   minio-init:
     image: minio/mc:latest
