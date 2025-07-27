@@ -1,0 +1,180 @@
+# Multi-stage build for RustMQ Broker
+# Build stage
+FROM rust:1.70-slim-bullseye AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /usr/src/rustmq
+
+# Copy dependency files first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create a dummy src/main.rs to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies (this layer will be cached unless Cargo.toml changes)
+RUN cargo build --release --bin rustmq-broker
+RUN rm src/main.rs
+
+# Copy the actual source code
+COPY src/ ./src/
+COPY .cargo/ ./.cargo/
+
+# Build the broker binary with optimizations
+RUN cargo build --release --bin rustmq-broker
+
+# Verify the binary was built
+RUN ls -la target/release/ && \
+    file target/release/rustmq-broker && \
+    ldd target/release/rustmq-broker
+
+# Runtime stage
+FROM debian:bullseye-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    libssl1.1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create rustmq user and group
+RUN groupadd -r rustmq && useradd -r -g rustmq rustmq
+
+# Create necessary directories
+RUN mkdir -p /var/lib/rustmq/wal \
+    /var/lib/rustmq/data \
+    /etc/rustmq \
+    /var/log/rustmq
+
+# Set ownership
+RUN chown -R rustmq:rustmq /var/lib/rustmq /var/log/rustmq
+
+# Copy the binary from builder stage
+COPY --from=builder /usr/src/rustmq/target/release/rustmq-broker /usr/local/bin/rustmq-broker
+
+# Make binary executable
+RUN chmod +x /usr/local/bin/rustmq-broker
+
+# Copy configuration template (if it exists)
+COPY config/broker.toml /etc/rustmq/broker.toml.template
+
+# Create default configuration
+RUN cat > /etc/rustmq/broker.toml << 'EOF'
+[broker]
+id = "${BROKER_ID:-broker-001}"
+rack_id = "${RACK_ID:-us-central1-a}"
+
+[network]
+quic_listen = "${QUIC_LISTEN:-0.0.0.0:9092}"
+rpc_listen = "${RPC_LISTEN:-0.0.0.0:9093}"
+max_connections = 10000
+connection_timeout_ms = 30000
+
+[wal]
+path = "${WAL_PATH:-/var/lib/rustmq/wal}"
+capacity_bytes = 10737418240
+fsync_on_write = true
+segment_size_bytes = 1073741824
+buffer_size = 65536
+
+[cache]
+write_cache_size_bytes = 1073741824
+read_cache_size_bytes = 2147483648
+eviction_policy = "Lru"
+
+[object_storage]
+type = "${OBJECT_STORAGE_TYPE:-Gcs}"
+bucket = "${OBJECT_STORAGE_BUCKET:-rustmq-data}"
+region = "${OBJECT_STORAGE_REGION:-us-central1}"
+endpoint = "${OBJECT_STORAGE_ENDPOINT:-https://storage.googleapis.com}"
+access_key = "${OBJECT_STORAGE_ACCESS_KEY:-}"
+secret_key = "${OBJECT_STORAGE_SECRET_KEY:-}"
+multipart_threshold = 104857600
+max_concurrent_uploads = 10
+
+[controller]
+endpoints = ["${CONTROLLER_ENDPOINTS:-controller-1:9094}"]
+election_timeout_ms = 5000
+heartbeat_interval_ms = 1000
+
+[replication]
+min_in_sync_replicas = 2
+ack_timeout_ms = 5000
+max_replication_lag = 1000
+
+[etl]
+enabled = true
+memory_limit_bytes = 67108864
+execution_timeout_ms = 5000
+max_concurrent_executions = 100
+EOF
+
+# Create entrypoint script
+RUN cat > /usr/local/bin/entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Function to substitute environment variables in config file
+substitute_env_vars() {
+    local file=$1
+    # Use envsubst to replace environment variables in the config file
+    envsubst < "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+# Substitute environment variables in configuration
+if [[ -f /etc/rustmq/broker.toml ]]; then
+    substitute_env_vars /etc/rustmq/broker.toml
+fi
+
+# Ensure WAL directory exists and has correct permissions
+mkdir -p "${WAL_PATH:-/var/lib/rustmq/wal}"
+chown -R rustmq:rustmq "${WAL_PATH:-/var/lib/rustmq/wal}"
+
+# Switch to rustmq user and execute the broker
+exec gosu rustmq "$@"
+EOF
+
+# Install gosu for proper user switching
+RUN curl -o /usr/local/bin/gosu -SL "https://github.com/tianon/gosu/releases/download/1.14/gosu-$(dpkg --print-architecture)" \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu nobody true
+
+# Install envsubst for config template processing
+RUN apt-get update && apt-get install -y gettext-base && rm -rf /var/lib/apt/lists/*
+
+# Make entrypoint executable
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Expose ports
+EXPOSE 9092 9093 9642
+
+# Set working directory
+WORKDIR /var/lib/rustmq
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9642/health || exit 1
+
+# Use entrypoint script
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# Default command
+CMD ["rustmq-broker", "--config", "/etc/rustmq/broker.toml"]
+
+# Metadata labels
+LABEL maintainer="RustMQ Team <team@rustmq.dev>"
+LABEL version="0.1.0"
+LABEL description="RustMQ Broker - Cloud-native distributed message queue broker"
+LABEL org.opencontainers.image.source="https://github.com/rustmq/rustmq"
+LABEL org.opencontainers.image.documentation="https://docs.rustmq.dev"
+LABEL org.opencontainers.image.vendor="RustMQ"
+LABEL org.opencontainers.image.title="RustMQ Broker"

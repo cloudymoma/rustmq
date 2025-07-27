@@ -1,0 +1,346 @@
+# Multi-stage build for RustMQ Admin CLI
+# Build stage
+FROM rust:1.70-slim-bullseye AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /usr/src/rustmq
+
+# Copy dependency files first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create a dummy src/main.rs to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies (this layer will be cached unless Cargo.toml changes)
+RUN cargo build --release --bin rustmq-admin
+RUN rm src/main.rs
+
+# Copy the actual source code
+COPY src/ ./src/
+COPY .cargo/ ./.cargo/
+
+# Build the admin CLI binary with optimizations
+RUN cargo build --release --bin rustmq-admin
+
+# Verify the binary was built
+RUN ls -la target/release/ && \
+    file target/release/rustmq-admin && \
+    ldd target/release/rustmq-admin
+
+# Runtime stage
+FROM debian:bullseye-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    jq \
+    vim \
+    less \
+    bash-completion \
+    libssl1.1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create rustmq user and group
+RUN groupadd -r rustmq && useradd -r -g rustmq rustmq
+
+# Create necessary directories
+RUN mkdir -p /etc/rustmq \
+    /var/log/rustmq \
+    /home/rustmq/.rustmq
+
+# Set ownership
+RUN chown -R rustmq:rustmq /var/log/rustmq /home/rustmq
+
+# Copy the binary from builder stage
+COPY --from=builder /usr/src/rustmq/target/release/rustmq-admin /usr/local/bin/rustmq-admin
+
+# Make binary executable
+RUN chmod +x /usr/local/bin/rustmq-admin
+
+# Create admin configuration
+RUN cat > /etc/rustmq/admin.toml << 'EOF'
+[admin]
+controller_endpoints = ["${CONTROLLER_ENDPOINTS:-controller-1:9094}"]
+timeout_ms = 30000
+retry_attempts = 3
+
+[output]
+format = "table"  # table, json, yaml
+color = true
+pager = true
+
+[logging]
+level = "${RUSTMQ_LOG_LEVEL:-info}"
+format = "text"
+output = "stderr"
+
+[auth]
+# Authentication configuration (if enabled)
+# username = ""
+# password = ""
+# token = ""
+EOF
+
+# Create CLI aliases and helper scripts
+RUN cat > /usr/local/bin/rustmq-cli << 'EOF'
+#!/bin/bash
+# Convenience wrapper for rustmq-admin with common operations
+
+set -e
+
+ADMIN_CONFIG="/etc/rustmq/admin.toml"
+
+# Function to display help
+show_help() {
+    cat << 'HELP'
+RustMQ CLI - Administrative interface for RustMQ
+
+Usage: rustmq-cli [COMMAND] [OPTIONS]
+
+Commands:
+  topics          Manage topics
+    list            List all topics
+    create <name>   Create a new topic
+    delete <name>   Delete a topic
+    describe <name> Show topic details
+
+  brokers         Manage brokers
+    list            List all brokers
+    status          Show broker status
+
+  consumers       Manage consumer groups
+    list            List all consumer groups
+    describe <group> Show consumer group details
+    reset-offset <group> <topic> <partition> <offset>
+
+  cluster         Cluster operations
+    status          Show cluster health
+    rebalance       Trigger partition rebalancing
+
+  config          Configuration management
+    show            Show current configuration
+    set <key=value> Set configuration value
+
+Examples:
+  rustmq-cli topics list
+  rustmq-cli topics create user-events --partitions 12 --replicas 3
+  rustmq-cli brokers status
+  rustmq-cli cluster status
+
+Use 'rustmq-admin --help' for full API documentation.
+HELP
+}
+
+# Parse command line arguments
+case "${1:-help}" in
+    topics)
+        shift
+        case "${1:-list}" in
+            list)
+                rustmq-admin --config "$ADMIN_CONFIG" topic list "$@"
+                ;;
+            create)
+                if [[ -z "$2" ]]; then
+                    echo "Error: Topic name required"
+                    echo "Usage: rustmq-cli topics create <name> [--partitions N] [--replicas N]"
+                    exit 1
+                fi
+                rustmq-admin --config "$ADMIN_CONFIG" topic create "$@"
+                ;;
+            delete)
+                if [[ -z "$2" ]]; then
+                    echo "Error: Topic name required"
+                    exit 1
+                fi
+                rustmq-admin --config "$ADMIN_CONFIG" topic delete "$@"
+                ;;
+            describe)
+                if [[ -z "$2" ]]; then
+                    echo "Error: Topic name required"
+                    exit 1
+                fi
+                rustmq-admin --config "$ADMIN_CONFIG" topic describe "$@"
+                ;;
+            *)
+                echo "Unknown topics command: $1"
+                exit 1
+                ;;
+        esac
+        ;;
+    brokers)
+        shift
+        case "${1:-list}" in
+            list|status)
+                rustmq-admin --config "$ADMIN_CONFIG" broker list "$@"
+                ;;
+            *)
+                echo "Unknown brokers command: $1"
+                exit 1
+                ;;
+        esac
+        ;;
+    consumers)
+        shift
+        rustmq-admin --config "$ADMIN_CONFIG" consumer "$@"
+        ;;
+    cluster)
+        shift
+        case "${1:-status}" in
+            status)
+                rustmq-admin --config "$ADMIN_CONFIG" cluster status "$@"
+                ;;
+            rebalance)
+                rustmq-admin --config "$ADMIN_CONFIG" cluster rebalance "$@"
+                ;;
+            *)
+                echo "Unknown cluster command: $1"
+                exit 1
+                ;;
+        esac
+        ;;
+    config)
+        shift
+        rustmq-admin --config "$ADMIN_CONFIG" config "$@"
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        # Pass through to rustmq-admin directly
+        rustmq-admin --config "$ADMIN_CONFIG" "$@"
+        ;;
+esac
+EOF
+
+# Make CLI wrapper executable
+RUN chmod +x /usr/local/bin/rustmq-cli
+
+# Create entrypoint script
+RUN cat > /usr/local/bin/entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Function to substitute environment variables in config file
+substitute_env_vars() {
+    local file=$1
+    # Use envsubst to replace environment variables in the config file
+    envsubst < "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+# Substitute environment variables in configuration
+if [[ -f /etc/rustmq/admin.toml ]]; then
+    substitute_env_vars /etc/rustmq/admin.toml
+fi
+
+# Wait for controller to be available
+if [[ "${WAIT_FOR_CONTROLLER:-true}" == "true" ]]; then
+    echo "Waiting for controller to be available..."
+    IFS=',' read -ra CONTROLLERS <<< "${CONTROLLER_ENDPOINTS:-controller-1:9094}"
+    for controller in "${CONTROLLERS[@]}"; do
+        host_port=(${controller//:/ })
+        host=${host_port[0]}
+        port=${host_port[1]:-9094}
+        until curl -f "http://$host:9642/health" > /dev/null 2>&1; do
+            echo "Waiting for controller $controller..."
+            sleep 2
+        done
+    done
+    echo "Controller is available"
+fi
+
+# If no command provided, start an interactive shell
+if [[ $# -eq 0 ]]; then
+    echo "RustMQ Admin CLI"
+    echo "==============="
+    echo "Available commands:"
+    echo "  rustmq-cli      - Interactive CLI with shortcuts"
+    echo "  rustmq-admin    - Full admin API"
+    echo ""
+    echo "Type 'rustmq-cli help' for usage information"
+    echo ""
+    
+    # Switch to rustmq user and start bash
+    exec gosu rustmq bash
+else
+    # Switch to rustmq user and execute the provided command
+    exec gosu rustmq "$@"
+fi
+EOF
+
+# Install gosu for proper user switching
+RUN curl -o /usr/local/bin/gosu -SL "https://github.com/tianon/gosu/releases/download/1.14/gosu-$(dpkg --print-architecture)" \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu nobody true
+
+# Install envsubst for config template processing
+RUN apt-get update && apt-get install -y gettext-base && rm -rf /var/lib/apt/lists/*
+
+# Make entrypoint executable
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set up bash completion for rustmq-cli
+RUN cat > /etc/bash_completion.d/rustmq-cli << 'EOF'
+_rustmq_cli_completion() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    case $prev in
+        rustmq-cli)
+            opts="topics brokers consumers cluster config help"
+            ;;
+        topics)
+            opts="list create delete describe"
+            ;;
+        brokers)
+            opts="list status"
+            ;;
+        consumers)
+            opts="list describe reset-offset"
+            ;;
+        cluster)
+            opts="status rebalance"
+            ;;
+        config)
+            opts="show set"
+            ;;
+    esac
+    
+    COMPREPLY=($(compgen -W "${opts}" -- ${cur}))
+    return 0
+}
+
+complete -F _rustmq_cli_completion rustmq-cli
+EOF
+
+# Set working directory
+WORKDIR /home/rustmq
+
+# Set home directory ownership
+RUN chown -R rustmq:rustmq /home/rustmq
+
+# Use entrypoint script
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# Default command (interactive shell)
+CMD []
+
+# Metadata labels
+LABEL maintainer="RustMQ Team <team@rustmq.dev>"
+LABEL version="0.1.0"
+LABEL description="RustMQ Admin CLI - Administrative interface for RustMQ cluster"
+LABEL org.opencontainers.image.source="https://github.com/rustmq/rustmq"
+LABEL org.opencontainers.image.documentation="https://docs.rustmq.dev"
+LABEL org.opencontainers.image.vendor="RustMQ"
+LABEL org.opencontainers.image.title="RustMQ Admin CLI"

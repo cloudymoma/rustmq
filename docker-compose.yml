@@ -1,0 +1,314 @@
+version: '3.8'
+
+services:
+  # External dependencies
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.0
+    container_name: rustmq-etcd
+    environment:
+      - ETCD_NAME=etcd0
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=rustmq-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ALLOW_NONE_AUTHENTICATION=yes
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - rustmq-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO for local object storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: rustmq-minio
+    environment:
+      - MINIO_ACCESS_KEY=rustmq-access-key
+      - MINIO_SECRET_KEY=rustmq-secret-key
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - rustmq-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RustMQ Controller nodes (3-node cluster for HA)
+  rustmq-controller-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    container_name: rustmq-controller-1
+    environment:
+      - CONTROLLER_NODE_ID=controller-1
+      - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
+      - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
+      - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
+      - ETCD_ENDPOINTS=etcd:2379
+      - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9094:9094"
+      - "9095:9095"
+      - "9642:9642"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - controller1_data:/var/lib/rustmq
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rustmq-controller-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    container_name: rustmq-controller-2
+    environment:
+      - CONTROLLER_NODE_ID=controller-2
+      - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
+      - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
+      - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
+      - ETCD_ENDPOINTS=etcd:2379
+      - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9144:9094"
+      - "9145:9095"
+      - "9643:9642"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - controller2_data:/var/lib/rustmq
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rustmq-controller-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    container_name: rustmq-controller-3
+    environment:
+      - CONTROLLER_NODE_ID=controller-3
+      - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
+      - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
+      - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
+      - ETCD_ENDPOINTS=etcd:2379
+      - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9194:9094"
+      - "9195:9095"
+      - "9644:9642"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - controller3_data:/var/lib/rustmq
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RustMQ Broker nodes (3-node cluster)
+  rustmq-broker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.broker
+    container_name: rustmq-broker-1
+    environment:
+      - BROKER_ID=broker-1
+      - RACK_ID=us-central1-a
+      - QUIC_LISTEN=0.0.0.0:9092
+      - RPC_LISTEN=0.0.0.0:9093
+      - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
+      - WAL_PATH=/var/lib/rustmq/wal
+      - OBJECT_STORAGE_TYPE=S3
+      - OBJECT_STORAGE_ENDPOINT=http://minio:9000
+      - OBJECT_STORAGE_BUCKET=rustmq-data
+      - OBJECT_STORAGE_REGION=us-central1
+      - OBJECT_STORAGE_ACCESS_KEY=rustmq-access-key
+      - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    depends_on:
+      minio:
+        condition: service_healthy
+      rustmq-controller-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - broker1_wal:/var/lib/rustmq/wal
+      - broker1_data:/var/lib/rustmq/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rustmq-broker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.broker
+    container_name: rustmq-broker-2
+    environment:
+      - BROKER_ID=broker-2
+      - RACK_ID=us-central1-b
+      - QUIC_LISTEN=0.0.0.0:9092
+      - RPC_LISTEN=0.0.0.0:9093
+      - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
+      - WAL_PATH=/var/lib/rustmq/wal
+      - OBJECT_STORAGE_TYPE=S3
+      - OBJECT_STORAGE_ENDPOINT=http://minio:9000
+      - OBJECT_STORAGE_BUCKET=rustmq-data
+      - OBJECT_STORAGE_REGION=us-central1
+      - OBJECT_STORAGE_ACCESS_KEY=rustmq-access-key
+      - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9192:9092"
+      - "9193:9093"
+    depends_on:
+      minio:
+        condition: service_healthy
+      rustmq-controller-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - broker2_wal:/var/lib/rustmq/wal
+      - broker2_data:/var/lib/rustmq/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rustmq-broker-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.broker
+    container_name: rustmq-broker-3
+    environment:
+      - BROKER_ID=broker-3
+      - RACK_ID=us-central1-c
+      - QUIC_LISTEN=0.0.0.0:9092
+      - RPC_LISTEN=0.0.0.0:9093
+      - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
+      - WAL_PATH=/var/lib/rustmq/wal
+      - OBJECT_STORAGE_TYPE=S3
+      - OBJECT_STORAGE_ENDPOINT=http://minio:9000
+      - OBJECT_STORAGE_BUCKET=rustmq-data
+      - OBJECT_STORAGE_REGION=us-central1
+      - OBJECT_STORAGE_ACCESS_KEY=rustmq-access-key
+      - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "9292:9092"
+      - "9293:9093"
+    depends_on:
+      minio:
+        condition: service_healthy
+      rustmq-controller-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    volumes:
+      - broker3_wal:/var/lib/rustmq/wal
+      - broker3_data:/var/lib/rustmq/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RustMQ Admin CLI (optional)
+  rustmq-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    container_name: rustmq-admin
+    environment:
+      - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    depends_on:
+      rustmq-controller-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    command: tail -f /dev/null # Keep container running for interactive use
+
+  # MinIO client for bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: rustmq-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 rustmq-access-key rustmq-secret-key;
+      mc mb myminio/rustmq-data --ignore-existing;
+      mc policy set public myminio/rustmq-data;
+      echo 'MinIO bucket setup complete';
+      "
+
+networks:
+  rustmq-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  minio_data:
+  controller1_data:
+  controller2_data:
+  controller3_data:
+  broker1_wal:
+  broker1_data:
+  broker2_wal:
+  broker2_data:
+  broker3_wal:
+  broker3_data:

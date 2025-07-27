@@ -21,6 +21,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 ## 📋 Table of Contents
 
 - [Quick Start](#-quick-start)
+- [Docker Development Setup](#-docker-development-setup)
 - [Google Cloud Platform Setup](#-google-cloud-platform-setup)
 - [Deployment](#-deployment)
 - [Configuration](#-configuration)
@@ -52,15 +53,109 @@ cargo build --release
 # Run tests
 cargo test
 
-# Start local development cluster
+# Start local development cluster with Docker Compose
 docker-compose up -d
 
+# Or run individual components locally:
 # Run broker
 ./target/release/rustmq-broker --config config/broker.toml
 
 # Run controller
 ./target/release/rustmq-controller --config config/controller.toml
 ```
+
+## 🐳 Docker Development Setup
+
+RustMQ provides a complete Docker-based development environment with proper container orchestration.
+
+### Docker Components
+
+The following Docker containers are available with the proper naming schema:
+
+- **Dockerfile.broker** - RustMQ message broker with optimized multi-stage build
+- **Dockerfile.controller** - RustMQ controller with Raft consensus support  
+- **Dockerfile.admin** - Interactive admin CLI with helper commands
+
+### Starting the Cluster
+
+```bash
+# Start the complete RustMQ cluster (3 controllers + 3 brokers + dependencies)
+docker-compose up -d
+
+# View cluster status
+docker-compose ps
+
+# View logs from all services
+docker-compose logs -f
+
+# View logs from specific service
+docker-compose logs -f rustmq-broker-1
+```
+
+### Cluster Architecture
+
+The Docker Compose setup includes:
+
+- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Raft consensus cluster
+- **3 Broker nodes** (`rustmq-broker-1/2/3`) - Stateless message brokers
+- **etcd** - Distributed metadata store
+- **MinIO** - S3-compatible object storage for local development
+- **Admin CLI** - Interactive management interface
+
+### Service Endpoints
+
+| Service | Internal Port | External Port | Purpose |
+|---------|---------------|---------------|---------|
+| Broker 1 | 9092/9093 | 9092/9093 | QUIC/RPC |
+| Broker 2 | 9092/9093 | 9192/9193 | QUIC/RPC |  
+| Broker 3 | 9092/9093 | 9292/9293 | QUIC/RPC |
+| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP |
+| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP |
+| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP |
+| etcd | 2379/2380 | 2379/2380 | Client/Peer |
+| MinIO | 9000/9001 | 9000/9001 | API/Console |
+
+### Using the Admin CLI
+
+```bash
+# Access the admin CLI container
+docker-compose exec rustmq-admin bash
+
+# Use the convenient CLI wrapper
+rustmq-cli topics list
+rustmq-cli brokers status
+rustmq-cli cluster status
+
+# Or use the full admin API
+rustmq-admin --help
+```
+
+### Development Workflow
+
+```bash
+# Make code changes and rebuild specific service
+docker-compose build rustmq-broker
+docker-compose up -d rustmq-broker-1
+
+# Scale brokers for testing
+docker-compose up -d --scale rustmq-broker-2=2
+
+# Clean shutdown
+docker-compose down
+
+# Clean shutdown with volume cleanup
+docker-compose down -v
+```
+
+### Container Features
+
+Each Dockerfile includes:
+- **Multi-stage builds** for optimized image size
+- **Security** - Non-root user execution with gosu
+- **Health checks** - Proper container health monitoring
+- **Configuration** - Environment variable templating
+- **Logging** - Structured logging with configurable levels
+- **Dependencies** - Proper startup ordering and readiness checks
 
 ## ☁️ Google Cloud Platform Setup
 
