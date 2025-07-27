@@ -128,7 +128,7 @@ The following table defines the key-value schema that will be used to store all 
 
 | Key Path (etcd) | Value (Serialized) | Description |
 | :---- | :---- | :---- |
-| /brokers/registered/{broker\_id} | { "host": "10.0.1.23", "port\_quic": 9092, "port\_rpc": 9093, "rack\_id": "us-east-1a" } | Contains the network endpoint information and availability zone for each live broker. Used for client routing and rack-aware balancing. |
+| /brokers/registered/{broker\_id} | { "host": "10.0.1.23", "port\_quic": 9092, "port\_rpc": 9093, "rack\_id": "us-central1-a" } | Contains the network endpoint information and availability zone for each live broker. Used for client routing and rack-aware balancing. |
 | /topics/{topic\_name}/config | { "partitions": 64, "retention\_ms": \-1, "wasm\_module\_id": "pii\_scrubber\_v1" } | Defines the configuration for a topic, including partition count, data retention policy, and any associated stream processing module. |
 | /topics/{topic\_name}/partitions/{partition\_id}/leader | { "broker\_id": "broker-007", "leader\_epoch": 142 } | The current leader broker and the monotonically increasing leader epoch for a specific partition. This is updated on every leader change. |
 | /topics/{topic\_name}/partitions/{partition\_id}/segments/{segment\_start\_offset} | { "status": "IN\_WAL" | "UPLOADING" | "IN\_OBJECT\_STORE", "object\_key": "topics/my-topic/0/000...123.seg", "size\_bytes": 1073741824 } | Tracks the state and location of every log segment. This is the core metadata for the tiered storage engine, enabling brokers to find data whether it's in the WAL or object storage. |
@@ -298,9 +298,9 @@ The following is a representative subset of the critical configuration parameter
 | cache.write.size.bytes | Int64 | (10% of RAM) | The size of the in-memory cache for hot writes and tailing reads. |
 | cache.read.size.bytes | Int64 | (25% of RAM) | The size of the in-memory cache for cold data fetched from object storage. |
 | object\_store.type | String | s3 | The type of object store to use. Supported values: s3, gcs. |
-| object\_store.s3.endpoint | String | https://s3.us-east-1.amazonaws.com | The endpoint URL for the S3-compatible object storage service. |
+| object\_store.s3.endpoint | String | https://storage.googleapis.com | The endpoint URL for the GCS object storage service. |
 | object\_store.s3.bucket | String | (required) | The name of the S3 bucket to use for primary log storage. |
-| object\_store.s3.region | String | us-east-1 | The AWS region of the S3 bucket. |
+| object\_store.s3.region | String | us-central1 | The GCS region of the bucket. |
 
 #### **Controller Configuration (controller.toml)**
 

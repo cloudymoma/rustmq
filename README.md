@@ -428,7 +428,7 @@ kubectl get service rustmq-broker -n rustmq
 ```toml
 [broker]
 id = "broker-001"                    # Unique broker identifier
-rack_id = "us-east-1a"              # Availability zone for rack awareness
+rack_id = "us-central1-a"            # Availability zone for rack awareness
 
 [network]
 quic_listen = "0.0.0.0:9092"        # QUIC/HTTP3 client endpoint
@@ -478,7 +478,7 @@ max_concurrent_executions = 100     # Concurrent execution limit
 ```bash
 # Core settings
 RUSTMQ_BROKER_ID=broker-001
-RUSTMQ_RACK_ID=us-east-1a
+RUSTMQ_RACK_ID=us-central1-a
 RUSTMQ_LOG_LEVEL=info
 
 # Storage settings

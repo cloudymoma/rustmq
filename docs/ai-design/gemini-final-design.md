@@ -141,7 +141,7 @@ The following schema will be used to store all critical cluster state in etcd. V
 
 | Key Path (etcd)                                                      | Value (Serialized)                                                                                             | Description                                                                                                                            |
 | :------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
-| `/brokers/registered/{broker_id}`                                    | `{ "host": "10.0.1.23", "port_quic": 9092, "port_rpc": 9093, "rack_id": "us-east-1a" }`                          | Contains network endpoint and availability zone for each live broker.                                                                  |
+| `/brokers/registered/{broker_id}`                                    | `{ "host": "10.0.1.23", "port_quic": 9092, "port_rpc": 9093, "rack_id": "us-central1-a" }`                       | Contains network endpoint and availability zone for each live broker.                                                                  |
 | `/topics/{topic_name}/config`                                        | `{ "partitions": 64, "retention_ms": -1, "wasm_module_id": "pii_scrubber_v1" }`                                  | Defines the configuration for a topic.                                                                                                 |
 | `/topics/{topic_name}/partitions/{partition_id}/leader`              | `{ "broker_id": "broker-007", "leader_epoch": 142 }`                                                           | The current leader broker and the monotonically increasing leader epoch for a specific partition.                                      |
 | `/topics/{topic_name}/partitions/{partition_id}/segments/{start_offset}` | `{ "status": "IN_WAL" | "UPLOADING" | "IN_OBJECT_STORE", "object_key": "...", "size_bytes": ... }` | Tracks the state and location of every log segment, enabling brokers to find data in the WAL or object storage.                  |
@@ -263,7 +263,7 @@ A comprehensive, modern administrative API will be exposed via both gRPC and a R
 | `cache.read.size.bytes`    | Int64   | (25% of RAM)        | The size of the in-memory cache for cold data fetched from object storage.                              |
 | `object_store.type`        | String  | `s3`                | The type of object store to use. Supported values: `s3`, `gcs`.                                         |
 | `object_store.s3.bucket`   | String  | (required)          | The name of the S3 bucket to use for primary log storage.                                               |
-| `object_store.s3.region`   | String  | `us-east-1`         | The AWS region of the S3 bucket.                                                                        |
+| `object_store.s3.region`   | String  | `us-central1`       | The GCS region of the bucket.                                                                           |
 
 #### Controller Configuration (controller.toml)
 

@@ -122,8 +122,8 @@ impl Default for Config {
                     path: PathBuf::from("/tmp/rustmq/storage"),
                 },
                 bucket: "rustmq-data".to_string(),
-                region: "us-east-1".to_string(),
-                endpoint: "https://s3.us-east-1.amazonaws.com".to_string(),
+                region: "us-central1".to_string(),
+                endpoint: "https://storage.googleapis.com".to_string(),
                 access_key: None,
                 secret_key: None,
                 multipart_threshold: 100 * 1024 * 1024, // 100MB
