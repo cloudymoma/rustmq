@@ -1,0 +1,96 @@
+[package]
+name = "rustmq"
+version = "0.1.0"
+edition = "2021"
+authors = ["RustMQ Team"]
+description = "Cloud-native distributed message queue system"
+license = "Apache-2.0"
+repository = "https://github.com/rustmq/rustmq"
+
+[workspace]
+members = [
+    "."
+]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-uring = { version = "0.4", optional = true }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Networking
+quinn = "0.10"
+h3 = "0.0.3"
+tonic = "0.10"
+prost = "0.12"
+rustls = "0.21"
+rcgen = "0.11"
+
+# Storage
+object_store = "0.8"
+aws-sdk-s3 = "0.35"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+bytes = "1.5"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dashmap = "5.5"
+parking_lot = "0.12"
+async-trait = "0.1"
+
+# Metrics
+prometheus = "0.13"
+
+# Configuration
+config = "0.13"
+toml = "0.8"
+
+# WebAssembly
+wasmer = { version = "4.2", optional = true }
+
+# Compression
+lz4_flex = "0.11"
+zstd = "0.13"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.8"
+pretty_assertions = "1.4"
+
+[features]
+default = ["wasm"]
+io-uring = ["tokio-uring"]
+wasm = ["wasmer"]
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[[bin]]
+name = "rustmq-broker"
+path = "src/bin/broker.rs"
+
+[[bin]]
+name = "rustmq-controller"
+path = "src/bin/controller.rs"
+
+[[bin]]
+name = "rustmq-admin"
+path = "src/bin/admin.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
