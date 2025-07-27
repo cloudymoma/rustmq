@@ -6,14 +6,17 @@
 
 RustMQ is a next-generation, cloud-native distributed message queue system that combines the high-performance characteristics of Apache Kafka with the cost-effectiveness and operational simplicity of modern cloud architectures. Built from the ground up in Rust, RustMQ leverages a shared-storage architecture that decouples compute from storage, enabling unprecedented elasticity, cost savings, and operational efficiency.
 
+**Optimized for Google Cloud Platform**: RustMQ is designed with Google Cloud services as the default target, leveraging Google Cloud Storage for cost-effective object storage and Google Kubernetes Engine for orchestration, with all configurations defaulting to the `us-central1` region for optimal performance and cost efficiency.
+
 ## 🚀 Key Features
 
-- **10x Cost Reduction**: 90% storage cost savings through single-copy storage in object storage
-- **100x Elasticity**: Instant scaling with stateless brokers and metadata-only operations
+- **10x Cost Reduction**: 90% storage cost savings through single-copy storage in Google Cloud Storage
+- **100x Elasticity**: Instant scaling with stateless brokers and metadata-only operations  
 - **Single-Digit Millisecond Latency**: Optimized write path with local NVMe WAL and zero-copy data movement
 - **QUIC/HTTP3 Protocol**: Reduced connection overhead and head-of-line blocking elimination
 - **WebAssembly ETL**: Real-time data processing with secure sandboxing
 - **Auto-Balancing**: Continuous load distribution optimization
+- **Google Cloud Native**: Default configurations optimized for GCP services and `us-central1` region
 
 ## 📋 Table of Contents
 
@@ -1047,4 +1050,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ---
 
-**RustMQ** - Built with ❤️ in Rust for the cloud-native future.
+**RustMQ** - Built with ❤️ in Rust for the cloud-native future. Optimized for Google Cloud Platform.
