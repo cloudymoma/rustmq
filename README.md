@@ -16,7 +16,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **QUIC/HTTP3 Protocol**: Reduced connection overhead and head-of-line blocking elimination
 - **WebAssembly ETL**: Real-time data processing with secure sandboxing
 - **Auto-Balancing**: Continuous load distribution optimization
-- **Google Cloud Native**: Default configurations optimized for GCP services and `us-central1` region
+- **Google Cloud Native**: Default configurations optimized for GCP services 
 
 ## 📋 Table of Contents
 
@@ -1329,10 +1329,6 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🔗 Links
 
-- [Documentation](https://docs.rustmq.dev)
-- [API Reference](https://api.rustmq.dev)
-- [Performance Benchmarks](https://benchmarks.rustmq.dev)
-- [Community Forum](https://community.rustmq.dev)
 - [Issue Tracker](https://github.com/cloudymoma/rustmq/issues)
 
 ---
