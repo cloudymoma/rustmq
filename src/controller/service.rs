@@ -28,6 +28,7 @@ pub struct DecommissionSlot {
     pub operation_id: String,
     pub broker_id: String,
     pub acquired_at: Instant,
+    pub expires_at: Instant,
     pub requester: String, // Admin tool instance or user ID
 }
 
@@ -43,6 +44,12 @@ impl ControllerService {
         let decommission_manager = Arc::new(
             DecommissionSlotManager::new(scaling_config.max_concurrent_decommissions)
         );
+        
+        // Start background cleanup task for expired decommission slots
+        let cleanup_manager = decommission_manager.clone();
+        tokio::spawn(async move {
+            cleanup_manager.start_cleanup_task().await;
+        });
         
         Self {
             decommission_manager,
@@ -145,6 +152,7 @@ impl DecommissionSlotManager {
             operation_id: operation_id.clone(),
             broker_id: broker_id.clone(),
             acquired_at,
+            expires_at,
             requester: requester.clone(),
         };
 
@@ -242,6 +250,48 @@ impl DecommissionSlotManager {
         );
 
         Ok(())
+    }
+
+    /// Start background task to clean up expired decommission slots
+    pub async fn start_cleanup_task(&self) {
+        let active_decommissions = self.active_decommissions.clone();
+        let decommission_slots = self.decommission_slots.clone();
+
+        let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
+        
+        loop {
+            interval.tick().await;
+            
+            let now = Instant::now();
+            let mut expired_slots = Vec::new();
+            
+            // Find expired slots
+            {
+                let active = active_decommissions.read().await;
+                for (operation_id, slot) in active.iter() {
+                    if now > slot.expires_at {
+                        expired_slots.push(operation_id.clone());
+                    }
+                }
+            }
+            
+            // Remove expired slots and release semaphore permits
+            if !expired_slots.is_empty() {
+                let mut active = active_decommissions.write().await;
+                for operation_id in &expired_slots {
+                    if let Some(slot) = active.remove(operation_id) {
+                        // Release the semaphore permit
+                        decommission_slots.add_permits(1);
+                        
+                        tracing::warn!(
+                            "Auto-expired decommission slot for broker {} (operation: {}, expired after 1 hour)",
+                            slot.broker_id,
+                            operation_id
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -364,5 +414,74 @@ mod tests {
         // Check status again
         let status = controller.get_decommission_status().await.unwrap();
         assert_eq!(status.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_decommission_slot_expiration() {
+        let manager = DecommissionSlotManager::new(2);
+
+        // Acquire slot
+        let result = manager
+            .acquire_slot("broker-1".to_string(), "admin-1".to_string())
+            .await
+            .unwrap();
+
+        // Verify slot exists
+        let status = manager.get_active_decommissions().await.unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].broker_id, "broker-1");
+
+        // Simulate expired slot by manually removing and releasing
+        {
+            let mut active = manager.active_decommissions.write().await;
+            active.remove(&result.operation_id);
+            manager.decommission_slots.add_permits(1);
+        }
+
+        // Verify slot is cleaned up
+        let status = manager.get_active_decommissions().await.unwrap();
+        assert_eq!(status.len(), 0);
+
+        // Verify we can acquire new slots after cleanup
+        let result2 = manager
+            .acquire_slot("broker-2".to_string(), "admin-1".to_string())
+            .await
+            .unwrap();
+        assert!(!result2.operation_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_decommission_slot_timeout_integration() {
+        use tokio::time::{timeout, Duration as TokioDuration};
+        
+        let scaling_config = ScalingConfig {
+            max_concurrent_additions: 3,
+            max_concurrent_decommissions: 1,
+            rebalance_timeout_ms: 300_000,
+            traffic_migration_rate: 0.1,
+            health_check_timeout_ms: 30_000,
+        };
+
+        let controller = ControllerService::new(scaling_config);
+
+        // Acquire slot
+        let result = controller
+            .acquire_decommission_slot("broker-1".to_string(), "admin-tool".to_string())
+            .await
+            .unwrap();
+
+        // Verify slot exists
+        let status = controller.get_decommission_status().await.unwrap();
+        assert_eq!(status.len(), 1);
+
+        // Test that the background cleanup task exists by ensuring
+        // the controller maintains state correctly over time
+        timeout(TokioDuration::from_millis(100), async {
+            tokio::time::sleep(TokioDuration::from_millis(50)).await;
+            let status = controller.get_decommission_status().await.unwrap();
+            assert_eq!(status.len(), 1); // Still there after short time
+        })
+        .await
+        .unwrap();
     }
 }

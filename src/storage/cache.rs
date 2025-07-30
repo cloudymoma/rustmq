@@ -5,6 +5,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
@@ -13,20 +15,26 @@ struct CacheEntry {
     access_count: u64,
 }
 
-pub struct LruCache {
-    entries: Arc<RwLock<HashMap<String, CacheEntry>>>,
-    order: Arc<RwLock<VecDeque<String>>>,
+/// Individual shard of the cache to reduce lock contention
+struct LruCacheShard {
+    entries: RwLock<HashMap<String, CacheEntry>>,
+    order: RwLock<VecDeque<String>>,
+    current_size: parking_lot::Mutex<u64>,
     max_size_bytes: u64,
-    current_size: Arc<parking_lot::Mutex<u64>>,
 }
 
-impl LruCache {
-    pub fn new(max_size_bytes: u64) -> Self {
+pub struct LruCache {
+    shards: Vec<Arc<LruCacheShard>>,
+    shard_count: usize,
+}
+
+impl LruCacheShard {
+    fn new(max_size_bytes: u64) -> Self {
         Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            order: Arc::new(RwLock::new(VecDeque::new())),
+            entries: RwLock::new(HashMap::new()),
+            order: RwLock::new(VecDeque::new()),
+            current_size: parking_lot::Mutex::new(0),
             max_size_bytes,
-            current_size: Arc::new(parking_lot::Mutex::new(0)),
         }
     }
 
@@ -48,11 +56,36 @@ impl LruCache {
     }
 }
 
+impl LruCache {
+    pub fn new(max_size_bytes: u64) -> Self {
+        const SHARD_COUNT: usize = 16; // Power of 2 for efficient modulo
+        let size_per_shard = max_size_bytes / SHARD_COUNT as u64;
+        
+        let shards = (0..SHARD_COUNT)
+            .map(|_| Arc::new(LruCacheShard::new(size_per_shard)))
+            .collect();
+        
+        Self {
+            shards,
+            shard_count: SHARD_COUNT,
+        }
+    }
+
+    fn get_shard(&self, key: &str) -> &Arc<LruCacheShard> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        let shard_index = (hash as usize) % self.shard_count;
+        &self.shards[shard_index]
+    }
+}
+
 #[async_trait]
 impl Cache for LruCache {
     async fn get(&self, key: &str) -> Result<Option<Bytes>> {
-        let mut entries = self.entries.write();
-        let mut order = self.order.write();
+        let shard = self.get_shard(key);
+        let mut entries = shard.entries.write();
+        let mut order = shard.order.write();
 
         if let Some(entry) = entries.get_mut(key) {
             entry.last_accessed = Instant::now();
@@ -71,12 +104,13 @@ impl Cache for LruCache {
     }
 
     async fn put(&self, key: &str, value: Bytes) -> Result<()> {
+        let shard = self.get_shard(key);
         let entry_size = value.len() as u64;
-        self.evict_if_needed(entry_size)?;
+        shard.evict_if_needed(entry_size)?;
 
-        let mut entries = self.entries.write();
-        let mut order = self.order.write();
-        let mut current_size = self.current_size.lock();
+        let mut entries = shard.entries.write();
+        let mut order = shard.order.write();
+        let mut current_size = shard.current_size.lock();
 
         if let Some(old_entry) = entries.get(key) {
             *current_size -= old_entry.data.len() as u64;
@@ -97,8 +131,9 @@ impl Cache for LruCache {
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_size.lock();
+        let shard = self.get_shard(key);
+        let mut entries = shard.entries.write();
+        let mut current_size = shard.current_size.lock();
 
         if let Some(entry) = entries.remove(key) {
             *current_size -= entry.data.len() as u64;
@@ -108,18 +143,26 @@ impl Cache for LruCache {
     }
 
     async fn clear(&self) -> Result<()> {
-        let mut entries = self.entries.write();
-        let mut current_size = self.current_size.lock();
+        for shard in &self.shards {
+            let mut entries = shard.entries.write();
+            let mut current_size = shard.current_size.lock();
+            let mut order = shard.order.write();
 
-        entries.clear();
-        *current_size = 0;
+            entries.clear();
+            order.clear();
+            *current_size = 0;
+        }
 
         Ok(())
     }
 
     async fn size(&self) -> Result<usize> {
-        let entries = self.entries.read();
-        Ok(entries.len())
+        let mut total_size = 0;
+        for shard in &self.shards {
+            let entries = shard.entries.read();
+            total_size += entries.len();
+        }
+        Ok(total_size)
     }
 }
 
@@ -212,5 +255,78 @@ mod tests {
             manager.serve_read("read_key").await.unwrap().unwrap(),
             Bytes::from("read_value")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sharded_cache_distribution() {
+        let cache = LruCache::new(1024);
+
+        // Add entries that should be distributed across shards
+        let keys = vec!["key1", "key2", "key3", "key4", "key5", "key6", "key7", "key8"];
+        for key in &keys {
+            cache.put(key, Bytes::from(format!("value_{}", key))).await.unwrap();
+        }
+
+        // Verify all entries can be retrieved
+        for key in &keys {
+            let value = cache.get(key).await.unwrap().unwrap();
+            assert_eq!(value, Bytes::from(format!("value_{}", key)));
+        }
+
+        // Verify total size
+        assert_eq!(cache.size().await.unwrap(), keys.len());
+
+        // Test concurrent access (this would show lock contention in the old implementation)
+        let cache = Arc::new(cache);
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let cache_clone = cache.clone();
+            let handle = tokio::spawn(async move {
+                for j in 0..100 {
+                    let key = format!("concurrent_key_{}_{}", i, j);
+                    let value = format!("concurrent_value_{}_{}", i, j);
+                    cache_clone.put(&key, Bytes::from(value)).await.unwrap();
+                    
+                    // Immediate read to test read-write concurrency
+                    let retrieved = cache_clone.get(&key).await.unwrap().unwrap();
+                    assert_eq!(retrieved, Bytes::from(format!("concurrent_value_{}_{}", i, j)));
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all concurrent operations to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify the cache is still functional
+        let final_size = cache.size().await.unwrap();
+        assert!(final_size >= keys.len()); // Should include original keys plus concurrent ones
+    }
+
+    #[tokio::test]
+    async fn test_cache_shard_independence() {
+        let cache = LruCache::new(160); // Small cache to trigger evictions, 10 bytes per shard
+
+        // Fill one shard with data
+        cache.put("shard1_key1", Bytes::from("shard1_val1")).await.unwrap();
+        cache.put("shard1_key2", Bytes::from("shard1_val2")).await.unwrap();
+        
+        // Add to different shard (different hash)
+        cache.put("different_key", Bytes::from("different_val")).await.unwrap();
+        
+        // Verify both shards have data
+        assert!(cache.get("shard1_key1").await.unwrap().is_some());
+        assert!(cache.get("different_key").await.unwrap().is_some());
+        
+        // Clear cache
+        cache.clear().await.unwrap();
+        assert_eq!(cache.size().await.unwrap(), 0);
+        
+        // Verify all shards are cleared
+        assert!(cache.get("shard1_key1").await.unwrap().is_none());
+        assert!(cache.get("different_key").await.unwrap().is_none());
     }
 }
