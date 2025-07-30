@@ -184,3 +184,106 @@ pub struct HeartbeatRequest {
     pub topic_partition: TopicPartition,
     pub high_watermark: Offset,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatResponse {
+    pub success: bool,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+    pub follower_state: Option<FollowerState>,
+}
+
+/// Leadership transfer request with epoch enforcement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferLeadershipRequest {
+    pub topic_partition: TopicPartition,
+    pub current_leader_id: BrokerId,
+    pub current_leader_epoch: u64,
+    pub new_leader_id: BrokerId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferLeadershipResponse {
+    pub success: bool,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+    pub new_leader_epoch: Option<u64>,
+}
+
+/// Partition assignment request from controller
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignPartitionRequest {
+    pub topic_partition: TopicPartition,
+    pub replica_set: Vec<BrokerId>,
+    pub leader_id: BrokerId,
+    pub leader_epoch: u64,
+    pub controller_id: BrokerId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignPartitionResponse {
+    pub success: bool,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+}
+
+/// Partition removal request from controller
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemovePartitionRequest {
+    pub topic_partition: TopicPartition,
+    pub controller_id: BrokerId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemovePartitionResponse {
+    pub success: bool,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+}
+
+/// Client request types for QUIC server
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestType {
+    Produce = 1,
+    Fetch = 2,
+    Metadata = 3,
+}
+
+impl TryFrom<u8> for RequestType {
+    type Error = crate::error::RustMqError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(RequestType::Produce),
+            2 => Ok(RequestType::Fetch),
+            3 => Ok(RequestType::Metadata),
+            _ => Err(crate::error::RustMqError::InvalidOperation(
+                format!("Invalid request type: {}", value)
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataRequest {
+    pub topics: Option<Vec<TopicName>>,
+    pub include_cluster_info: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataResponse {
+    pub brokers: Vec<BrokerInfo>,
+    pub topics: Vec<TopicMetadata>,
+    pub cluster_id: String,
+    pub controller_id: Option<BrokerId>,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicMetadata {
+    pub name: TopicName,
+    pub partitions: Vec<PartitionInfo>,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+}

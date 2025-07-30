@@ -27,8 +27,17 @@ pub struct ReplicationManager {
 
 #[async_trait]
 pub trait ReplicationRpcClient: Send + Sync {
+    /// Send replication data to a follower broker
+    /// CRITICAL: All implementations must validate leader epoch on the follower side
     async fn replicate_data(&self, broker_id: &BrokerId, request: ReplicateDataRequest) -> Result<ReplicateDataResponse>;
-    async fn send_heartbeat(&self, broker_id: &BrokerId, request: HeartbeatRequest) -> Result<FollowerState>;
+    
+    /// Send heartbeat to a follower broker
+    /// CRITICAL: All implementations must validate leader epoch on the follower side
+    async fn send_heartbeat(&self, broker_id: &BrokerId, request: HeartbeatRequest) -> Result<HeartbeatResponse>;
+    
+    /// Transfer leadership to another broker
+    /// Used during planned leadership transitions
+    async fn transfer_leadership(&self, broker_id: &BrokerId, request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse>;
 }
 
 pub struct MockReplicationRpcClient;
@@ -50,12 +59,26 @@ impl ReplicationRpcClient for MockReplicationRpcClient {
         })
     }
 
-    async fn send_heartbeat(&self, broker_id: &BrokerId, _request: HeartbeatRequest) -> Result<FollowerState> {
-        Ok(FollowerState {
-            broker_id: broker_id.clone(),
-            last_known_offset: 0,
-            last_heartbeat: chrono::Utc::now(),
-            lag: 0,
+    async fn send_heartbeat(&self, broker_id: &BrokerId, _request: HeartbeatRequest) -> Result<HeartbeatResponse> {
+        Ok(HeartbeatResponse {
+            success: true,
+            error_code: 0,
+            error_message: None,
+            follower_state: Some(FollowerState {
+                broker_id: broker_id.clone(),
+                last_known_offset: 0,
+                last_heartbeat: chrono::Utc::now(),
+                lag: 0,
+            }),
+        })
+    }
+
+    async fn transfer_leadership(&self, _broker_id: &BrokerId, _request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse> {
+        Ok(TransferLeadershipResponse {
+            success: true,
+            error_code: 0,
+            error_message: None,
+            new_leader_epoch: Some(1),
         })
     }
 }
@@ -212,9 +235,34 @@ impl ReplicationManager {
                     };
 
                     for broker_id in followers {
-                        if let Ok(state) = rpc_client.send_heartbeat(&broker_id, heartbeat_request.clone()).await {
-                            let mut states = follower_states.write();
-                            states.insert(broker_id, state);
+                        match rpc_client.send_heartbeat(&broker_id, heartbeat_request.clone()).await {
+                            Ok(response) => {
+                                if response.success {
+                                    if let Some(state) = response.follower_state {
+                                        let mut states = follower_states.write();
+                                        states.insert(broker_id, state);
+                                    }
+                                } else {
+                                    // Handle heartbeat failure (e.g., stale leader epoch)
+                                    tracing::warn!(
+                                        "Heartbeat failed for broker {}: error_code={}, message={:?}",
+                                        broker_id,
+                                        response.error_code,
+                                        response.error_message
+                                    );
+                                    
+                                    // If we get a stale leader epoch error, this broker thinks there's a newer leader
+                                    if response.error_code == 1001 {
+                                        tracing::error!(
+                                            "Broker {} rejected heartbeat due to stale leader epoch. Current leadership may have changed.",
+                                            broker_id
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send heartbeat to broker {}: {}", broker_id, e);
+                            }
                         }
                     }
                 }
