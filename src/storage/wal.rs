@@ -415,6 +415,71 @@ impl WriteAheadLog for DirectIOWal {
         Ok(records)
     }
 
+    async fn read_range(&self, start_offset: u64, end_offset: u64) -> Result<Vec<WalRecord>> {
+        let segments = {
+            let segments_lock = self.segments.read();
+            segments_lock.clone()
+        };
+        let mut records = Vec::new();
+
+        for segment in segments.iter() {
+            // Skip segments that don't overlap with our range
+            if segment.end_offset <= start_offset || segment.start_offset >= end_offset {
+                continue;
+            }
+
+            // Read records from this segment
+            let mut file_offset = segment.file_offset;
+            
+            // Read through the segment sequentially
+            while file_offset < segment.file_offset + segment.size_bytes {
+                // Read record size first
+                let (tx, rx) = oneshot::channel();
+                self.write_tx.send(WriteCommand::Read {
+                    file_offset,
+                    size: 8,
+                    response: tx,
+                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                
+                let size_buffer = rx.await
+                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
+                
+                let record_size = u64::from_le_bytes([
+                    size_buffer[0], size_buffer[1], size_buffer[2], size_buffer[3],
+                    size_buffer[4], size_buffer[5], size_buffer[6], size_buffer[7],
+                ]) as usize;
+
+                // Read the actual record
+                let (tx, rx) = oneshot::channel();
+                self.write_tx.send(WriteCommand::Read {
+                    file_offset: file_offset + 8,
+                    size: record_size,
+                    response: tx,
+                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                
+                let record_buffer = rx.await
+                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
+                
+                let record: WalRecord = bincode::deserialize(&record_buffer)?;
+                
+                // Early exit if we've read past our range
+                if record.offset >= end_offset {
+                    break;
+                }
+                
+                // Only include records within our offset range
+                if record.offset >= start_offset {
+                    records.push(record);
+                }
+                
+                // Move to next record
+                file_offset += 8 + record_size as u64;
+            }
+        }
+
+        Ok(records)
+    }
+
     async fn sync(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.write_tx.send(WriteCommand::Sync {
@@ -745,5 +810,80 @@ mod tests {
         
         println!("Sequential appends completed in: {:?}", append_duration);
         println!("Total time including final sync: {:?}", total_duration);
+    }
+
+    #[tokio::test]
+    async fn test_read_range_efficiency() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = DirectIOWal::new(config, buffer_pool).await.unwrap();
+
+        // Write several records with different offsets
+        let topic_partition = TopicPartition {
+            topic: "test-topic".to_string(),
+            partition: 0,
+        };
+
+        let mut expected_records = Vec::new();
+        
+        // Write 10 records
+        for i in 0..10 {
+            let record = WalRecord {
+                topic_partition: topic_partition.clone(),
+                offset: i, // Will be set by append
+                record: Record {
+                    key: Some(format!("key-{}", i).into_bytes()),
+                    value: format!("value-{}", i).into_bytes(),
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            
+            let actual_offset = wal.append(record.clone()).await.unwrap();
+            
+            // Store records with their actual offsets for verification
+            let mut updated_record = record;
+            updated_record.offset = actual_offset;
+            expected_records.push(updated_record);
+        }
+
+        // Test reading a range of records (offsets 3-6)
+        let range_records = wal.read_range(3, 7).await.unwrap();
+        
+        // Should get exactly 4 records (offsets 3, 4, 5, 6)
+        assert_eq!(range_records.len(), 4);
+        
+        // Verify the records are correct
+        for (i, record) in range_records.iter().enumerate() {
+            assert_eq!(record.offset, 3 + i as u64);
+            assert_eq!(record.record.key, Some(format!("key-{}", 3 + i).into_bytes()));
+            assert_eq!(record.record.value, format!("value-{}", 3 + i).into_bytes());
+        }
+
+        // Test reading a smaller range (just offset 5)
+        let single_record = wal.read_range(5, 6).await.unwrap();
+        assert_eq!(single_record.len(), 1);
+        assert_eq!(single_record[0].offset, 5);
+
+        // Test reading beyond available range
+        let empty_records = wal.read_range(20, 25).await.unwrap();
+        assert_eq!(empty_records.len(), 0);
+
+        // Test reading partial overlap
+        let partial_records = wal.read_range(8, 15).await.unwrap();
+        assert_eq!(partial_records.len(), 2); // Should get offsets 8 and 9
+        assert_eq!(partial_records[0].offset, 8);
+        assert_eq!(partial_records[1].offset, 9);
     }
 }

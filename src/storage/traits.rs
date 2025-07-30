@@ -8,6 +8,11 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub trait WriteAheadLog: Send + Sync {
     async fn append(&self, record: WalRecord) -> Result<u64>;
     async fn read(&self, offset: u64, max_bytes: usize) -> Result<Vec<WalRecord>>;
+    
+    /// Read records within a specific offset range.
+    /// This is more efficient than read() + filtering when only a small range is needed.
+    async fn read_range(&self, start_offset: u64, end_offset: u64) -> Result<Vec<WalRecord>>;
+    
     async fn sync(&self) -> Result<()>;
     async fn truncate(&self, offset: u64) -> Result<()>;
     async fn get_end_offset(&self) -> Result<u64>;
