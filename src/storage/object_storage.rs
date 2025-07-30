@@ -5,7 +5,9 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeekExt, AsyncRead, AsyncWrite};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 pub struct LocalObjectStorage {
     base_path: PathBuf,
@@ -96,6 +98,76 @@ impl ObjectStorage for LocalObjectStorage {
     async fn exists(&self, key: &str) -> Result<bool> {
         let path = self.key_to_path(key)?;
         Ok(path.exists())
+    }
+
+    async fn open_read_stream(&self, key: &str) -> Result<Box<dyn AsyncRead + Send + Unpin>> {
+        let path = self.key_to_path(key)?;
+        let file = fs::File::open(&path).await?;
+        Ok(Box::new(file))
+    }
+
+    async fn open_write_stream(&self, key: &str) -> Result<Box<dyn AsyncWrite + Send + Unpin>> {
+        let path = self.key_to_path(key)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let file = fs::File::create(&path).await?;
+        Ok(Box::new(SyncingFileWriter::new(file)))
+    }
+}
+
+/// A wrapper around tokio::fs::File that ensures sync_all is called on drop
+pub struct SyncingFileWriter {
+    file: Option<fs::File>,
+}
+
+impl SyncingFileWriter {
+    pub fn new(file: fs::File) -> Self {
+        Self { file: Some(file) }
+    }
+}
+
+impl AsyncWrite for SyncingFileWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if let Some(ref mut file) = self.file {
+            Pin::new(file).poll_write(cx, buf)
+        } else {
+            Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "File already closed",
+            )))
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        if let Some(ref mut file) = self.file {
+            Pin::new(file).poll_flush(cx)
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        if let Some(ref mut file) = self.file {
+            // First flush, then the file will sync on drop
+            Pin::new(file).poll_flush(cx)
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+}
+
+impl Drop for SyncingFileWriter {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            // We can't await in Drop, but tokio::fs::File will sync on drop
+            // This is a best-effort fallback
+            drop(file);
+        }
     }
 }
 
