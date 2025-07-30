@@ -81,4 +81,13 @@ pub enum RustMqError {
 
     #[error("QUIC connection error: {0}")]
     QuicConnection(#[from] quinn::ConnectionError),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
+    #[error("Resource exhausted: {0}")]
+    ResourceExhausted(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
 }

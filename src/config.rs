@@ -102,6 +102,8 @@ pub struct EtlConfig {
 pub struct ScalingConfig {
     /// Maximum number of brokers that can be added simultaneously
     pub max_concurrent_additions: usize,
+    /// Maximum number of brokers that can be decommissioned simultaneously
+    pub max_concurrent_decommissions: usize,
     /// Timeout for partition rebalancing during scaling operations (ms)
     pub rebalance_timeout_ms: u64,
     /// Gradual traffic migration rate (0.0 to 1.0 per minute)
@@ -191,6 +193,7 @@ impl Default for Config {
             },
             scaling: ScalingConfig {
                 max_concurrent_additions: 3,
+                max_concurrent_decommissions: 1, // Safety constraint: one at a time
                 rebalance_timeout_ms: 300_000, // 5 minutes
                 traffic_migration_rate: 0.1, // 10% per minute
                 health_check_timeout_ms: 30_000, // 30 seconds
@@ -237,6 +240,52 @@ impl Config {
             ));
         }
 
+        if self.scaling.max_concurrent_decommissions == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.max_concurrent_decommissions must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.scaling.max_concurrent_decommissions > 10 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.max_concurrent_decommissions should not exceed 10 for safety".to_string(),
+            ));
+        }
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_validation_max_concurrent_decommissions() {
+        let mut config = Config::default();
+        
+        // Test zero value (should fail)
+        config.scaling.max_concurrent_decommissions = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be greater than 0"));
+
+        // Test exceeding maximum (should fail)
+        config.scaling.max_concurrent_decommissions = 15;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("should not exceed 10"));
+
+        // Test valid value (should pass)
+        config.scaling.max_concurrent_decommissions = 2;
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_default_config_is_valid() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+        assert_eq!(config.scaling.max_concurrent_decommissions, 1);
     }
 }

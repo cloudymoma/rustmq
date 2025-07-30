@@ -104,12 +104,14 @@ Broker scaling operation parameters.
 | Parameter | Type | Default | Description | Valid Range |
 |-----------|------|---------|-------------|-------------|
 | `max_concurrent_additions` | Integer | `3` | Maximum brokers added simultaneously | 1 - 10 |
+| `max_concurrent_decommissions` | Integer | `1` | Maximum brokers decommissioned simultaneously | 1 - 10 |
 | `rebalance_timeout_ms` | Integer | `300000` | Partition rebalancing timeout (5 minutes) | 60,000 - 1,800,000 |
 | `traffic_migration_rate` | Float | `0.1` | Traffic migration rate (10% per minute) | 0.01 - 1.0 |
 | `health_check_timeout_ms` | Integer | `30000` | Health check timeout for new brokers | 5,000 - 300,000 |
 
 **Production Recommendations:**
-- Limit `max_concurrent_additions` to 3 for stability
+- Limit `max_concurrent_additions` to 3 for stability  
+- **Keep `max_concurrent_decommissions` at 1 for safety** - prevents accidental mass decommissioning
 - Use conservative `traffic_migration_rate` (0.1) for safety
 - Increase timeouts for large clusters
 

@@ -64,6 +64,7 @@ max_concurrent_executions = 10
 [scaling]
 # Allow single broker operations for development
 max_concurrent_additions = 1
+max_concurrent_decommissions = 1  # Safety constraint even in development
 rebalance_timeout_ms = 60000  # 1 minute
 traffic_migration_rate = 1.0  # 100% immediate for development
 health_check_timeout_ms = 10000  # 10 seconds

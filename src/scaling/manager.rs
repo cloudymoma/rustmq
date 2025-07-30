@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Result, config::ScalingConfig};
+use crate::{Result, config::ScalingConfig, controller::ControllerService};
 use std::collections::HashMap;
 use tokio::sync::RwLock as AsyncRwLock;
 use uuid::Uuid;
@@ -10,6 +10,7 @@ pub struct ScalingManagerImpl {
     operation_status: Arc<AsyncRwLock<HashMap<String, ScalingStatus>>>,
     brokers: Arc<AsyncRwLock<HashMap<String, BrokerInfo>>>,
     rebalancer: Arc<dyn PartitionRebalancer>,
+    controller: Option<Arc<ControllerService>>,
 }
 
 impl ScalingManagerImpl {
@@ -23,6 +24,22 @@ impl ScalingManagerImpl {
             operation_status: Arc::new(AsyncRwLock::new(HashMap::new())),
             brokers: Arc::new(AsyncRwLock::new(HashMap::new())),
             rebalancer,
+            controller: None,
+        }
+    }
+
+    pub fn with_controller(
+        config: ScalingConfig,
+        rebalancer: Arc<dyn PartitionRebalancer>,
+        controller: Arc<ControllerService>,
+    ) -> Self {
+        Self {
+            config,
+            operations: Arc::new(AsyncRwLock::new(HashMap::new())),
+            operation_status: Arc::new(AsyncRwLock::new(HashMap::new())),
+            brokers: Arc::new(AsyncRwLock::new(HashMap::new())),
+            rebalancer,
+            controller: Some(controller),
         }
     }
 
@@ -179,10 +196,12 @@ impl ScalingManagerImpl {
         &self,
         operation_id: String,
         broker_id: String,
+        decommission_slot: Option<crate::controller::SlotAcquisitionResult>,
     ) -> Result<()> {
         let operation_status = self.operation_status.clone();
         let brokers = self.brokers.clone();
         let rebalancer = self.rebalancer.clone();
+        let controller = self.controller.clone();
 
         tokio::spawn(async move {
             // Update status to in progress
@@ -195,12 +214,19 @@ impl ScalingManagerImpl {
             }
 
             let result = Self::do_remove_broker(
-                broker_id,
+                broker_id.clone(),
                 brokers.clone(),
                 rebalancer,
                 operation_status.clone(),
                 operation_id.clone(),
             ).await;
+
+            // Release decommission slot if we have one
+            if let (Some(controller), Some(_slot)) = (controller, decommission_slot) {
+                if let Err(e) = controller.release_decommission_slot(&operation_id).await {
+                    tracing::error!("Failed to release decommission slot for operation {}: {}", operation_id, e);
+                }
+            }
 
             // Update final status
             let mut status_map = operation_status.write().await;
@@ -328,8 +354,28 @@ impl ScalingManager for ScalingManagerImpl {
                 format!("Broker {} does not exist", broker_id)
             ));
         }
+        drop(brokers); // Release the lock early
 
-        let operation_id = Uuid::new_v4().to_string();
+        // If controller is available, acquire decommission slot first
+        let decommission_slot = if let Some(controller) = &self.controller {
+            Some(controller.acquire_decommission_slot(
+                broker_id.clone(),
+                "scaling-manager".to_string(),
+            ).await?)
+        } else {
+            tracing::warn!(
+                "No controller available - proceeding with broker removal without slot management. \
+                This may result in unsafe concurrent decommissions."
+            );
+            None
+        };
+
+        let operation_id = if let Some(ref slot) = decommission_slot {
+            slot.operation_id.clone()
+        } else {
+            Uuid::new_v4().to_string()
+        };
+
         let operation = ScalingOperation::RemoveBroker { broker_id: broker_id.clone() };
 
         {
@@ -342,7 +388,12 @@ impl ScalingManager for ScalingManagerImpl {
             status_map.insert(operation_id.clone(), ScalingStatus::NotStarted);
         }
 
-        self.execute_remove_broker_operation(operation_id.clone(), broker_id).await?;
+        // Pass the decommission slot info to the operation
+        self.execute_remove_broker_operation(
+            operation_id.clone(), 
+            broker_id,
+            decommission_slot
+        ).await?;
 
         Ok(operation_id)
     }
@@ -387,6 +438,7 @@ mod tests {
     async fn test_add_brokers() {
         let config = ScalingConfig {
             max_concurrent_additions: 3,
+            max_concurrent_decommissions: 1,
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
@@ -420,6 +472,7 @@ mod tests {
     async fn test_remove_broker() {
         let config = ScalingConfig {
             max_concurrent_additions: 3,
+            max_concurrent_decommissions: 1,
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
@@ -450,5 +503,55 @@ mod tests {
             }
             _ => panic!("Unexpected status: {:?}", status),
         }
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_decommission_prevention() {
+        let config = ScalingConfig {
+            max_concurrent_additions: 3,
+            max_concurrent_decommissions: 1, // Only allow 1 concurrent decommission
+            rebalance_timeout_ms: 300_000,
+            traffic_migration_rate: 0.1,
+            health_check_timeout_ms: 30_000,
+        };
+
+        // Create controller with the same config
+        let controller = Arc::new(crate::controller::ControllerService::new(config.clone()));
+        let rebalancer = Arc::new(MockPartitionRebalancer::new());
+        let scaling_manager = ScalingManagerImpl::with_controller(config, rebalancer, controller);
+
+        // Add two brokers first
+        let broker_ids = vec!["broker-1".to_string(), "broker-2".to_string()];
+        let rack_ids = vec!["rack-1".to_string(), "rack-2".to_string()];
+        scaling_manager.add_brokers(broker_ids, rack_ids).await.unwrap();
+
+        // Wait for add operation to complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Try to remove both brokers simultaneously - should enforce safety constraint
+        let remove1_future = scaling_manager.remove_broker("broker-1".to_string());
+        let remove2_future = scaling_manager.remove_broker("broker-2".to_string());
+
+        let (result1, result2) = tokio::join!(remove1_future, remove2_future);
+
+        // One should succeed, one should fail due to slot exhaustion
+        let success_count = [result1.is_ok(), result2.is_ok()].iter().filter(|&&x| x).count();
+        let failure_count = [result1.is_err(), result2.is_err()].iter().filter(|&&x| x).count();
+
+        assert_eq!(success_count, 1, "Exactly one decommission should succeed");
+        assert_eq!(failure_count, 1, "Exactly one decommission should fail due to safety constraint");
+
+        // Check that the failure is due to resource exhaustion (slot limit)
+        let error_msg = if result1.is_err() {
+            result1.unwrap_err().to_string()
+        } else {
+            result2.unwrap_err().to_string()
+        };
+        
+        assert!(
+            error_msg.contains("Maximum concurrent decommissions") || 
+            error_msg.contains("Resource exhausted"),
+            "Error should indicate decommission limit reached: {}", error_msg
+        );
     }
 }
