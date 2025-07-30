@@ -29,7 +29,7 @@ RustMQ's WebAssembly ETL system allows you to:
 
 Before starting, ensure you have:
 - RustMQ broker running with WASM ETL enabled
-- Rust toolchain with `wasm32-unknown-unknown` target
+- Rust 1.73+ toolchain with `wasm32-unknown-unknown` target
 - `wasm-pack` for building WebAssembly modules
 - Admin access to RustMQ cluster
 
