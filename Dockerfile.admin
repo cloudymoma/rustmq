@@ -1,6 +1,6 @@
 # Multi-stage build for RustMQ Admin CLI
 # Build stage
-FROM rust:1.70-slim-bullseye AS builder
+FROM rust:1.82-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -37,7 +37,7 @@ RUN ls -la target/release/ && \
     ldd target/release/rustmq-admin
 
 # Runtime stage
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
     vim \
     less \
     bash-completion \
-    libssl1.1 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create rustmq user and group
