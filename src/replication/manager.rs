@@ -223,6 +223,8 @@ mod tests {
             fsync_on_write: false,
             segment_size_bytes: 64 * 1024,
             buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
@@ -283,6 +285,8 @@ mod tests {
             fsync_on_write: false,
             segment_size_bytes: 64 * 1024,
             buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));

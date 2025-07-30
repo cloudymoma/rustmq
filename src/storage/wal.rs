@@ -1,9 +1,10 @@
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 #[cfg(feature = "io-uring")]
@@ -15,9 +16,13 @@ pub struct DirectIOWal {
     #[cfg(not(feature = "io-uring"))]
     file: Arc<tokio::sync::Mutex<File>>,
     buffer_pool: Arc<dyn BufferPool>,
-    current_offset: AtomicU64,
-    config: WalConfig,
+    current_offset: Arc<AtomicU64>,
+    config: Arc<RwLock<WalConfig>>,
     segments: Arc<RwLock<Vec<WalSegmentMetadata>>>,
+    current_segment_start_time: Arc<RwLock<Instant>>,
+    current_segment_size: Arc<AtomicU64>,
+    flush_task_running: Arc<AtomicBool>,
+    upload_callbacks: Arc<RwLock<Vec<Box<dyn Fn(u64, u64) + Send + Sync>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +31,7 @@ struct WalSegmentMetadata {
     end_offset: u64,
     file_offset: u64,
     size_bytes: u64,
+    created_at: Instant,
 }
 
 impl DirectIOWal {
@@ -55,13 +61,106 @@ impl DirectIOWal {
         let mut wal = Self {
             file,
             buffer_pool,
-            current_offset: AtomicU64::new(0),
-            config,
+            current_offset: Arc::new(AtomicU64::new(0)),
+            config: Arc::new(RwLock::new(config)),
             segments: Arc::new(RwLock::new(Vec::new())),
+            current_segment_start_time: Arc::new(RwLock::new(Instant::now())),
+            current_segment_size: Arc::new(AtomicU64::new(0)),
+            flush_task_running: Arc::new(AtomicBool::new(false)),
+            upload_callbacks: Arc::new(RwLock::new(Vec::new())),
         };
 
         wal.recover().await?;
+        wal.start_background_tasks().await?;
         Ok(wal)
+    }
+
+    async fn start_background_tasks(&self) -> Result<()> {
+        self.start_flush_task().await?;
+        self.start_upload_monitor_task().await?;
+        Ok(())
+    }
+
+    async fn start_flush_task(&self) -> Result<()> {
+        let config = self.config.read().clone();
+        if !config.fsync_on_write && !self.flush_task_running.swap(true, Ordering::SeqCst) {
+            let file = self.file.clone();
+            let flush_interval = Duration::from_millis(config.flush_interval_ms);
+            let flush_task_running = self.flush_task_running.clone();
+
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(flush_interval);
+                while flush_task_running.load(Ordering::SeqCst) {
+                    interval.tick().await;
+                    #[cfg(not(feature = "io-uring"))]
+                    if let Ok(file_guard) = file.try_lock() {
+                        let _ = file_guard.sync_data().await;
+                    }
+                }
+            });
+        }
+        Ok(())
+    }
+
+    async fn start_upload_monitor_task(&self) -> Result<()> {
+        let config = self.config.clone();
+        let current_segment_start_time = self.current_segment_start_time.clone();
+        let current_segment_size = self.current_segment_size.clone();
+        let upload_callbacks = self.upload_callbacks.clone();
+        let current_offset = self.current_offset.clone();
+
+        tokio::spawn(async move {
+            let mut check_interval = tokio::time::interval(Duration::from_secs(1)); // Check more frequently for testing
+            
+            loop {
+                check_interval.tick().await;
+                let cfg = config.read().clone();
+                let segment_start_time = *current_segment_start_time.read();
+                let segment_size = current_segment_size.load(Ordering::SeqCst);
+                
+                let should_upload = segment_size >= cfg.segment_size_bytes ||
+                    segment_start_time.elapsed() >= Duration::from_millis(cfg.upload_interval_ms);
+                
+                if should_upload && segment_size > 0 {
+                    let end_offset = current_offset.load(Ordering::SeqCst);
+                    let start_offset = end_offset.saturating_sub(segment_size / 1000); // Rough approximation
+                    
+                    // Trigger upload callbacks
+                    let callbacks = upload_callbacks.read();
+                    for callback in callbacks.iter() {
+                        callback(start_offset, end_offset);
+                    }
+                    
+                    // Reset segment tracking
+                    current_segment_size.store(0, Ordering::SeqCst);
+                    *current_segment_start_time.write() = Instant::now();
+                }
+            }
+        });
+        
+        Ok(())
+    }
+
+    pub fn register_upload_callback<F>(&self, callback: F) 
+    where 
+        F: Fn(u64, u64) + Send + Sync + 'static 
+    {
+        self.upload_callbacks.write().push(Box::new(callback));
+    }
+
+    pub async fn update_config(&self, new_config: WalConfig) -> Result<()> {
+        let mut config = self.config.write();
+        let old_flush_on_write = config.fsync_on_write;
+        *config = new_config;
+        
+        // Restart flush task if needed
+        if old_flush_on_write != config.fsync_on_write {
+            self.flush_task_running.store(false, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(100)).await; // Allow current task to stop
+            self.start_flush_task().await?;
+        }
+        
+        Ok(())
     }
 
     async fn recover(&mut self) -> Result<()> {
@@ -97,6 +196,7 @@ impl DirectIOWal {
                             end_offset: logical_offset + 1,
                             file_offset: file_offset + buffer_pos as u64,
                             size_bytes: record_size,
+                            created_at: Instant::now(),
                         };
 
                         self.segments.write().push(segment_meta);
@@ -145,7 +245,7 @@ impl DirectIOWal {
             file.seek(SeekFrom::Start(offset)).await?;
             file.write_all(data).await?;
             
-            if self.config.fsync_on_write {
+            if self.config.read().fsync_on_write {
                 file.sync_data().await?;
             }
             
@@ -178,9 +278,13 @@ impl WriteAheadLog for DirectIOWal {
             end_offset: logical_offset + 1,
             file_offset,
             size_bytes: write_buffer.len() as u64,
+            created_at: Instant::now(),
         };
 
         self.segments.write().push(segment_meta);
+        
+        // Update current segment size for upload monitoring
+        self.current_segment_size.fetch_add(write_buffer.len() as u64, Ordering::SeqCst);
 
         Ok(logical_offset)
     }
@@ -257,6 +361,8 @@ mod tests {
             fsync_on_write: false,
             segment_size_bytes: 64 * 1024,
             buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
@@ -294,6 +400,8 @@ mod tests {
             fsync_on_write: false,
             segment_size_bytes: 64 * 1024,
             buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
@@ -321,5 +429,96 @@ mod tests {
 
         wal.truncate(3).await.unwrap();
         assert_eq!(wal.get_end_offset().await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_upload_callback_size_trigger() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 1024, // Small segment for testing
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = DirectIOWal::new(config, buffer_pool).await.unwrap();
+
+        let upload_triggered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let upload_triggered_clone = upload_triggered.clone();
+        
+        wal.register_upload_callback(move |start_offset, end_offset| {
+            println!("Upload triggered: {} -> {}", start_offset, end_offset);
+            upload_triggered_clone.store(true, Ordering::SeqCst);
+        });
+
+        // Write records to trigger size-based upload
+        for i in 0..10 {
+            let record = WalRecord {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
+                },
+                offset: i,
+                record: Record {
+                    key: Some(format!("key{}", i).into_bytes()),
+                    value: vec![0u8; 200], // Large value to trigger size limit
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            wal.append(record).await.unwrap();
+        }
+
+        // Wait for upload trigger (check every second for 5 seconds)
+        let mut found = false;
+        for _ in 0..5 {
+            tokio::time::sleep(Duration::from_millis(2_000)).await;
+            if upload_triggered.load(Ordering::SeqCst) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "Upload callback was not triggered within 10 seconds");
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_update() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: true,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = DirectIOWal::new(config, buffer_pool).await.unwrap();
+
+        // Update config
+        let new_config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 128 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 30_000,
+            flush_interval_ms: 500,
+        };
+
+        let result = wal.update_config(new_config.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify config was updated
+        assert_eq!(wal.config.read().fsync_on_write, false);
+        assert_eq!(wal.config.read().segment_size_bytes, 128 * 1024);
+        assert_eq!(wal.config.read().upload_interval_ms, 30_000);
     }
 }

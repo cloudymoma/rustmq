@@ -10,6 +10,8 @@ pub mod admin;
 pub mod metrics;
 pub mod types;
 pub mod subscribers;
+pub mod scaling;
+pub mod operations;
 
 pub use error::{RustMqError, Result};
 pub use config::Config;

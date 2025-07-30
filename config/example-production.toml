@@ -1,0 +1,113 @@
+# RustMQ Production Configuration Example
+# This file demonstrates all available configuration options with production-ready values
+
+[broker]
+# Unique broker identifier (should be unique across the cluster)
+id = "broker-001"
+# Rack identifier for rack-aware partition placement
+rack_id = "rack-1"
+
+[network]
+# QUIC server listening address for client connections
+quic_listen = "0.0.0.0:9092"
+# gRPC server listening address for inter-broker communication
+rpc_listen = "0.0.0.0:9093"
+# Maximum concurrent client connections
+max_connections = 10000
+# Connection timeout in milliseconds
+connection_timeout_ms = 30000
+
+[wal]
+# Path to WAL storage (should be on fast NVMe SSD)
+path = "/data/wal"
+# Total WAL capacity in bytes (10GB)
+capacity_bytes = 10737418240
+# Enable fsync on every write for maximum durability (set to false for higher throughput)
+fsync_on_write = true
+# Segment size threshold for upload trigger (128MB for optimal object storage efficiency)
+segment_size_bytes = 134217728
+# Buffer size for WAL operations (64KB)
+buffer_size = 65536
+# Time interval for upload trigger regardless of size (10 minutes)
+upload_interval_ms = 600000
+# Flush interval when fsync_on_write is false (1 second)
+flush_interval_ms = 1000
+
+[cache]
+# Write cache size for hot data (1GB)
+write_cache_size_bytes = 1073741824
+# Read cache size for historical data (2GB)
+read_cache_size_bytes = 2147483648
+# Cache eviction policy (Lru, Lfu, Random)
+eviction_policy = "Lru"
+
+[object_storage]
+# Storage backend type (S3, Gcs, Azure, or Local)
+storage_type = "S3"
+# Object storage bucket name
+bucket = "rustmq-production-data"
+# Storage region
+region = "us-west-2"
+# Storage endpoint (for S3-compatible services)
+endpoint = "https://s3.us-west-2.amazonaws.com"
+# Access credentials (prefer IAM roles or environment variables in production)
+access_key = "${AWS_ACCESS_KEY_ID}"
+secret_key = "${AWS_SECRET_ACCESS_KEY}"
+# Multipart upload threshold (100MB)
+multipart_threshold = 104857600
+# Maximum concurrent uploads
+max_concurrent_uploads = 10
+
+[controller]
+# Controller endpoints for cluster coordination
+endpoints = ["controller-1:9094", "controller-2:9094", "controller-3:9094"]
+# Raft election timeout in milliseconds
+election_timeout_ms = 5000
+# Heartbeat interval in milliseconds
+heartbeat_interval_ms = 1000
+
+[replication]
+# Minimum in-sync replicas for durability
+min_in_sync_replicas = 2
+# Acknowledgment timeout in milliseconds
+ack_timeout_ms = 5000
+# Maximum acceptable replication lag in milliseconds
+max_replication_lag = 1000
+
+[etl]
+# Enable WebAssembly ETL processing
+enabled = true
+# Memory limit for WASM execution (64MB)
+memory_limit_bytes = 67108864
+# ETL execution timeout in milliseconds
+execution_timeout_ms = 5000
+# Maximum concurrent ETL executions
+max_concurrent_executions = 100
+
+[scaling]
+# Maximum number of brokers that can be added simultaneously
+max_concurrent_additions = 3
+# Timeout for partition rebalancing during scaling operations (5 minutes)
+rebalance_timeout_ms = 300000
+# Gradual traffic migration rate (10% per minute)
+traffic_migration_rate = 0.1
+# Health check timeout for new brokers (30 seconds)
+health_check_timeout_ms = 30000
+
+[operations]
+# Enable runtime configuration updates without restart
+allow_runtime_config_updates = true
+# Rolling upgrade velocity (1 broker per minute for safety)
+upgrade_velocity = 1
+# Graceful shutdown timeout (1 minute)
+graceful_shutdown_timeout_ms = 60000
+
+[operations.kubernetes]
+# Use StatefulSets for deployment (recommended for production)
+use_stateful_sets = true
+# Persistent volume claim storage class (use fast SSD)
+pvc_storage_class = "fast-ssd"
+# Volume size for WAL storage
+wal_volume_size = "50Gi"
+# Enable pod affinity for volume attachment
+enable_pod_affinity = true

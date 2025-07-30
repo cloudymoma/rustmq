@@ -11,6 +11,8 @@ pub struct Config {
     pub controller: ControllerConfig,
     pub replication: ReplicationConfig,
     pub etl: EtlConfig,
+    pub scaling: ScalingConfig,
+    pub operations: OperationsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +36,10 @@ pub struct WalConfig {
     pub fsync_on_write: bool,
     pub segment_size_bytes: u64,
     pub buffer_size: usize,
+    /// Time interval in milliseconds after which WAL segments are uploaded regardless of size
+    pub upload_interval_ms: u64,
+    /// Flush interval in milliseconds when fsync_on_write is false
+    pub flush_interval_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +98,42 @@ pub struct EtlConfig {
     pub max_concurrent_executions: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalingConfig {
+    /// Maximum number of brokers that can be added simultaneously
+    pub max_concurrent_additions: usize,
+    /// Timeout for partition rebalancing during scaling operations (ms)
+    pub rebalance_timeout_ms: u64,
+    /// Gradual traffic migration rate (0.0 to 1.0 per minute)
+    pub traffic_migration_rate: f64,
+    /// Health check timeout for new brokers (ms)
+    pub health_check_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationsConfig {
+    /// Enable runtime configuration updates
+    pub allow_runtime_config_updates: bool,
+    /// Rolling upgrade velocity (brokers per minute)
+    pub upgrade_velocity: usize,
+    /// Graceful shutdown timeout (ms)
+    pub graceful_shutdown_timeout_ms: u64,
+    /// Kubernetes deployment configuration
+    pub kubernetes: KubernetesConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KubernetesConfig {
+    /// Use StatefulSets for deployment
+    pub use_stateful_sets: bool,
+    /// Persistent volume claim template
+    pub pvc_storage_class: String,
+    /// Volume size for WAL storage
+    pub wal_volume_size: String,
+    /// Pod affinity rules for volume attachment
+    pub enable_pod_affinity: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -109,8 +151,10 @@ impl Default for Config {
                 path: PathBuf::from("/tmp/rustmq/wal"),
                 capacity_bytes: 10 * 1024 * 1024 * 1024, // 10GB
                 fsync_on_write: true,
-                segment_size_bytes: 1024 * 1024 * 1024, // 1GB
+                segment_size_bytes: 128 * 1024 * 1024, // 128MB
                 buffer_size: 64 * 1024, // 64KB
+                upload_interval_ms: 10 * 60 * 1000, // 10 minutes
+                flush_interval_ms: 1000, // 1 second
             },
             cache: CacheConfig {
                 write_cache_size_bytes: 1024 * 1024 * 1024, // 1GB
@@ -144,6 +188,23 @@ impl Default for Config {
                 memory_limit_bytes: 64 * 1024 * 1024, // 64MB
                 execution_timeout_ms: 5000,
                 max_concurrent_executions: 100,
+            },
+            scaling: ScalingConfig {
+                max_concurrent_additions: 3,
+                rebalance_timeout_ms: 300_000, // 5 minutes
+                traffic_migration_rate: 0.1, // 10% per minute
+                health_check_timeout_ms: 30_000, // 30 seconds
+            },
+            operations: OperationsConfig {
+                allow_runtime_config_updates: true,
+                upgrade_velocity: 1, // 1 broker per minute
+                graceful_shutdown_timeout_ms: 60_000, // 1 minute
+                kubernetes: KubernetesConfig {
+                    use_stateful_sets: true,
+                    pvc_storage_class: "fast-ssd".to_string(),
+                    wal_volume_size: "50Gi".to_string(),
+                    enable_pod_affinity: true,
+                },
             },
         }
     }

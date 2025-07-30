@@ -1,0 +1,81 @@
+# RustMQ Development Configuration Example
+# This configuration is optimized for local development and testing
+
+[broker]
+id = "dev-broker-001"
+rack_id = "local"
+
+[network]
+quic_listen = "127.0.0.1:9092"
+rpc_listen = "127.0.0.1:9093"
+max_connections = 1000
+connection_timeout_ms = 10000
+
+[wal]
+# Use temporary directory for development
+path = "/tmp/rustmq/wal"
+# Smaller capacity for development (1GB)
+capacity_bytes = 1073741824
+# Disable fsync for faster development iteration
+fsync_on_write = false
+# Smaller segments for faster testing (16MB)
+segment_size_bytes = 16777216
+buffer_size = 16384
+# Shorter upload interval for testing (1 minute)
+upload_interval_ms = 60000
+# Frequent flush for development (500ms)
+flush_interval_ms = 500
+
+[cache]
+# Smaller caches for development
+write_cache_size_bytes = 67108864  # 64MB
+read_cache_size_bytes = 134217728  # 128MB
+eviction_policy = "Lru"
+
+[object_storage]
+# Use local filesystem for development
+storage_type = { Local = { path = "/tmp/rustmq/storage" } }
+bucket = "dev-bucket"
+region = "local"
+endpoint = ""
+access_key = ""
+secret_key = ""
+# Smaller thresholds for development
+multipart_threshold = 10485760  # 10MB
+max_concurrent_uploads = 2
+
+[controller]
+endpoints = ["127.0.0.1:9094"]
+election_timeout_ms = 2000
+heartbeat_interval_ms = 500
+
+[replication]
+# Single replica for development
+min_in_sync_replicas = 1
+ack_timeout_ms = 2000
+max_replication_lag = 5000
+
+[etl]
+enabled = true
+memory_limit_bytes = 16777216  # 16MB
+execution_timeout_ms = 2000
+max_concurrent_executions = 10
+
+[scaling]
+# Allow single broker operations for development
+max_concurrent_additions = 1
+rebalance_timeout_ms = 60000  # 1 minute
+traffic_migration_rate = 1.0  # 100% immediate for development
+health_check_timeout_ms = 10000  # 10 seconds
+
+[operations]
+allow_runtime_config_updates = true
+# Faster upgrades for development
+upgrade_velocity = 5  # 5 brokers per minute
+graceful_shutdown_timeout_ms = 10000  # 10 seconds
+
+[operations.kubernetes]
+use_stateful_sets = false  # Use Deployments for development
+pvc_storage_class = "standard"
+wal_volume_size = "10Gi"
+enable_pod_affinity = false

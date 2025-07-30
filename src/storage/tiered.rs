@@ -346,6 +346,8 @@ mod tests {
             fsync_on_write: false,
             segment_size_bytes: 64 * 1024,
             buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
         };
 
         let cache_config = CacheConfig {

@@ -40,7 +40,7 @@ cargo run --bin rustmq-admin -- --config config/admin.toml
 
 ## Architecture Overview
 
-RustMQ is a cloud-native distributed message queue system with a **storage-compute separation architecture**. The system is designed around several key architectural principles:
+RustMQ is a cloud-native distributed message queue system with a **storage-compute separation architecture**. The system is designed around several key architectural principles with comprehensive operational capabilities for production deployment.
 
 ### Core Architecture Pattern
 
@@ -50,7 +50,11 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
 
 1. **Storage Layer** (`src/storage/`):
    - **TieredStorageEngine**: Orchestrates the two-tier storage architecture
-   - **DirectIOWal**: Local NVMe WAL for low-latency writes, uses circular buffer design
+   - **DirectIOWal**: Enhanced local NVMe WAL with intelligent upload triggers and configurable flush behavior
+     - Size-based upload triggers (default: 128MB segments)
+     - Time-based upload triggers (default: 10 minutes)
+     - Runtime configuration updates
+     - Background flush tasks when fsync is disabled
    - **ObjectStorage**: Abstracts cloud storage backends (S3/GCS/Azure/Local)
    - **CacheManager**: Manages separate write (hot) and read (cold) caches for workload isolation
    - **BufferPool**: Aligned buffer management for zero-copy operations
@@ -70,6 +74,19 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
    - Manages partition leadership assignment and load balancing
    - Metadata consistency across the cluster
 
+5. **Scaling Operations** (`src/scaling/`):
+   - **ScalingManager**: Automated broker addition and removal
+   - **PartitionRebalancer**: Intelligent partition redistribution
+   - Batch broker addition support (configurable concurrency)
+   - Safety-first single broker removal
+   - Real-time progress tracking and health verification
+
+6. **Operational Management** (`src/operations/`):
+   - **RollingUpgradeManager**: Zero-downtime cluster upgrades
+   - **KubernetesDeploymentManager**: Production-ready Kubernetes manifests
+   - **VolumeRecoveryManager**: Persistent volume recovery for broker failures
+   - **RuntimeConfigManager**: Hot configuration updates without restarts
+
 ### Data Flow Architecture
 
 ```
@@ -83,7 +100,9 @@ Client → QUIC → Broker → Local WAL → Cache → Object Storage
 2. Written to local WAL (sync or async based on durability requirements)
 3. Cached in write cache
 4. Replicated to followers
-5. Asynchronously uploaded to object storage
+5. Intelligent upload to object storage based on:
+   - Segment size threshold (configurable, default 128MB)
+   - Time interval threshold (configurable, default 10 minutes)
 6. WAL space reclaimed after successful upload
 
 **Read Path**:
@@ -92,6 +111,11 @@ Client → QUIC → Broker → Local WAL → Cache → Object Storage
 3. Fetch from object storage if cache miss
 4. Populate read cache
 
+**Operational Flows**:
+- **Scaling Operations**: Automated broker addition/removal with partition rebalancing
+- **Rolling Upgrades**: Zero-downtime version upgrades with health verification
+- **Volume Recovery**: Automatic persistent volume reattachment in Kubernetes environments
+
 ### Critical Design Decisions
 
 - **Shared Storage**: Enables instant broker scaling and eliminates expensive data rebalancing
@@ -99,32 +123,66 @@ Client → QUIC → Broker → Local WAL → Cache → Object Storage
 - **QUIC Protocol**: Reduces connection overhead and eliminates head-of-line blocking vs TCP
 - **WebAssembly ETL**: Secure, sandboxed real-time data processing
 - **Object Storage Optimization**: Intelligent compaction and bandwidth limiting for cost efficiency
+- **Intelligent Upload Triggers**: Dual conditions (size + time) ensure optimal object storage utilization
+- **Runtime Configuration**: Hot updates without service interruption for operational flexibility
 
 ## Key Traits and Abstractions
 
 The codebase heavily uses async traits to abstract major components:
 
-- `WriteAheadLog`: Local persistence interface
+### Core Storage Traits
+- `WriteAheadLog`: Local persistence interface with upload callback support
 - `ObjectStorage`: Cloud storage backend interface  
 - `Cache`: Caching layer interface
 - `ReplicationManager`: Replication coordination interface
 - `Stream`: High-level streaming interface
 
+### Operational Traits
+- `ScalingManager`: Automated broker scaling operations
+- `PartitionRebalancer`: Intelligent partition redistribution algorithms
+- `RollingUpgradeManager`: Zero-downtime upgrade orchestration
+- `BrokerUpgradeOperations`: Individual broker upgrade operations
+- `RuntimeConfigManager`: Dynamic configuration management
+
 ## Configuration System
 
-All configuration is centralized in `src/config.rs` with TOML file support. Key configuration sections:
+All configuration is centralized in `src/config.rs` with TOML file support and runtime update capabilities. Key configuration sections:
+
+### Core Configuration
 - `BrokerConfig`: Broker identity and rack awareness
-- `WalConfig`: WAL path, capacity, sync behavior
+- `WalConfig`: Enhanced WAL configuration with upload triggers and flush behavior
+  - `segment_size_bytes`: Upload threshold (default: 128MB)
+  - `upload_interval_ms`: Time-based upload trigger (default: 10 minutes)
+  - `flush_interval_ms`: Background flush interval when fsync is disabled
 - `CacheConfig`: Cache sizes and eviction policies
 - `ObjectStorageConfig`: Backend type and connection settings
 - `ReplicationConfig`: Acknowledgment levels and timeouts
 
+### Operational Configuration
+- `ScalingConfig`: Broker scaling operation parameters
+  - `max_concurrent_additions`: Maximum brokers added simultaneously
+  - `rebalance_timeout_ms`: Partition rebalancing timeout
+  - `traffic_migration_rate`: Gradual traffic migration rate
+  - `health_check_timeout_ms`: Health verification timeout
+- `OperationsConfig`: Rolling upgrade and maintenance settings
+  - `allow_runtime_config_updates`: Enable hot configuration updates
+  - `upgrade_velocity`: Brokers upgraded per minute
+  - `graceful_shutdown_timeout_ms`: Graceful shutdown timeout
+- `KubernetesConfig`: Container orchestration settings
+  - `use_stateful_sets`: Enable StatefulSet deployment
+  - `pvc_storage_class`: Persistent volume storage class
+  - `wal_volume_size`: WAL volume size specification
+  - `enable_pod_affinity`: Pod affinity for volume attachment
+
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (16 tests currently passing). Tests use:
+The codebase has comprehensive unit tests (43 tests currently passing). Tests use:
 - `tempfile` for temporary directories in storage tests
-- Mock implementations for external dependencies
+- Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
+- Integration tests for scaling and operational workflows
+- Async test patterns for background task verification
+- Timeout-based tests for upload triggers and configuration updates
 
 ## Error Handling
 
@@ -151,8 +209,33 @@ Centralized error handling through `src/error.rs` with:
 
 - `types.rs`: Core type definitions used across all modules
 - `error.rs`: Error types used everywhere
-- `config.rs`: Configuration structures
+- `config.rs`: Configuration structures with runtime update support
 - `storage/`: Core storage abstractions and implementations
 - `replication/`: Replication logic depends on storage traits
 - `network/`: Protocol handlers depend on storage and replication
 - `controller/`: Cluster coordination depends on all other modules
+- `scaling/`: Broker scaling operations depend on storage and replication
+- `operations/`: Operational management depends on scaling and storage modules
+
+## Production Deployment
+
+### Kubernetes Deployment
+RustMQ provides production-ready Kubernetes manifests including:
+- **StatefulSets**: For persistent broker deployment with volume affinity
+- **Services**: Headless services for broker discovery and external access
+- **ConfigMaps**: Centralized configuration management
+- **PodDisruptionBudgets**: High availability during maintenance
+- **HorizontalPodAutoscaler**: Automatic scaling based on resource metrics
+
+### Operational Features
+- **Zero-downtime Rolling Upgrades**: Coordinated version updates with health verification
+- **Automated Broker Scaling**: Add multiple brokers or remove single brokers safely
+- **Volume Recovery**: Automatic persistent volume reattachment after pod failures
+- **Runtime Configuration**: Hot configuration updates without service interruption
+- **Intelligent Upload Management**: Optimized object storage utilization with dual triggers
+
+### Monitoring and Observability
+- Upload callback hooks for monitoring WAL segment uploads
+- Progress tracking for scaling and upgrade operations
+- Health check endpoints for Kubernetes probes
+- Comprehensive error propagation and logging
