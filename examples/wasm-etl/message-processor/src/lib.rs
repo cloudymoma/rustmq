@@ -247,8 +247,14 @@ fn transform_json_message(mut message: Message, config: &TransformationConfig) -
         if config.enable_temperature_conversion {
             if let Some(temp_c) = obj.get("temperature_celsius").and_then(|v| v.as_f64()) {
                 let temp_f = (temp_c * 9.0 / 5.0) + 32.0;
-                obj.insert("temperature_fahrenheit".to_string(), 
-                    serde_json::Number::from_f64(temp_f).unwrap().into());
+                // Handle potential NaN/Infinity values gracefully
+                if let Some(temp_f_number) = serde_json::Number::from_f64(temp_f) {
+                    obj.insert("temperature_fahrenheit".to_string(), temp_f_number.into());
+                } else {
+                    // Log error or skip field if temperature conversion resulted in invalid number
+                    obj.insert("temperature_conversion_error".to_string(), 
+                        "Invalid temperature value (NaN or Infinity)".into());
+                }
             }
         }
 
@@ -597,5 +603,69 @@ mod tests {
         assert_eq!(detect_language("Hola, este es el test"), "es");
         assert_eq!(detect_language("Bonjour, c'est le test"), "fr");
         assert_eq!(detect_language("Something else"), "unknown");
+    }
+
+    #[test]
+    fn test_temperature_conversion_with_invalid_values() {
+        // Test with NaN temperature value
+        let message_nan = Message {
+            key: Some("test-key".to_string()),
+            value: r#"{"temperature_celsius": "invalid"}"#.as_bytes().to_vec(),
+            headers: {
+                let mut h = HashMap::new();
+                h.insert("content-type".to_string(), "application/json".to_string());
+                h.insert("source".to_string(), "sensor-network".to_string());
+                h
+            },
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+
+        // Should handle invalid temperature gracefully
+        let result = transform_message(message_nan).unwrap();
+        assert_eq!(result.transformed_messages.len(), 1);
+
+        // Test with a JSON that would produce NaN when processed
+        let message_with_nan_calc = Message {
+            key: Some("test-key".to_string()),
+            value: r#"{"temperature_celsius": null}"#.as_bytes().to_vec(),
+            headers: {
+                let mut h = HashMap::new();
+                h.insert("content-type".to_string(), "application/json".to_string());
+                h.insert("source".to_string(), "sensor-network".to_string());
+                h
+            },
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+
+        // Should handle null temperature value gracefully (gets skipped)
+        let result = transform_message(message_with_nan_calc).unwrap();
+        assert_eq!(result.transformed_messages.len(), 1);
+
+        // Test with extremely large temperature that could result in infinity
+        // Use a value that will cause overflow during calculation: large enough that (x * 9/5 + 32) = infinity
+        let message_large_temp = Message {
+            key: Some("test-key".to_string()),
+            value: r#"{"temperature_celsius": 1e308}"#.as_bytes().to_vec(),
+            headers: {
+                let mut h = HashMap::new();
+                h.insert("content-type".to_string(), "application/json".to_string());
+                h.insert("source".to_string(), "sensor-network".to_string());
+                h
+            },
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+
+        // Should handle extreme temperature values gracefully
+        let result = transform_message(message_large_temp).unwrap();
+        assert_eq!(result.transformed_messages.len(), 1);
+        
+        // Check that error was recorded instead of causing panic
+        let transformed = &result.transformed_messages[0];
+        let json: serde_json::Value = serde_json::from_slice(&transformed.value).unwrap();
+        
+        // Should have either temperature_fahrenheit or temperature_conversion_error
+        let has_temp_f = json.get("temperature_fahrenheit").is_some();
+        let has_temp_error = json.get("temperature_conversion_error").is_some();
+        assert!(has_temp_f || has_temp_error, "Should have either converted temperature or error message");
     }
 }

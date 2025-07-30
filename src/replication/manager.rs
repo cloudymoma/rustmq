@@ -9,7 +9,9 @@ use tokio::time::timeout;
 
 pub struct ReplicationManager {
     stream_id: u64,
+    topic_partition: TopicPartition,
     current_leader: Option<BrokerId>,
+    leader_epoch: AtomicU64,
     replica_set: Vec<BrokerId>,
     
     log_end_offset: AtomicU64,
@@ -25,20 +27,30 @@ pub struct ReplicationManager {
 
 #[async_trait]
 pub trait ReplicationRpcClient: Send + Sync {
-    async fn send_record(&self, broker_id: &BrokerId, record: WalRecord) -> Result<()>;
-    async fn send_heartbeat(&self, broker_id: &BrokerId) -> Result<FollowerState>;
+    async fn replicate_data(&self, broker_id: &BrokerId, request: ReplicateDataRequest) -> Result<ReplicateDataResponse>;
+    async fn send_heartbeat(&self, broker_id: &BrokerId, request: HeartbeatRequest) -> Result<FollowerState>;
 }
 
 pub struct MockReplicationRpcClient;
 
 #[async_trait]
 impl ReplicationRpcClient for MockReplicationRpcClient {
-    async fn send_record(&self, _broker_id: &BrokerId, _record: WalRecord) -> Result<()> {
+    async fn replicate_data(&self, _broker_id: &BrokerId, _request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
         tokio::time::sleep(Duration::from_millis(1)).await;
-        Ok(())
+        Ok(ReplicateDataResponse {
+            success: true,
+            error_code: 0,
+            error_message: None,
+            follower_state: Some(FollowerState {
+                broker_id: _broker_id.clone(),
+                last_known_offset: 0,
+                last_heartbeat: chrono::Utc::now(),
+                lag: 0,
+            }),
+        })
     }
 
-    async fn send_heartbeat(&self, broker_id: &BrokerId) -> Result<FollowerState> {
+    async fn send_heartbeat(&self, broker_id: &BrokerId, _request: HeartbeatRequest) -> Result<FollowerState> {
         Ok(FollowerState {
             broker_id: broker_id.clone(),
             last_known_offset: 0,
@@ -51,7 +63,9 @@ impl ReplicationRpcClient for MockReplicationRpcClient {
 impl ReplicationManager {
     pub fn new(
         stream_id: u64,
+        topic_partition: TopicPartition,
         leader: BrokerId,
+        leader_epoch: u64,
         replica_set: Vec<BrokerId>,
         config: ReplicationConfig,
         wal: Arc<dyn WriteAheadLog>,
@@ -59,7 +73,9 @@ impl ReplicationManager {
     ) -> Self {
         Self {
             stream_id,
+            topic_partition,
             current_leader: Some(leader),
+            leader_epoch: AtomicU64::new(leader_epoch),
             replica_set,
             log_end_offset: AtomicU64::new(0),
             high_watermark: AtomicU64::new(0),
@@ -78,8 +94,32 @@ impl ReplicationManager {
     }
 
     async fn send_to_follower(&self, broker_id: BrokerId, record: WalRecord) -> Result<()> {
-        timeout(self.ack_timeout, self.rpc_client.send_record(&broker_id, record)).await
-            .map_err(|_| crate::error::RustMqError::Timeout)?
+        let current_epoch = self.leader_epoch.load(Ordering::SeqCst);
+        let leader_id = self.current_leader.as_ref().ok_or(crate::error::RustMqError::NoLeader)?.clone();
+        
+        let request = ReplicateDataRequest {
+            leader_epoch: current_epoch,
+            topic_partition: self.topic_partition.clone(),
+            records: vec![record],
+            leader_id,
+        };
+
+        let response = timeout(self.ack_timeout, self.rpc_client.replicate_data(&broker_id, request)).await
+            .map_err(|_| crate::error::RustMqError::Timeout)??;
+
+        if !response.success {
+            return Err(crate::error::RustMqError::ReplicationFailed {
+                broker_id,
+                error_message: response.error_message.unwrap_or_else(|| "Unknown error".to_string()),
+            });
+        }
+
+        // Update follower state if provided
+        if let Some(follower_state) = response.follower_state {
+            self.update_follower_state(follower_state).await;
+        }
+
+        Ok(())
     }
 
     async fn wait_for_acknowledgments(&self, record: WalRecord, local_offset: Offset) -> Result<ReplicationResult> {
@@ -144,6 +184,9 @@ impl ReplicationManager {
         let rpc_client = self.rpc_client.clone();
         let replica_set = self.replica_set.clone();
         let current_leader = self.current_leader.clone();
+        let topic_partition = self.topic_partition.clone();
+        let leader_epoch = Arc::new(AtomicU64::new(self.leader_epoch.load(Ordering::SeqCst)));
+        let high_watermark = Arc::new(AtomicU64::new(self.high_watermark.load(Ordering::SeqCst)));
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -157,14 +200,48 @@ impl ReplicationManager {
                     .cloned()
                     .collect();
 
-                for broker_id in followers {
-                    if let Ok(state) = rpc_client.send_heartbeat(&broker_id).await {
-                        let mut states = follower_states.write();
-                        states.insert(broker_id, state);
+                if let Some(ref leader_id) = current_leader {
+                    let current_epoch = leader_epoch.load(Ordering::SeqCst);
+                    let current_hwm = high_watermark.load(Ordering::SeqCst);
+                    
+                    let heartbeat_request = HeartbeatRequest {
+                        leader_epoch: current_epoch,
+                        leader_id: leader_id.clone(),
+                        topic_partition: topic_partition.clone(),
+                        high_watermark: current_hwm,
+                    };
+
+                    for broker_id in followers {
+                        if let Ok(state) = rpc_client.send_heartbeat(&broker_id, heartbeat_request.clone()).await {
+                            let mut states = follower_states.write();
+                            states.insert(broker_id, state);
+                        }
                     }
                 }
             }
         });
+    }
+
+    /// Update leader epoch when leadership changes
+    pub fn update_leader_epoch(&self, new_epoch: u64) {
+        self.leader_epoch.store(new_epoch, Ordering::SeqCst);
+    }
+
+    /// Get current leader epoch
+    pub fn get_leader_epoch(&self) -> u64 {
+        self.leader_epoch.load(Ordering::SeqCst)
+    }
+
+    /// Validate incoming replication request epoch
+    pub fn validate_leader_epoch(&self, request_epoch: u64) -> Result<()> {
+        let current_epoch = self.leader_epoch.load(Ordering::SeqCst);
+        if request_epoch < current_epoch {
+            return Err(crate::error::RustMqError::StaleLeaderEpoch {
+                request_epoch,
+                current_epoch,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -243,9 +320,16 @@ mod tests {
             "broker-3".to_string(),
         ];
 
+        let topic_partition = crate::types::TopicPartition {
+            topic: "test-topic".to_string(),
+            partition: 0,
+        };
+
         let replication_manager = ReplicationManager::new(
             1,
+            topic_partition,
             "broker-1".to_string(),
+            1, // leader_epoch
             replica_set,
             config,
             wal,
@@ -272,8 +356,12 @@ mod tests {
 
         replication_manager.add_follower("broker-4".to_string()).await.unwrap();
         let states = replication_manager.get_follower_states().await.unwrap();
-        assert_eq!(states.len(), 1);
-        assert_eq!(states[0].broker_id, "broker-4");
+        // Should have 3 follower states: broker-2, broker-3 (from replication), and broker-4 (manually added)
+        assert_eq!(states.len(), 3);
+        
+        // Check that broker-4 is in the states
+        let broker_4_state = states.iter().find(|s| s.broker_id == "broker-4");
+        assert!(broker_4_state.is_some());
     }
 
     #[tokio::test]
@@ -301,9 +389,16 @@ mod tests {
 
         let replica_set = vec!["broker-1".to_string()]; // Only leader, no followers
 
+        let topic_partition = crate::types::TopicPartition {
+            topic: "test-topic".to_string(),
+            partition: 0,
+        };
+
         let replication_manager = ReplicationManager::new(
             1,
+            topic_partition,
             "broker-1".to_string(),
+            1, // leader_epoch
             replica_set,
             config,
             wal,

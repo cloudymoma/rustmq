@@ -160,3 +160,27 @@ pub struct FetchResponse {
     pub error_code: u32,
     pub error_message: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicateDataRequest {
+    pub leader_epoch: u64,
+    pub topic_partition: TopicPartition,
+    pub records: Vec<WalRecord>,
+    pub leader_id: BrokerId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicateDataResponse {
+    pub success: bool,
+    pub error_code: u32,
+    pub error_message: Option<String>,
+    pub follower_state: Option<FollowerState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatRequest {
+    pub leader_epoch: u64,
+    pub leader_id: BrokerId,
+    pub topic_partition: TopicPartition,
+    pub high_watermark: Offset,
+}

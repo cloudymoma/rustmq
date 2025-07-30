@@ -90,4 +90,19 @@ pub enum RustMqError {
 
     #[error("Not found: {0}")]
     NotFound(String),
+
+    #[error("No leader found")]
+    NoLeader,
+
+    #[error("Replication failed to broker {broker_id}: {error_message}")]
+    ReplicationFailed {
+        broker_id: String,
+        error_message: String,
+    },
+
+    #[error("Stale leader epoch: request epoch {request_epoch}, current epoch {current_epoch}")]
+    StaleLeaderEpoch {
+        request_epoch: u64,
+        current_epoch: u64,
+    },
 }
