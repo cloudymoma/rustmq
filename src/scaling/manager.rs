@@ -149,10 +149,10 @@ impl ScalingManagerImpl {
             let start_time = Instant::now();
             let timeout = Duration::from_millis(config.health_check_timeout_ms);
             
-            while start_time.elapsed() < timeout {
-                // Simulate health check
+            // Simulate health check with timeout
+            if start_time.elapsed() < timeout {
+                // For testing, assume health check passes immediately
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                break; // For testing, assume health check passes
             }
 
             let progress = 0.25 + 0.25 * (i + 1) as f64 / broker_ids.len() as f64;
