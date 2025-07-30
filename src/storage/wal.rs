@@ -21,6 +21,7 @@ pub struct DirectIOWal {
     segments: Arc<RwLock<Vec<WalSegmentMetadata>>>,
     current_segment_start_time: Arc<RwLock<Instant>>,
     current_segment_size: Arc<AtomicU64>,
+    current_segment_start_offset: Arc<AtomicU64>,
     flush_task_running: Arc<AtomicBool>,
     upload_callbacks: Arc<RwLock<Vec<Box<dyn Fn(u64, u64) + Send + Sync>>>>,
 }
@@ -66,6 +67,7 @@ impl DirectIOWal {
             segments: Arc::new(RwLock::new(Vec::new())),
             current_segment_start_time: Arc::new(RwLock::new(Instant::now())),
             current_segment_size: Arc::new(AtomicU64::new(0)),
+            current_segment_start_offset: Arc::new(AtomicU64::new(0)),
             flush_task_running: Arc::new(AtomicBool::new(false)),
             upload_callbacks: Arc::new(RwLock::new(Vec::new())),
         };
@@ -106,6 +108,7 @@ impl DirectIOWal {
         let config = self.config.clone();
         let current_segment_start_time = self.current_segment_start_time.clone();
         let current_segment_size = self.current_segment_size.clone();
+        let current_segment_start_offset = self.current_segment_start_offset.clone();
         let upload_callbacks = self.upload_callbacks.clone();
         let current_offset = self.current_offset.clone();
 
@@ -123,7 +126,7 @@ impl DirectIOWal {
                 
                 if should_upload && segment_size > 0 {
                     let end_offset = current_offset.load(Ordering::SeqCst);
-                    let start_offset = end_offset.saturating_sub(segment_size / 1000); // Rough approximation
+                    let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
                     
                     // Trigger upload callbacks
                     let callbacks = upload_callbacks.read();
@@ -131,8 +134,9 @@ impl DirectIOWal {
                         callback(start_offset, end_offset);
                     }
                     
-                    // Reset segment tracking
+                    // Reset segment tracking for next segment
                     current_segment_size.store(0, Ordering::SeqCst);
+                    current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
                     *current_segment_start_time.write() = Instant::now();
                 }
             }
@@ -210,6 +214,8 @@ impl DirectIOWal {
             }
 
             self.current_offset.store(logical_offset, Ordering::SeqCst);
+            // After recovery, the current segment starts from the recovered offset
+            self.current_segment_start_offset.store(logical_offset, Ordering::SeqCst);
         }
 
         Ok(())
@@ -338,11 +344,17 @@ impl WriteAheadLog for DirectIOWal {
         let mut segments = self.segments.write();
         segments.retain(|seg| seg.start_offset < offset);
         self.current_offset.store(offset, Ordering::SeqCst);
+        // After truncation, the current segment starts from the truncated offset
+        self.current_segment_start_offset.store(offset, Ordering::SeqCst);
         Ok(())
     }
 
     async fn get_end_offset(&self) -> Result<u64> {
         Ok(self.current_offset.load(Ordering::SeqCst))
+    }
+
+    fn register_upload_callback(&self, callback: Box<dyn Fn(u64, u64) + Send + Sync>) {
+        self.upload_callbacks.write().push(callback);
     }
 }
 
@@ -520,5 +532,68 @@ mod tests {
         assert_eq!(wal.config.read().fsync_on_write, false);
         assert_eq!(wal.config.read().segment_size_bytes, 128 * 1024);
         assert_eq!(wal.config.read().upload_interval_ms, 30_000);
+    }
+
+    #[tokio::test]
+    async fn test_precise_segment_offset_tracking() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 1024, // Small segment for testing
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = DirectIOWal::new(config, buffer_pool).await.unwrap();
+
+        // Track upload callbacks with precise offsets
+        let callback_results = Arc::new(std::sync::Mutex::new(Vec::<(u64, u64)>::new()));
+        let callback_results_clone = callback_results.clone();
+        
+        wal.register_upload_callback(move |start_offset, end_offset| {
+            callback_results_clone.lock().unwrap().push((start_offset, end_offset));
+        });
+
+        // Append several records
+        let mut expected_end_offset = 0;
+        for i in 0..5 {
+            let record = WalRecord {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
+                },
+                offset: i,
+                record: Record {
+                    key: Some(format!("key{}", i).into_bytes()),
+                    value: vec![0u8; 200], // Large value to trigger size limit quickly
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            expected_end_offset = wal.append(record).await.unwrap() + 1;
+        }
+
+        // Wait for upload callback to be triggered by size
+        tokio::time::sleep(Duration::from_millis(2_000)).await;
+
+        // Verify that the callback was called with precise offsets
+        let results = callback_results.lock().unwrap();
+        assert!(results.len() > 0, "Upload callback should have been triggered");
+        
+        for (start_offset, end_offset) in results.iter() {
+            // Verify that start_offset is precise (not a rough approximation)
+            assert!(*start_offset <= *end_offset, "Start offset should be <= end offset");
+            assert!(*start_offset == 0 || *start_offset < *end_offset, "Offsets should be logical and precise");
+            
+            // The first segment should start at 0
+            if results.len() == 1 {
+                assert_eq!(*start_offset, 0, "First segment should start at offset 0");
+            }
+        }
     }
 }

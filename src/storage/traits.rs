@@ -10,6 +10,7 @@ pub trait WriteAheadLog: Send + Sync {
     async fn sync(&self) -> Result<()>;
     async fn truncate(&self, offset: u64) -> Result<()>;
     async fn get_end_offset(&self) -> Result<u64>;
+    fn register_upload_callback(&self, callback: Box<dyn Fn(u64, u64) + Send + Sync>);
 }
 
 #[async_trait]
