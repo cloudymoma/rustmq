@@ -1,0 +1,41 @@
+{
+  "pipeline_name": "message-transformation-example",
+  "description": "Example ETL pipeline demonstrating comprehensive message processing",
+  "source_topic": "raw-events",
+  "destination_topic": "processed-events", 
+  "error_topic": "etl-errors",
+  "module_name": "message-processor",
+  "module_version": "1.0.0",
+  "configuration": {
+    "batch_size": 1,
+    "processing_mode": "single_message",
+    "timeout_ms": 1000,
+    "memory_limit_bytes": 67108864,
+    "retry_policy": {
+      "max_retries": 3,
+      "backoff_ms": 100,
+      "backoff_multiplier": 2.0
+    },
+    "error_handling": {
+      "send_to_dlq": true,
+      "continue_on_error": true,
+      "max_consecutive_failures": 10
+    }
+  },
+  "filters": {
+    "source_topics": ["raw-events"],
+    "headers": {
+      "source": "*",
+      "content-type": ["application/json", "text/plain"]
+    },
+    "message_size_max": 1048576
+  },
+  "monitoring": {
+    "metrics_enabled": true,
+    "log_level": "info",
+    "sample_rate": 0.1
+  },
+  "enabled": true,
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z"
+}
