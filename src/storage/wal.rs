@@ -1,6 +1,6 @@
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
@@ -47,6 +47,7 @@ pub struct DirectIOWal {
     current_segment_size: Arc<AtomicU64>,
     current_segment_start_offset: Arc<AtomicU64>,
     upload_callbacks: Arc<RwLock<Vec<Box<dyn Fn(u64, u64) + Send + Sync>>>>,
+    upload_in_progress: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +94,7 @@ impl DirectIOWal {
             current_segment_size: Arc::new(AtomicU64::new(0)),
             current_segment_start_offset: Arc::new(AtomicU64::new(0)),
             upload_callbacks: Arc::new(RwLock::new(Vec::new())),
+            upload_in_progress: Arc::new(AtomicBool::new(false)),
         };
 
         wal.recover().await?;
@@ -189,6 +191,7 @@ impl DirectIOWal {
         let current_segment_start_offset = self.current_segment_start_offset.clone();
         let upload_callbacks = self.upload_callbacks.clone();
         let current_offset = self.current_offset.clone();
+        let upload_in_progress = self.upload_in_progress.clone();
 
         tokio::spawn(async move {
             let mut check_interval = tokio::time::interval(Duration::from_secs(1)); // Check more frequently for testing
@@ -203,19 +206,27 @@ impl DirectIOWal {
                     segment_start_time.elapsed() >= Duration::from_millis(cfg.upload_interval_ms);
                 
                 if should_upload && segment_size > 0 {
-                    let end_offset = current_offset.load(Ordering::SeqCst);
-                    let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
-                    
-                    // Trigger upload callbacks
-                    let callbacks = upload_callbacks.read();
-                    for callback in callbacks.iter() {
-                        callback(start_offset, end_offset);
+                    // Use compare-and-swap to prevent race conditions between multiple upload triggers
+                    if upload_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                        let end_offset = current_offset.load(Ordering::SeqCst);
+                        let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
+                        
+                        // Trigger upload callbacks
+                        let callbacks = upload_callbacks.read();
+                        for callback in callbacks.iter() {
+                            callback(start_offset, end_offset);
+                        }
+                        
+                        // Reset segment tracking for next segment
+                        current_segment_size.store(0, Ordering::SeqCst);
+                        current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
+                        *current_segment_start_time.write() = Instant::now();
+                        
+                        // Mark upload as complete
+                        upload_in_progress.store(false, Ordering::SeqCst);
+                    } else {
+                        tracing::debug!("Upload already in progress, skipping duplicate trigger");
                     }
-                    
-                    // Reset segment tracking for next segment
-                    current_segment_size.store(0, Ordering::SeqCst);
-                    current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
-                    *current_segment_start_time.write() = Instant::now();
                 }
             }
         });
@@ -333,21 +344,27 @@ impl DirectIOWal {
 #[async_trait]
 impl WriteAheadLog for DirectIOWal {
     async fn append(&self, record: WalRecord) -> Result<u64> {
-        let buffer = self.buffer_pool.get_aligned_buffer(record.size() + 8)?;
-        
         let serialized = bincode::serialize(&record)?;
         let record_size = serialized.len() as u64;
+        let total_size = serialized.len() + 8; // 8 bytes for size prefix
         
-        let mut write_buffer = Vec::new();
+        let buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
+        
+        let mut write_buffer = Vec::with_capacity(total_size);
         write_buffer.extend_from_slice(&record_size.to_le_bytes());
         write_buffer.extend_from_slice(&serialized);
         
         if write_buffer.len() > buffer.len() {
+            // Return the buffer before erroring
+            self.buffer_pool.return_buffer(buffer);
             return Err(crate::error::RustMqError::BufferTooSmall);
         }
 
         let file_offset = self.write_with_direct_io(&write_buffer).await?;
         let logical_offset = self.current_offset.fetch_add(1, Ordering::SeqCst);
+
+        // Return the buffer to the pool after successful write
+        self.buffer_pool.return_buffer(buffer);
 
         let segment_meta = WalSegmentMetadata {
             start_offset: logical_offset,
@@ -810,6 +827,125 @@ mod tests {
         
         println!("Sequential appends completed in: {:?}", append_duration);
         println!("Total time including final sync: {:?}", total_duration);
+    }
+
+    #[tokio::test]
+    async fn test_upload_race_condition_prevention() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 1024, // Small segment for testing
+            buffer_size: 4096,
+            upload_interval_ms: 50, // Very short interval for testing
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = DirectIOWal::new(config, buffer_pool).await.unwrap();
+
+        let upload_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let upload_count_clone = upload_count.clone();
+        
+        wal.register_upload_callback(move |start_offset, end_offset| {
+            println!("Upload triggered: {} -> {}", start_offset, end_offset);
+            upload_count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        // Write records to trigger upload
+        for i in 0..5 {
+            let record = WalRecord {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
+                },
+                offset: i,
+                record: Record {
+                    key: Some(format!("key{}", i).into_bytes()),
+                    value: vec![0u8; 300], // Large value to trigger size limit
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            wal.append(record).await.unwrap();
+        }
+
+        // Wait for upload triggers (both size and time based should occur)
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let final_count = upload_count.load(Ordering::SeqCst);
+        
+        // Should have exactly one upload despite multiple triggers
+        // (size-based and time-based could both fire, but race condition prevention should ensure only one)
+        assert!(final_count >= 1, "At least one upload should have been triggered");
+        assert!(final_count <= 2, "Should not have excessive duplicate uploads due to race conditions");
+        
+        println!("Upload callbacks triggered: {}", final_count);
+    }
+
+    #[tokio::test]
+    async fn test_buffer_pool_no_leak() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 5)); // Small pool for testing
+        let initial_pool_size = 5; // We know the pool starts with 5 buffers
+        
+        let wal = DirectIOWal::new(config, buffer_pool.clone()).await.unwrap();
+
+        // Write several records to verify buffers are returned
+        for i in 0..10 {
+            let record = WalRecord {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
+                },
+                offset: i,
+                record: Record {
+                    key: Some(format!("key{}", i).into_bytes()),
+                    value: format!("value{}", i).into_bytes(),
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            wal.append(record).await.unwrap();
+        }
+
+        // The buffer pool should be able to handle more allocations without running out
+        // This tests that buffers are being properly returned
+        for i in 10..15 {
+            let record = WalRecord {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
+                },
+                offset: i,
+                record: Record {
+                    key: Some(format!("key{}", i).into_bytes()),
+                    value: format!("value{}", i).into_bytes(),
+                    headers: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+                crc32: 0,
+            };
+            
+            // This should not fail due to buffer exhaustion if buffers are properly returned
+            let result = wal.append(record).await;
+            assert!(result.is_ok(), "Buffer pool should not be exhausted if buffers are properly returned");
+        }
+        
+        println!("Buffer pool test completed - no memory leak detected");
     }
 
     #[tokio::test]

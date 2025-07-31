@@ -3,9 +3,10 @@ use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, BinaryHeap};
 use std::time::Duration;
 use tokio::time::timeout;
+use std::cmp::Reverse;
 
 pub struct ReplicationManager {
     stream_id: u64,
@@ -194,33 +195,48 @@ impl ReplicationManager {
 
     /// Recalculate high-watermark based on current follower states
     /// High-watermark is the highest offset that is confirmed on all required in-sync replicas
+    /// 
+    /// Optimized implementation using a min-heap to avoid O(n log n) sorting
     async fn recalculate_high_watermark(&self) {
         let states = self.follower_states.read();
         let current_leader_offset = self.log_end_offset.load(Ordering::SeqCst);
         
-        // Get in-sync replicas (including leader)
-        let mut replica_offsets = vec![current_leader_offset]; // Leader's offset
+        // Use a min-heap to efficiently find the min_in_sync_replicas-th highest offset
+        // We use Reverse to make BinaryHeap work as a min-heap
+        let mut min_heap: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
+        
+        // Add leader's offset
+        min_heap.push(Reverse(current_leader_offset));
         
         // Add follower offsets that are in-sync
         for state in states.values() {
             if self.is_follower_in_sync(state) {
-                replica_offsets.push(state.last_known_offset);
+                min_heap.push(Reverse(state.last_known_offset));
             }
         }
         
-        // Sort offsets to find the min_in_sync_replicas-th highest offset
-        replica_offsets.sort_unstable();
-        
-        if replica_offsets.len() >= self.min_in_sync_replicas {
-            // Take the min_in_sync_replicas-th highest offset as high-watermark
-            // This ensures that at least min_in_sync_replicas have this offset or higher
-            let high_watermark_index = replica_offsets.len() - self.min_in_sync_replicas;
-            let new_high_watermark = replica_offsets[high_watermark_index];
+        if min_heap.len() >= self.min_in_sync_replicas {
+            // We need to find the min_in_sync_replicas-th smallest offset
+            // which represents the highest offset that at least min_in_sync_replicas have
+            let mut offsets_to_extract = min_heap.len() - self.min_in_sync_replicas + 1;
+            let mut new_high_watermark = 0;
+            
+            while offsets_to_extract > 0 && !min_heap.is_empty() {
+                if let Some(Reverse(offset)) = min_heap.pop() {
+                    new_high_watermark = offset;
+                    offsets_to_extract -= 1;
+                }
+            }
             
             // Only advance high-watermark, never decrease it
             let current_hwm = self.high_watermark.load(Ordering::SeqCst);
             if new_high_watermark > current_hwm {
                 self.high_watermark.store(new_high_watermark, Ordering::SeqCst);
+                tracing::debug!(
+                    "Advanced high-watermark to {} with {} in-sync replicas",
+                    new_high_watermark,
+                    min_heap.len() + offsets_to_extract // original size
+                );
             }
         }
     }
@@ -234,7 +250,20 @@ impl ReplicationManager {
         // Check both lag and heartbeat recency
         let heartbeat_timeout = Duration::from_secs(30); // TODO: Make configurable
         let now = chrono::Utc::now();
-        let heartbeat_fresh = (now - follower_state.last_heartbeat).to_std().unwrap_or(Duration::MAX) < heartbeat_timeout;
+        
+        // Properly handle chrono duration conversion errors
+        let heartbeat_fresh = match (now - follower_state.last_heartbeat).to_std() {
+            Ok(duration) => duration < heartbeat_timeout,
+            Err(e) => {
+                // If conversion fails (e.g., negative duration due to clock skew),
+                // conservatively mark as stale
+                tracing::warn!(
+                    "Failed to convert heartbeat duration for follower {}: {}. Marking as stale.", 
+                    follower_state.broker_id, e
+                );
+                false
+            }
+        };
         
         lag <= max_lag && heartbeat_fresh
     }
@@ -671,5 +700,174 @@ mod tests {
         replication_manager.update_follower_state(stale_follower).await;
         let isr = replication_manager.get_in_sync_replicas();
         assert_eq!(isr.len(), 0); // Should exclude broker-2 due to stale heartbeat
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_timeout_error_handling() {
+        let temp_dir = TempDir::new().unwrap();
+        let wal_config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
+
+        let config = ReplicationConfig {
+            min_in_sync_replicas: 2,
+            ack_timeout_ms: 5000,
+            max_replication_lag: 1000,
+        };
+
+        let replica_set = vec!["broker-1".to_string(), "broker-2".to_string()];
+
+        let topic_partition = crate::types::TopicPartition {
+            topic: "test-topic".to_string(),
+            partition: 0,
+        };
+
+        let replication_manager = ReplicationManager::new(
+            1,
+            topic_partition,
+            "broker-1".to_string(),
+            1,
+            replica_set,
+            config,
+            wal,
+            rpc_client,
+        );
+
+        // Test with a future timestamp that would cause chrono conversion to fail
+        let future_time = chrono::Utc::now() + chrono::Duration::hours(1);
+        let invalid_follower = FollowerState {
+            broker_id: "broker-2".to_string(),
+            last_known_offset: 0,
+            last_heartbeat: future_time, // This will cause conversion error
+            lag: 0,
+        };
+
+        replication_manager.update_follower_state(invalid_follower).await;
+        
+        // Should handle the conversion error gracefully and exclude the follower
+        let isr = replication_manager.get_in_sync_replicas();
+        assert_eq!(isr.len(), 0, "Follower with invalid heartbeat timestamp should be excluded");
+
+        // Test with valid timestamp
+        let valid_follower = FollowerState {
+            broker_id: "broker-2".to_string(),
+            last_known_offset: 0,
+            last_heartbeat: chrono::Utc::now(), // Valid timestamp
+            lag: 0,
+        };
+
+        replication_manager.update_follower_state(valid_follower).await;
+        let isr = replication_manager.get_in_sync_replicas();
+        assert_eq!(isr.len(), 1, "Follower with valid heartbeat timestamp should be included");
+    }
+
+    #[tokio::test]
+    async fn test_optimized_high_watermark_calculation() {
+        let temp_dir = TempDir::new().unwrap();
+        let wal_config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
+
+        let config = ReplicationConfig {
+            min_in_sync_replicas: 3, // Require 3 replicas (leader + 2 followers)
+            ack_timeout_ms: 5000,
+            max_replication_lag: 1000,
+        };
+
+        let replica_set = vec![
+            "broker-1".to_string(), // Leader
+            "broker-2".to_string(),
+            "broker-3".to_string(),
+            "broker-4".to_string(),
+        ];
+
+        let topic_partition = crate::types::TopicPartition {
+            topic: "test-topic".to_string(),
+            partition: 0,
+        };
+
+        let replication_manager = ReplicationManager::new(
+            1,
+            topic_partition,
+            "broker-1".to_string(),
+            1,
+            replica_set,
+            config,
+            wal,
+            rpc_client,
+        );
+
+        // Set the leader's log end offset to 100
+        replication_manager.log_end_offset.store(100, Ordering::SeqCst);
+
+        // Simulate follower states with different offsets
+        let follower_states = vec![
+            FollowerState {
+                broker_id: "broker-2".to_string(),
+                last_known_offset: 95, // Lagging behind
+                last_heartbeat: chrono::Utc::now(),
+                lag: 5,
+            },
+            FollowerState {
+                broker_id: "broker-3".to_string(),
+                last_known_offset: 98, // Less behind
+                last_heartbeat: chrono::Utc::now(),
+                lag: 2,
+            },
+            FollowerState {
+                broker_id: "broker-4".to_string(),
+                last_known_offset: 100, // Caught up
+                last_heartbeat: chrono::Utc::now(),
+                lag: 0,
+            },
+        ];
+
+        for state in follower_states {
+            replication_manager.update_follower_state(state).await;
+        }
+
+        // Trigger recalculation
+        replication_manager.recalculate_high_watermark().await;
+
+        // With min_in_sync_replicas = 3 and offsets [95, 98, 100, 100],
+        // the high-watermark should be 98 (the 3rd highest when counting from the top)
+        let hwm = replication_manager.get_high_watermark().await.unwrap();
+        assert_eq!(hwm, 98, "High-watermark should be calculated correctly using optimized algorithm");
+
+        // Test that high-watermark doesn't decrease
+        let old_hwm = hwm;
+        
+        // Update one follower to lag further behind
+        let lagging_follower = FollowerState {
+            broker_id: "broker-4".to_string(),
+            last_known_offset: 90, // Now lagging
+            last_heartbeat: chrono::Utc::now(),
+            lag: 10,
+        };
+        replication_manager.update_follower_state(lagging_follower).await;
+        replication_manager.recalculate_high_watermark().await;
+
+        let new_hwm = replication_manager.get_high_watermark().await.unwrap();
+        assert!(new_hwm >= old_hwm, "High-watermark should never decrease");
     }
 }
