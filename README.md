@@ -33,14 +33,45 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - [Monitoring](#-monitoring)
 - [Contributing](#-contributing)
 
+## 🚧 Development Status
+
+**RustMQ is currently in early development stage.** The current implementation includes:
+
+### ✅ Implemented Components
+- **Configuration System**: Complete TOML-based configuration with validation
+- **Storage Abstractions**: Trait-based storage layer design (WAL, Object Storage, Cache)
+- **BigQuery Subscriber**: Functional BigQuery integration demo
+- **Scaling Operations**: Decommissioning slot management and scaling logic
+- **Docker Environment**: Complete Docker Compose setup for development
+- **Project Structure**: Well-organized module structure and build system
+
+### 🚧 In Development
+- **Network Layer**: QUIC/gRPC server implementations (basic structure)
+- **Replication System**: Leader-follower replication logic (traits defined)
+- **Controller Service**: Cluster coordination (placeholder implementation)
+- **ETL Processing**: WebAssembly-based stream processing (framework)
+
+### ❌ Not Yet Implemented
+- **Message Broker Core**: Actual message producing/consuming functionality
+- **Distributed Coordination**: Raft consensus and metadata management
+- **Client Libraries**: Rust, Go, and other language clients
+- **Admin API**: REST API for cluster management
+- **Production Features**: Monitoring, metrics, health checks
+
+### Current Capabilities
+- Build and run placeholder broker/controller services
+- Load and validate configuration files
+- Demonstrate BigQuery subscriber functionality
+- Test scaling operation logic with mock implementations
+
 ## 🏃 Quick Start
 
 ### Prerequisites
 
 - Rust 1.73+ and Cargo
 - Docker and Docker Compose
-- Google Cloud SDK (for GCP deployment)
-- kubectl (for Kubernetes deployment)
+- Google Cloud SDK (for BigQuery subscriber demo)
+- kubectl (for future Kubernetes deployment)
 
 ### Local Development Setup
 
@@ -55,34 +86,37 @@ cargo build --release
 # Run tests
 cargo test
 
-# Start local development cluster with Docker Compose
+# Start local development environment with Docker Compose
 docker-compose up -d
 
-# Or run individual components locally:
-# Run broker
+# Or run individual components locally (placeholder implementations):
+# Run broker (loads config and sleeps)
 ./target/release/rustmq-broker --config config/broker.toml
 
-# Run controller
+# Run controller (loads config and sleeps) 
 ./target/release/rustmq-controller --config config/controller.toml
+
+# Run admin CLI (shows available commands)
+./target/release/rustmq-admin create-topic test-topic 3 2
 ```
 
 ## 🐳 Docker Development Setup
 
-RustMQ provides a complete Docker-based development environment with proper container orchestration.
+RustMQ provides a Docker-based development environment for local testing and development.
 
 ### Docker Components
 
-The following Docker containers are available with the proper naming schema:
+The following Docker containers are available:
 
-- **Dockerfile.broker** - RustMQ message broker with optimized multi-stage build
-- **Dockerfile.controller** - RustMQ controller with Raft consensus support  
-- **Dockerfile.admin** - Interactive admin CLI with helper commands
-- **Dockerfile.bigquery-subscriber** - Google BigQuery subscriber for streaming data to BigQuery
+- **Dockerfile.broker** - RustMQ message broker (early development stage)
+- **Dockerfile.controller** - RustMQ controller (placeholder implementation)  
+- **Dockerfile.admin** - Admin CLI tool (basic command structure)
+- **Dockerfile.bigquery-subscriber** - Google BigQuery subscriber demo
 
-### Starting the Cluster
+### Starting the Development Environment
 
 ```bash
-# Start the complete RustMQ cluster (3 controllers + 3 brokers + dependencies)
+# Start the basic development cluster
 docker-compose up -d
 
 # View cluster status
@@ -95,30 +129,30 @@ docker-compose logs -f
 docker-compose logs -f rustmq-broker-1
 ```
 
-### Cluster Architecture
+### Development Architecture
 
 The Docker Compose setup includes:
 
-- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Raft consensus cluster
-- **3 Broker nodes** (`rustmq-broker-1/2/3`) - Stateless message brokers
-- **etcd** - Distributed metadata store
+- **3 Broker nodes** (`rustmq-broker-1/2/3`) - Early-stage broker implementations
+- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Placeholder controller services
 - **MinIO** - S3-compatible object storage for local development
-- **Admin CLI** - Interactive management interface
-- **BigQuery Subscriber** - Optional Google BigQuery streaming subscriber
+- **Admin CLI** - Basic admin tool with command structure
+- **BigQuery Subscriber** - Demo BigQuery integration
+
+**Note**: The current implementation is in early development. Most services are placeholder implementations that load configuration and demonstrate the intended architecture.
 
 ### Service Endpoints
 
-| Service | Internal Port | External Port | Purpose |
-|---------|---------------|---------------|---------|
-| Broker 1 | 9092/9093 | 9092/9093 | QUIC/RPC |
-| Broker 2 | 9092/9093 | 9192/9193 | QUIC/RPC |  
-| Broker 3 | 9092/9093 | 9292/9293 | QUIC/RPC |
-| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP |
-| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP |
-| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP |
-| etcd | 2379/2380 | 2379/2380 | Client/Peer |
-| MinIO | 9000/9001 | 9000/9001 | API/Console |
-| BigQuery Subscriber | 8080 | 8080 | Health/Metrics |
+| Service | Internal Port | External Port | Purpose | Status |
+|---------|---------------|---------------|---------|--------|
+| Broker 1 | 9092/9093 | 9092/9093 | QUIC/RPC | Placeholder |
+| Broker 2 | 9092/9093 | 9192/9193 | QUIC/RPC | Placeholder |  
+| Broker 3 | 9092/9093 | 9292/9293 | QUIC/RPC | Placeholder |
+| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP | Placeholder |
+| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP | Placeholder |
+| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP | Placeholder |
+| MinIO | 9000/9001 | 9000/9001 | API/Console | Functional |
+| BigQuery Subscriber | 8080 | 8080 | Health/Metrics | Demo |
 
 ### Using the Admin CLI
 
@@ -126,13 +160,14 @@ The Docker Compose setup includes:
 # Access the admin CLI container
 docker-compose exec rustmq-admin bash
 
-# Use the convenient CLI wrapper
-rustmq-cli topics list
-rustmq-cli brokers status
-rustmq-cli cluster status
+# Available commands (placeholder implementations)
+rustmq-admin create-topic <name> <partitions> <replication_factor>
+rustmq-admin list-topics
+rustmq-admin describe-topic <name>
+rustmq-admin delete-topic <name>
+rustmq-admin cluster-health
 
-# Or use the full admin API
-rustmq-admin --help
+# Note: Commands show usage but are not yet implemented
 ```
 
 ### Development Workflow
@@ -565,9 +600,8 @@ data:
       "rustmq-controller-2@rustmq-controller-2.rustmq-controller:9095"
     ]
 
-    [metastore]
-    type = "etcd"
-    endpoints = ["etcd:2379"]
+    # Note: Metastore configuration not yet implemented
+    # Future versions will include distributed coordination
 
     [autobalancer]
     enabled = true
@@ -714,6 +748,8 @@ kubectl get service rustmq-broker -n rustmq
 
 ## ⚙️ Configuration
 
+**Note**: This is the intended configuration structure. Current implementation includes placeholder services that load and validate this configuration but don't fully implement the functionality.
+
 ### Broker Configuration (`broker.toml`)
 
 ```toml
@@ -727,23 +763,35 @@ rpc_listen = "0.0.0.0:9093"         # Internal gRPC endpoint
 max_connections = 10000              # Maximum concurrent connections
 connection_timeout_ms = 30000        # Connection timeout
 
+# QUIC-specific configuration
+[network.quic_config]
+max_concurrent_uni_streams = 1000
+max_concurrent_bidi_streams = 1000
+max_idle_timeout_ms = 30000
+max_stream_data = 1024000
+max_connection_data = 10240000
+
 [wal]
-path = "/dev/nvme1n1"               # WAL storage path (preferably NVMe)
+path = "/var/lib/rustmq/wal"        # WAL storage path
 capacity_bytes = 10737418240        # 10GB WAL capacity
 fsync_on_write = true               # Force sync on write (durability)
 segment_size_bytes = 1073741824     # 1GB segment size
 buffer_size = 65536                 # 64KB buffer size
+upload_interval_ms = 600000         # 10 minutes upload interval
+flush_interval_ms = 1000            # 1 second flush interval
 
 [cache]
 write_cache_size_bytes = 1073741824  # 1GB hot data cache
 read_cache_size_bytes = 2147483648   # 2GB cold data cache
-eviction_policy = "Lru"              # Cache eviction policy
+eviction_policy = "Lru"              # Cache eviction policy (Lru/Lfu/Random)
 
 [object_storage]
-type = "Gcs"                        # Storage backend (S3/Gcs/Azure/Local)
+storage_type = "S3"                 # Storage backend (S3/Gcs/Azure/Local)
 bucket = "rustmq-data"              # Storage bucket name
 region = "us-central1"              # Storage region
-endpoint = "https://storage.googleapis.com"
+endpoint = "http://minio:9000"      # Storage endpoint
+access_key = "rustmq-access-key"    # Optional: Access key
+secret_key = "rustmq-secret-key"    # Optional: Secret key
 multipart_threshold = 104857600     # 100MB multipart upload threshold
 max_concurrent_uploads = 10         # Concurrent upload limit
 
@@ -762,6 +810,24 @@ enabled = true                      # Enable WebAssembly ETL processing
 memory_limit_bytes = 67108864       # 64MB memory limit per module
 execution_timeout_ms = 5000         # Execution timeout
 max_concurrent_executions = 100     # Concurrent execution limit
+
+[scaling]
+max_concurrent_additions = 3        # Max brokers added simultaneously
+max_concurrent_decommissions = 1    # Max brokers decommissioned simultaneously
+rebalance_timeout_ms = 300000       # Partition rebalancing timeout
+traffic_migration_rate = 0.1        # Traffic migration rate per minute
+health_check_timeout_ms = 30000     # Health check timeout
+
+[operations]
+allow_runtime_config_updates = true # Enable runtime config updates
+upgrade_velocity = 3                # Brokers upgraded per minute
+graceful_shutdown_timeout_ms = 30000 # Graceful shutdown timeout
+
+[operations.kubernetes]
+use_stateful_sets = true            # Use StatefulSets for deployment
+pvc_storage_class = "fast-ssd"      # Storage class for persistent volumes
+wal_volume_size = "50Gi"            # WAL volume size
+enable_pod_affinity = true          # Enable pod affinity for volume attachment
 ```
 
 ### Environment Variables
@@ -789,12 +855,16 @@ RUSTMQ_BATCH_SIZE=1000
 
 ## 📚 Usage Examples
 
-### Rust Client Example
+### Client Examples
+
+**Note**: The following are examples of the intended client API. Current implementation is in early development stage and these clients are not yet available.
+
+#### Rust Client Example
 
 ```rust
 // Cargo.toml
 [dependencies]
-rustmq-client = "0.1.0"
+rustmq-client = "0.1.0"  # Not yet published
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 
@@ -889,7 +959,7 @@ async fn process_order(order: OrderEvent) -> Result<(), Box<dyn std::error::Erro
 }
 ```
 
-### Go Client Example
+#### Go Client Example
 
 ```go
 // go.mod
@@ -898,7 +968,7 @@ module rustmq-example
 go 1.21
 
 require (
-    github.com/rustmq/rustmq-go v0.1.0
+    github.com/rustmq/rustmq-go v0.1.0  // Not yet available
     github.com/google/uuid v1.3.0
 )
 
@@ -1027,10 +1097,12 @@ func processOrder(order OrderEvent) error {
 }
 ```
 
-### Admin Operations
+#### Admin Operations
+
+**Note**: Admin API is not yet implemented. The following shows the intended API structure.
 
 ```bash
-# Create topic with custom configuration
+# Create topic with custom configuration (not yet implemented)
 curl -X POST http://rustmq-admin/api/v1/topics \
   -H "Content-Type: application/json" \
   -d '{
@@ -1042,10 +1114,10 @@ curl -X POST http://rustmq-admin/api/v1/topics \
     "etl_modules": ["pii_scrubber", "fraud_detector"]
   }'
 
-# List topics
+# List topics (not yet implemented)
 curl http://rustmq-admin/api/v1/topics
 
-# Get topic details
+# Get topic details (not yet implemented)
 curl http://rustmq-admin/api/v1/topics/user-events
 
 # Update topic configuration
@@ -1081,9 +1153,9 @@ curl -X POST http://rustmq-admin/api/v1/wasm/modules \
 curl http://rustmq-admin/api/v1/metrics
 ```
 
-## 📊 Performance Tuning
+## 📊 Future Performance Tuning (Not Yet Implemented)
 
-### Broker Optimization
+### Planned Broker Optimization
 
 ```toml
 # High-throughput configuration
@@ -1115,7 +1187,7 @@ min_in_sync_replicas = 1            # Reduce for lower latency
 ack_timeout_ms = 1000               # Faster timeouts
 ```
 
-### Kubernetes Resource Tuning
+### Planned Kubernetes Resource Tuning
 
 ```yaml
 # High-performance broker configuration
@@ -1153,12 +1225,12 @@ volumeClaimTemplates:
         storage: 500Gi
 ```
 
-## 📈 Monitoring
+## 📈 Future Monitoring (Not Yet Implemented)
 
-### Prometheus Configuration
+### Planned Prometheus Configuration
 
 ```yaml
-# prometheus-config.yaml
+# prometheus-config.yaml - future monitoring setup
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1196,9 +1268,9 @@ data:
         replacement: ${1}:9642
 ```
 
-### Grafana Dashboards
+### Future Monitoring (Not Yet Implemented)
 
-Key metrics to monitor:
+Planned metrics to monitor:
 
 - **Throughput**: `rate(messages_produced_total[5m])`, `rate(messages_consumed_total[5m])`
 - **Latency**: `produce_latency_seconds`, `consume_latency_seconds`
@@ -1206,10 +1278,10 @@ Key metrics to monitor:
 - **Replication**: `replication_lag`, `in_sync_replicas_count`
 - **System**: `cpu_usage`, `memory_usage`, `disk_iops`, `network_throughput`
 
-### Alerting Rules
+### Future Alerting (Not Yet Implemented)
 
 ```yaml
-# alerts.yaml
+# alerts.yaml - planned alerting rules
 groups:
 - name: rustmq.rules
   rules:
@@ -1238,58 +1310,70 @@ groups:
       summary: "RustMQ broker is down"
 ```
 
-## 🔧 Troubleshooting
+## 🔧 Development & Troubleshooting
 
-### Common Issues
+### Current Development Issues
 
-1. **High Memory Usage**
+**Note**: Since RustMQ is in early development, most "issues" are actually missing implementations.
+
+1. **Services Not Responding**
 ```bash
-# Check cache configuration
-kubectl logs rustmq-broker-0 -n rustmq | grep cache
+# Current broker/controller services are placeholders that just load config and sleep
+# Check if they started successfully
+docker-compose logs rustmq-broker-1
+docker-compose logs rustmq-controller-1
 
-# Reduce cache sizes in configuration
-[cache]
-write_cache_size_bytes = 536870912   # 512MB
-read_cache_size_bytes = 1073741824   # 1GB
+# Look for configuration loading messages
+# Services should log "started successfully" then sleep
 ```
 
-2. **Slow Object Storage Uploads**
+2. **Build Issues**
 ```bash
-# Check bandwidth limiting
-curl http://rustmq-admin/api/v1/metrics | grep upload
+# Ensure Rust toolchain is up to date
+rustup update
 
-# Increase concurrent uploads
-[object_storage]
-max_concurrent_uploads = 20
+# Clean build if needed
+cargo clean
+cargo build --release
+
+# Run tests to verify implementation
+cargo test
 ```
 
-3. **Replication Lag**
+3. **Configuration Issues**
 ```bash
-# Check follower states
-curl http://rustmq-admin/api/v1/cluster | jq '.followers'
+# Validate configuration
+cargo run --bin rustmq-broker -- --config config/broker.toml
 
-# Adjust replication settings
-[replication]
-ack_timeout_ms = 3000
-max_replication_lag = 5000
+# Check configuration structure in src/config.rs
+# All fields must be present in TOML files
 ```
 
 ### Log Analysis
 
 ```bash
-# View broker logs
-kubectl logs -f rustmq-broker-0 -n rustmq
+# View service logs (placeholder implementations)
+docker-compose logs rustmq-broker-1
+docker-compose logs rustmq-controller-1
 
-# Check for specific errors
-kubectl logs rustmq-broker-0 -n rustmq | grep ERROR
+# Check for configuration validation errors
+docker-compose logs | grep ERROR
 
-# Tail logs from all brokers
-kubectl logs -f -l app=rustmq-broker -n rustmq
+# Monitor BigQuery subscriber demo
+docker-compose logs rustmq-bigquery-subscriber
 ```
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions to help implement the remaining features! 
+
+### Current Development Priorities
+
+1. **Message Broker Core**: Implement actual produce/consume functionality
+2. **Network Layer**: Complete QUIC/gRPC server implementations
+3. **Distributed Coordination**: Implement Raft consensus and metadata management
+4. **Client Libraries**: Build Rust and Go client libraries
+5. **Admin API**: Implement REST API for cluster management
 
 ### Development Setup
 
@@ -1311,17 +1395,18 @@ cargo watch -x test -x clippy
 ### Testing
 
 ```bash
-# Unit tests
+# Unit tests (currently 43 tests passing)
 cargo test
 
-# Integration tests
+# Run specific module tests
+cargo test storage::
+cargo test scaling::
+
+# Run with features
+cargo test --features "io-uring,wasm"
+
+# Integration tests (placeholder)
 cargo test --test integration
-
-# Benchmark tests
-cargo bench
-
-# Stress tests
-cargo test --release --test stress -- --ignored
 ```
 
 ## 📄 License

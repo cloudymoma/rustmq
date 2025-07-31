@@ -2,33 +2,7 @@ version: '3.8'
 
 services:
   # External dependencies
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.0
-    container_name: rustmq-etcd
-    environment:
-      - ETCD_NAME=etcd0
-      - ETCD_DATA_DIR=/etcd-data
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
-      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd:2380
-      - ETCD_INITIAL_CLUSTER_TOKEN=rustmq-cluster
-      - ETCD_INITIAL_CLUSTER_STATE=new
-      - ALLOW_NONE_AUTHENTICATION=yes
-    ports:
-      - "2379:2379"
-      - "2380:2380"
-    volumes:
-      - etcd_data:/etcd-data
-    networks:
-      - rustmq-network
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
+  
   # MinIO for local object storage (S3-compatible)
   minio:
     image: minio/minio:latest
@@ -61,7 +35,7 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      - ETCD_ENDPOINTS=etcd:2379
+      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -69,9 +43,7 @@ services:
       - "9094:9094"
       - "9095:9095"
       - "9642:9642"
-    depends_on:
-      etcd:
-        condition: service_healthy
+    depends_on: []  # Removed etcd dependency as it's not implemented
     networks:
       - rustmq-network
     volumes:
@@ -92,7 +64,7 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      - ETCD_ENDPOINTS=etcd:2379
+      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -100,9 +72,7 @@ services:
       - "9144:9094"
       - "9145:9095"
       - "9643:9642"
-    depends_on:
-      etcd:
-        condition: service_healthy
+    depends_on: []  # Removed etcd dependency as it's not implemented
     networks:
       - rustmq-network
     volumes:
@@ -123,7 +93,7 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      - ETCD_ENDPOINTS=etcd:2379
+      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -131,9 +101,7 @@ services:
       - "9194:9094"
       - "9195:9095"
       - "9644:9642"
-    depends_on:
-      etcd:
-        condition: service_healthy
+    depends_on: []  # Removed etcd dependency as it's not implemented
     networks:
       - rustmq-network
     volumes:
@@ -371,7 +339,6 @@ networks:
     driver: bridge
 
 volumes:
-  etcd_data:
   minio_data:
   controller1_data:
   controller2_data:
