@@ -17,6 +17,9 @@ cargo test test_tiered_storage_engine
 # Run tests for a specific module
 cargo test storage::
 
+# Run SDK connection layer tests
+cargo test connection::
+
 # Run tests with specific features
 cargo test --features "io-uring,wasm"
 
