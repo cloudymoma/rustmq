@@ -1,6 +1,4 @@
-use rustmq_client::*;
-use tokio_test;
-use tempfile::TempDir;
+use rustmq_client::{*, message::MessageBatch};
 
 #[tokio::test]
 async fn test_client_creation_and_connection() {
@@ -79,7 +77,7 @@ async fn test_config_serialization() {
     let json = serde_json::to_string(&config);
     assert!(json.is_ok());
 
-    let deserialized: Result<ClientConfig, _> = serde_json::from_str(&json.unwrap());
+    let deserialized: std::result::Result<ClientConfig, _> = serde_json::from_str(&json.unwrap());
     assert!(deserialized.is_ok());
 }
 

@@ -132,8 +132,26 @@ impl From<quinn::ConnectError> for ClientError {
 }
 
 impl From<tokio::time::error::Elapsed> for ClientError {
-    fn from(err: tokio::time::error::Elapsed) -> Self {
+    fn from(_err: tokio::time::error::Elapsed) -> Self {
         ClientError::Timeout { timeout_ms: 0 }
+    }
+}
+
+impl From<quinn::ReadExactError> for ClientError {
+    fn from(err: quinn::ReadExactError) -> Self {
+        ClientError::QuicTransport(format!("Read error: {}", err))
+    }
+}
+
+impl From<quinn::WriteError> for ClientError {
+    fn from(err: quinn::WriteError) -> Self {
+        ClientError::QuicTransport(format!("Write error: {}", err))
+    }
+}
+
+impl From<quinn::ClosedStream> for ClientError {
+    fn from(err: quinn::ClosedStream) -> Self {
+        ClientError::QuicTransport(format!("Stream closed: {}", err))
     }
 }
 

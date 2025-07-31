@@ -34,7 +34,7 @@ The RustMQ Rust SDK provides a native, high-performance client library for inter
 │  ├── Producer (Batching, Compression)                       │
 │  ├── Consumer (Streaming, Auto-commit)                      │
 │  ├── MessageStream (Real-time Processing)                   │
-│  └── Connection (QUIC Pool, Health Check)                   │
+│  └── Connection (QUIC Pool, Health Check, Auto-Reconnect)   │
 ├─────────────────────────────────────────────────────────────┤
 │  QUIC Transport Layer (quinn)                               │
 ├─────────────────────────────────────────────────────────────┤
@@ -325,6 +325,131 @@ let consumer = ConsumerBuilder::new()
     .await?;
 ```
 
+## Connection Layer
+
+The RustMQ Rust SDK implements a sophisticated QUIC-based connection layer that provides:
+
+### Key Features
+- **Connection Pooling**: Automatic management of multiple broker connections with round-robin load balancing
+- **Auto-Reconnection**: Exponential backoff retry logic with jitter to prevent thundering herd effects
+- **Health Monitoring**: Background health checks with ping/pong protocol and automatic cleanup of failed connections
+- **Request/Response Protocol**: Structured message framing with UUIDs and length prefixes for reliable communication
+- **Flow Control**: Built-in backpressure handling and semaphore-based concurrency control
+
+### Connection Management
+
+```rust
+use rustmq_client::*;
+
+// The connection layer automatically handles:
+// 1. Initial connection establishment to all brokers
+// 2. Connection pooling and load balancing
+// 3. Automatic reconnection on failure
+// 4. Health monitoring and cleanup
+
+let config = ClientConfig {
+    brokers: vec![
+        "broker1.example.com:9092".to_string(),
+        "broker2.example.com:9092".to_string(),
+        "broker3.example.com:9092".to_string(),
+    ],
+    
+    // Connection pool settings
+    max_connections: 10,
+    connect_timeout: Duration::from_secs(10),
+    request_timeout: Duration::from_secs(30),
+    
+    // Health check configuration
+    keep_alive_interval: Duration::from_secs(30),
+    health_check_timeout: Duration::from_secs(5),
+    
+    // Retry configuration with exponential backoff
+    retry_config: RetryConfig {
+        max_retries: 3,
+        base_delay: Duration::from_millis(100),
+        max_delay: Duration::from_secs(10),
+        multiplier: 2.0,
+        jitter: true,
+    },
+    
+    ..Default::default()
+};
+
+let client = RustMqClient::new(config).await?;
+
+// Connection statistics
+let stats = client.connection_stats().await?;
+println!("Active connections: {}", stats.active_connections);
+println!("Total requests: {}", stats.total_requests);
+println!("Failed requests: {}", stats.failed_requests);
+```
+
+### QUIC Transport Configuration
+
+```rust
+let config = ClientConfig {
+    // QUIC-specific transport parameters
+    quic_config: QuicConfig {
+        // Keep-alive settings
+        keep_alive_interval: Duration::from_secs(30),
+        max_idle_timeout: Duration::from_secs(120),
+        
+        // Stream limits for concurrency
+        initial_max_streams_bidi: 100,
+        initial_max_streams_uni: 100,
+        
+        // Data limits for flow control
+        initial_max_data: 10_000_000, // 10MB total
+        initial_max_stream_data_bidi_local: 1_000_000, // 1MB per stream
+        initial_max_stream_data_bidi_remote: 1_000_000,
+        initial_max_stream_data_uni: 1_000_000,
+        
+        // Buffer sizes for performance
+        send_buffer_size: 1_000_000, // 1MB
+        recv_buffer_size: 1_000_000, // 1MB
+        
+        // TLS configuration
+        server_name: Some("rustmq.example.com".to_string()),
+        alpn_protocols: vec![b"rustmq".to_vec()],
+        
+        // Development mode (disable certificate verification)
+        insecure: false, // Set to true only for testing
+    },
+    
+    ..Default::default()
+};
+```
+
+### Error Handling and Recovery
+
+```rust
+use rustmq_client::{ClientError, Result};
+
+async fn robust_connection_example() -> Result<()> {
+    let client = RustMqClient::new(config).await?;
+    
+    // The connection layer automatically handles:
+    match client.health_check().await {
+        Ok(stats) => {
+            println!("All connections healthy: {} active", stats.healthy_connections);
+        }
+        Err(ClientError::Connection(msg)) => {
+            println!("Connection issues detected: {}", msg);
+            // Connection layer will automatically attempt reconnection
+        }
+        Err(ClientError::Timeout { timeout_ms }) => {
+            println!("Health check timed out after {}ms", timeout_ms);
+            // Automatic retry with exponential backoff
+        }
+        Err(e) => {
+            println!("Unexpected error: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+```
+
 ## Usage Guide
 
 ### Message Creation
@@ -574,13 +699,24 @@ let config = ClientConfig {
     request_timeout: Duration::from_secs(5),
     keep_alive_interval: Duration::from_secs(15),
     
-    // Optimized retry strategy
+    // Optimized retry strategy with exponential backoff
     retry_config: RetryConfig {
-        max_retries: 2,
-        base_delay: Duration::from_millis(50),
-        max_delay: Duration::from_secs(2),
-        multiplier: 1.5,
-        jitter: true,
+        max_retries: 3,
+        base_delay: Duration::from_millis(100),
+        max_delay: Duration::from_secs(10),
+        multiplier: 2.0,
+        jitter: true, // Prevents thundering herd
+    },
+    
+    // QUIC transport optimization
+    quic_config: QuicConfig {
+        keep_alive_interval: Duration::from_secs(30),
+        max_idle_timeout: Duration::from_secs(120),
+        initial_max_streams_bidi: 100,
+        initial_max_data: 10_000_000, // 10MB
+        initial_max_stream_data_bidi_local: 1_000_000, // 1MB
+        send_buffer_size: 1_000_000, // 1MB
+        recv_buffer_size: 1_000_000, // 1MB
     },
     
     ..Default::default()
@@ -864,10 +1000,41 @@ cargo run --example stream_processor
 // Issue: Connection refused
 Error: Connection("connection refused")
 
-// Solution: Check broker configuration
+// Solution: Check broker configuration and network connectivity
 let config = ClientConfig {
     brokers: vec!["correct-broker:9092".to_string()],
     connect_timeout: Duration::from_secs(30), // Increase timeout
+    retry_config: RetryConfig {
+        max_retries: 5, // More retries for unstable networks
+        base_delay: Duration::from_millis(200),
+        max_delay: Duration::from_secs(30),
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+// Issue: QUIC connection failures
+Error: QuicError("certificate verification failed")
+
+// Solution: Configure TLS properly or use insecure mode for development
+let config = ClientConfig {
+    quic_config: QuicConfig {
+        // For development only - never use in production
+        insecure: true,
+        // Or configure proper TLS
+        server_name: Some("rustmq.example.com".to_string()),
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+// Issue: Connection timeout during health checks
+Error: Timeout { timeout_ms: 5000 }
+
+// Solution: Increase health check timeout or check network latency
+let config = ClientConfig {
+    health_check_timeout: Duration::from_secs(10),
+    keep_alive_interval: Duration::from_secs(60), // Less frequent checks
     ..Default::default()
 };
 ```
