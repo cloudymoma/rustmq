@@ -56,7 +56,7 @@ pub enum RustMqError {
     TopicNotFound(String),
 
     #[error("Partition not found: {0}")]
-    PartitionNotFound(u32),
+    PartitionNotFound(String),
 
     #[error("Broker not found: {0}")]
     BrokerNotFound(String),
@@ -114,5 +114,14 @@ pub enum RustMqError {
 
     #[error("Topic already exists: {0}")]
     TopicAlreadyExists(String),
+
+    #[error("Not leader for partition: {0}")]
+    NotLeader(String),
+
+    #[error("Offset out of range: {0}")]
+    OffsetOutOfRange(String),
+
+    #[error("Object not found: {0}")]
+    ObjectNotFound(String),
 
 }
