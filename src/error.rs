@@ -105,4 +105,14 @@ pub enum RustMqError {
         request_epoch: u64,
         current_epoch: u64,
     },
+
+    #[error("ETL processing failed: {0}")]
+    EtlProcessingFailed(String),
+
+    #[error("ETL module not found: {0}")]
+    EtlModuleNotFound(String),
+
+    #[error("Topic already exists: {0}")]
+    TopicAlreadyExists(String),
+
 }

@@ -516,7 +516,11 @@ mod tests {
         };
 
         // Create controller with the same config
-        let controller = Arc::new(crate::controller::ControllerService::new(config.clone()));
+        let controller = Arc::new(crate::controller::ControllerService::new(
+            "controller-1".to_string(),
+            vec![],
+            config.clone()
+        ));
         let rebalancer = Arc::new(MockPartitionRebalancer::new());
         let scaling_manager = ScalingManagerImpl::with_controller(config, rebalancer, controller);
 

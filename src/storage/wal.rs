@@ -873,7 +873,8 @@ mod tests {
         }
 
         // Wait for upload triggers (both size and time based should occur)
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The upload monitor task runs every 1 second, so we need to wait at least that long
+        tokio::time::sleep(Duration::from_millis(1200)).await;
 
         let final_count = upload_count.load(Ordering::SeqCst);
         
