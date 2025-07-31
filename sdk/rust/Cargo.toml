@@ -1,0 +1,43 @@
+[package]
+name = "rustmq-client"
+version = "0.1.0"
+edition = "2021"
+description = "RustMQ Client Library - High-performance message queue client"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rustmq/rustmq"
+keywords = ["message-queue", "distributed-systems", "async", "streaming"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+quinn = "0.11"
+rustls = "0.23"
+rcgen = "0.13"
+bytes = { version = "1.0", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
+futures = "0.3"
+dashmap = "6.0"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.0"
+
+[[bench]]
+name = "client_benchmarks"
+harness = false
+
+[features]
+default = []
+compression = []
+encryption = []
+metrics = []

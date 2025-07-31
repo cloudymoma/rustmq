@@ -1081,6 +1081,45 @@ The Message Broker Core includes comprehensive test coverage:
 - **Zero-Copy Operations**: Efficient memory usage throughout the message path
 - **Async Throughout**: Non-blocking I/O for maximum concurrency
 
+## 📦 Client SDKs
+
+RustMQ provides official client SDKs for multiple programming languages with production-ready features and comprehensive documentation.
+
+### 🦀 Rust SDK
+- **Location**: [`sdk/rust/`](sdk/rust/)
+- **Status**: ✅ **Fully Implemented** - Complete client library with async/await, QUIC transport
+- **Features**: Zero-copy operations, tokio integration, comprehensive error handling, streaming APIs
+- **Build**: `cargo build --release`
+- **Install**: `rustmq-client = { path = "sdk/rust" }`
+
+### 🐹 Go SDK  
+- **Location**: [`sdk/go/`](sdk/go/)
+- **Status**: ✅ **Fully Implemented** - Complete client library with goroutines, connection pooling
+- **Features**: QUIC transport, concurrent processing, automatic retries, metrics integration
+- **Build**: `go build ./...`
+- **Install**: `import "github.com/rustmq/rustmq/sdk/go/rustmq"`
+
+### Common SDK Features
+- **QUIC/HTTP3 Transport**: Low-latency, multiplexed connections
+- **Producer APIs**: Sync/async sending, batching, compression
+- **Consumer APIs**: Auto-commit, manual offset management, consumer groups
+- **Stream Processing**: Real-time message transformation pipelines
+- **Configuration**: Comprehensive client, producer, consumer settings
+- **Monitoring**: Built-in metrics, health checks, observability
+- **Error Handling**: Retry logic, circuit breakers, dead letter queues
+- **Security**: TLS/mTLS, authentication, authorization
+
+### Quick Start
+```bash
+# Rust SDK
+cd sdk/rust && cargo run --example simple_producer
+
+# Go SDK  
+cd sdk/go && go run examples/simple_producer.go
+```
+
+See individual SDK READMEs for detailed usage, configuration, performance tuning, and API documentation.
+
 ## 📚 Usage Examples
 
 ### Client Examples
