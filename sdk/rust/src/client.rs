@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use dashmap::DashMap;
 
 /// Main RustMQ client for managing connections and creating producers/consumers
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RustMqClient {
     config: Arc<ClientConfig>,
     connection: Arc<Connection>,

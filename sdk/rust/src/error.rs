@@ -4,7 +4,7 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, ClientError>;
 
 /// Errors that can occur in the RustMQ client
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ClientError {
     /// Connection-related errors
     #[error("Connection error: {0}")]
@@ -22,9 +22,17 @@ pub enum ClientError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
-    /// Message serialization/deserialization error
+    /// Message serialization error
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Message deserialization error
+    #[error("Deserialization error: {0}")]
+    Deserialization(String),
+
+    /// Broker error
+    #[error("Broker error: {0}")]
+    Broker(String),
 
     /// Network timeout
     #[error("Operation timed out after {timeout_ms}ms")]
@@ -163,7 +171,8 @@ impl ClientError {
             ClientError::Connection(_) | ClientError::NoConnectionsAvailable => "connection",
             ClientError::Authentication(_) => "authentication",
             ClientError::InvalidConfig(_) => "configuration",
-            ClientError::Serialization(_) => "serialization",
+            ClientError::Serialization(_) | ClientError::Deserialization(_) => "serialization",
+            ClientError::Broker(_) => "broker",
             ClientError::Timeout { .. } => "timeout",
             ClientError::TopicNotFound { .. } | ClientError::PartitionNotFound { .. } => "not_found",
             ClientError::Producer(_) => "producer",
@@ -194,7 +203,8 @@ impl ClientError {
             | ClientError::BrokerNotAvailable { .. }
             | ClientError::ResourceExhausted { .. }
             | ClientError::QuicTransport(_)
-            | ClientError::RebalancingInProgress => true,
+            | ClientError::RebalancingInProgress
+            | ClientError::Broker(_) => true,
             
             ClientError::Authentication(_)
             | ClientError::InvalidConfig(_)

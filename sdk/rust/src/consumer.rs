@@ -17,7 +17,7 @@ use std::collections::{HashMap, VecDeque, BTreeSet};
 use std::sync::atomic::Ordering;
 
 /// High-level consumer for receiving messages from RustMQ
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Consumer {
     id: String,
     topic: String,

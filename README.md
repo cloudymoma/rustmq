@@ -1087,10 +1087,202 @@ RustMQ provides official client SDKs for multiple programming languages with pro
 
 ### 🦀 Rust SDK
 - **Location**: [`sdk/rust/`](sdk/rust/)
-- **Status**: ✅ **Fully Implemented** - Complete client library with async/await, QUIC transport
-- **Features**: Zero-copy operations, tokio integration, comprehensive error handling, streaming APIs
+- **Status**: ✅ **Fully Implemented** - Complete client library with async/await, QUIC transport, comprehensive producer API
+- **Features**: Zero-copy operations, tokio integration, comprehensive error handling, streaming APIs, intelligent batching, flush mechanism
 - **Build**: `cargo build --release`
 - **Install**: `rustmq-client = { path = "sdk/rust" }`
+
+#### Producer API
+
+The Rust SDK provides a comprehensive Producer API with intelligent batching, flush mechanisms, and production-ready features.
+
+##### Basic Producer Usage
+
+```rust
+use rustmq_sdk::{
+    client::RustMqClient,
+    producer::ProducerBuilder,
+    message::MessageBuilder,
+    config::{ClientConfig, ProducerConfig, AckLevel},
+};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create client connection
+    let config = ClientConfig {
+        brokers: vec!["localhost:9092".to_string()],
+        enable_tls: false,
+        connect_timeout: Duration::from_secs(10),
+        request_timeout: Duration::from_secs(30),
+        ..Default::default()
+    };
+    
+    let client = RustMqClient::new(config).await?;
+    
+    // Create producer with custom configuration
+    let producer = ProducerBuilder::new()
+        .topic("user-events")
+        .config(ProducerConfig {
+            batch_size: 100,                           // Batch up to 100 messages
+            batch_timeout: Duration::from_millis(10),  // Or send after 10ms
+            ack_level: AckLevel::All,                   // Wait for all replicas
+            producer_id: Some("my-app-producer".to_string()),
+            ..Default::default()
+        })
+        .client(client)
+        .build()
+        .await?;
+    
+    // Send a single message and wait for acknowledgment
+    let message = MessageBuilder::new()
+        .topic("user-events")
+        .payload("user logged in")
+        .header("user-id", "12345")
+        .header("event-type", "login")
+        .build()?;
+    
+    let result = producer.send(message).await?;
+    println!("Message sent to partition {} at offset {}", 
+             result.partition, result.offset);
+    
+    Ok(())
+}
+```
+
+##### Fire-and-Forget Messages
+
+```rust
+// High-throughput fire-and-forget sending
+for i in 0..1000 {
+    let message = MessageBuilder::new()
+        .topic("metrics")
+        .payload(format!("{{\"value\": {}, \"timestamp\": {}}}", i, timestamp))
+        .header("sensor-id", &format!("sensor-{}", i % 10))
+        .build()?;
+    
+    // Returns immediately after queuing - no waiting for broker
+    producer.send_async(message).await?;
+}
+
+// Flush to ensure all messages are sent
+producer.flush().await?;
+```
+
+##### Batch Operations
+
+```rust
+// Prepare a batch of messages
+let messages: Vec<_> = (0..50).map(|i| {
+    MessageBuilder::new()
+        .topic("batch-topic")
+        .payload(format!("message-{}", i))
+        .header("batch-id", "batch-123")
+        .build().unwrap()
+}).collect();
+
+// Send batch and wait for all acknowledgments
+let results = producer.send_batch(messages).await?;
+
+for result in results {
+    println!("Message {} sent to offset {}", 
+             result.message_id, result.offset);
+}
+```
+
+##### Producer Configuration Options
+
+```rust
+let producer_config = ProducerConfig {
+    // Batching configuration
+    batch_size: 100,                           // Messages per batch
+    batch_timeout: Duration::from_millis(10),  // Maximum wait time
+    
+    // Reliability configuration  
+    ack_level: AckLevel::All,                   // All, Leader, or None
+    max_message_size: 1024 * 1024,             // 1MB max message size
+    idempotent: true,                           // Enable idempotent producer
+    
+    // Producer identification
+    producer_id: Some("my-producer".to_string()),
+    
+    // Advanced configuration
+    compression: CompressionConfig {
+        enabled: true,
+        algorithm: CompressionAlgorithm::Lz4,
+        level: 6,
+        min_size: 1024,
+    },
+    
+    default_properties: HashMap::from([
+        ("app".to_string(), "my-application".to_string()),
+        ("version".to_string(), "1.0.0".to_string()),
+    ]),
+};
+```
+
+##### Error Handling
+
+```rust
+use rustmq_sdk::error::ClientError;
+
+match producer.send(message).await {
+    Ok(result) => {
+        println!("Success: {} at offset {}", result.message_id, result.offset);
+    }
+    Err(ClientError::Timeout { timeout_ms }) => {
+        println!("Request timed out after {}ms", timeout_ms);
+        // Implement retry logic
+    }
+    Err(ClientError::Broker(msg)) => {
+        println!("Broker error: {}", msg);
+        // Handle broker-side errors
+    }
+    Err(ClientError::MessageTooLarge { size, max_size }) => {
+        println!("Message too large: {} bytes (max: {})", size, max_size);
+        // Reduce message size
+    }
+    Err(e) => {
+        println!("Other error: {}", e);
+    }
+}
+```
+
+##### Monitoring and Metrics
+
+```rust
+// Get producer performance metrics
+let metrics = producer.metrics().await;
+
+println!("Messages sent: {}", 
+         metrics.messages_sent.load(std::sync::atomic::Ordering::Relaxed));
+println!("Messages failed: {}", 
+         metrics.messages_failed.load(std::sync::atomic::Ordering::Relaxed));
+println!("Batches sent: {}", 
+         metrics.batches_sent.load(std::sync::atomic::Ordering::Relaxed));
+println!("Average batch size: {:.2}", 
+         *metrics.average_batch_size.read().await);
+
+if let Some(last_send) = *metrics.last_send_time.read().await {
+    println!("Last send: {:?} ago", last_send.elapsed());
+}
+```
+
+##### Graceful Shutdown
+
+```rust
+// Proper producer shutdown
+async fn shutdown_producer(producer: Producer) -> Result<(), ClientError> {
+    // Flush all pending messages
+    producer.flush().await?;
+    
+    // Close producer and cleanup resources
+    producer.close().await?;
+    
+    println!("Producer shut down gracefully");
+    Ok(())
+}
+```
 
 ### 🐹 Go SDK  
 - **Location**: [`sdk/go/`](sdk/go/)

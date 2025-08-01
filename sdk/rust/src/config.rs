@@ -191,7 +191,7 @@ pub struct ConsumerConfig {
 }
 
 /// Acknowledgment levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AckLevel {
     /// No acknowledgment required
     None,
@@ -265,9 +265,9 @@ impl Default for ProducerConfig {
         Self {
             producer_id: None,
             batch_size: 100,
-            batch_timeout: Duration::from_millis(100),
+            batch_timeout: Duration::from_millis(10),
             max_message_size: 1024 * 1024, // 1MB
-            ack_level: AckLevel::Leader,
+            ack_level: AckLevel::All,
             idempotent: false,
             compression: CompressionConfig::default(),
             default_properties: std::collections::HashMap::new(),

@@ -26,7 +26,7 @@ use tracing::{debug, error, info, warn, instrument};
 use uuid::Uuid;
 
 /// Connection pool entry with metadata
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ConnectionEntry {
     connection: QuicConnection,
     broker_addr: SocketAddr,
@@ -36,6 +36,7 @@ struct ConnectionEntry {
 }
 
 /// QUIC-based connection to RustMQ brokers
+#[derive(Debug)]
 pub struct Connection {
     config: Arc<ClientConfig>,
     endpoint: Arc<Endpoint>,
