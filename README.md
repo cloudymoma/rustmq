@@ -1089,24 +1089,24 @@ RustMQ provides official client SDKs for multiple programming languages with pro
 
 ### 🦀 Rust SDK
 - **Location**: [`sdk/rust/`](sdk/rust/)
-- **Status**: ✅ **Fully Implemented** - Complete client library with async/await, QUIC transport, comprehensive producer API
-- **Features**: Zero-copy operations, tokio integration, comprehensive error handling, streaming APIs, intelligent batching, flush mechanism
+- **Status**: ✅ **Fully Implemented** - Production-ready client library with comprehensive producer API
+- **Features**: 
+  - **Advanced Producer API**: Builder pattern with intelligent batching, flush mechanisms, and configurable acknowledgment levels
+  - **Async/Await**: Built on Tokio with zero-copy operations and streaming support
+  - **QUIC Transport**: Modern HTTP/3 protocol for low-latency communication
+  - **Comprehensive Error Handling**: Detailed error types with retry logic and timeout management
+  - **Performance Monitoring**: Built-in metrics for messages sent/failed, batch sizes, and timing
 - **Build**: `cargo build --release`
-- **Install**: `rustmq-client = { path = "sdk/rust" }`
+- **Install**: Add to `Cargo.toml`: `rustmq-client = { path = "sdk/rust" }`
 
 #### Producer API
 
-The Rust SDK provides a comprehensive Producer API with intelligent batching, flush mechanisms, and production-ready features.
+The Rust SDK provides a comprehensive Producer API with intelligent batching, flush mechanisms, and production-ready features. Based on the actual implementation:
 
 ##### Basic Producer Usage
 
 ```rust
-use rustmq_sdk::{
-    client::RustMqClient,
-    producer::ProducerBuilder,
-    message::MessageBuilder,
-    config::{ClientConfig, ProducerConfig, AckLevel},
-};
+use rustmq_client::*;
 use std::time::Duration;
 
 #[tokio::main]
@@ -1114,7 +1114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create client connection
     let config = ClientConfig {
         brokers: vec!["localhost:9092".to_string()],
-        enable_tls: false,
+        client_id: Some("my-app-producer".to_string()),
         connect_timeout: Duration::from_secs(10),
         request_timeout: Duration::from_secs(30),
         ..Default::default()
@@ -1123,21 +1123,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = RustMqClient::new(config).await?;
     
     // Create producer with custom configuration
+    let producer_config = ProducerConfig {
+        batch_size: 100,                           // Batch up to 100 messages
+        batch_timeout: Duration::from_millis(10),  // Or send after 10ms
+        ack_level: AckLevel::All,                   // Wait for all replicas
+        producer_id: Some("my-app-producer".to_string()),
+        ..Default::default()
+    };
+    
     let producer = ProducerBuilder::new()
         .topic("user-events")
-        .config(ProducerConfig {
-            batch_size: 100,                           // Batch up to 100 messages
-            batch_timeout: Duration::from_millis(10),  // Or send after 10ms
-            ack_level: AckLevel::All,                   // Wait for all replicas
-            producer_id: Some("my-app-producer".to_string()),
-            ..Default::default()
-        })
+        .config(producer_config)
         .client(client)
         .build()
         .await?;
     
     // Send a single message and wait for acknowledgment
-    let message = MessageBuilder::new()
+    let message = Message::builder()
         .topic("user-events")
         .payload("user logged in")
         .header("user-id", "12345")
@@ -1157,7 +1159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 // High-throughput fire-and-forget sending
 for i in 0..1000 {
-    let message = MessageBuilder::new()
+    let message = Message::builder()
         .topic("metrics")
         .payload(format!("{{\"value\": {}, \"timestamp\": {}}}", i, timestamp))
         .header("sensor-id", &format!("sensor-{}", i % 10))
@@ -1176,7 +1178,7 @@ producer.flush().await?;
 ```rust
 // Prepare a batch of messages
 let messages: Vec<_> = (0..50).map(|i| {
-    MessageBuilder::new()
+    Message::builder()
         .topic("batch-topic")
         .payload(format!("message-{}", i))
         .header("batch-id", "batch-123")
@@ -1288,14 +1290,15 @@ async fn shutdown_producer(producer: Producer) -> Result<(), ClientError> {
 
 ### 🐹 Go SDK  
 - **Location**: [`sdk/go/`](sdk/go/)
-- **Status**: ✅ **Fully Implemented** - Complete client library with enhanced connection layer
+- **Status**: ✅ **Fully Implemented** - Production-ready client library with sophisticated connection layer
 - **Features**: 
-  - **Advanced Connection Management**: QUIC transport with intelligent connection pooling and round-robin load balancing
-  - **Comprehensive TLS/mTLS Support**: Full client certificate authentication with CA validation
-  - **Health Check System**: Real-time broker health monitoring with JSON message exchange
-  - **Robust Reconnection Logic**: Exponential backoff with jitter, per-broker state tracking, and automatic failure recovery
-  - **Extensive Statistics**: Connection metrics, health check tracking, error monitoring, and performance analytics
-  - **Production-Ready Features**: Concurrent-safe operations, goroutine-based processing, configurable timeouts
+  - **Advanced Connection Management**: QUIC transport with intelligent connection pooling, round-robin load balancing, and automatic failover
+  - **Comprehensive TLS/mTLS Support**: Full client certificate authentication with CA validation and configurable trust stores
+  - **Health Check System**: Real-time broker health monitoring with JSON message exchange and automatic cleanup of failed connections
+  - **Robust Reconnection Logic**: Exponential backoff with jitter, per-broker state tracking, and intelligent failure recovery
+  - **Producer API with Batching**: Intelligent message batching with configurable size/timeout thresholds and compression support
+  - **Extensive Statistics**: Connection metrics, health check tracking, error monitoring, traffic analytics, and reconnection statistics
+  - **Production-Ready Features**: Concurrent-safe operations, goroutine-based processing, configurable timeouts, and comprehensive error handling
 - **Build**: `go build ./...`
 - **Install**: `import "github.com/rustmq/rustmq/sdk/go/rustmq"`
 
@@ -1331,12 +1334,35 @@ config.RetryConfig = &rustmq.RetryConfig{
 }
 ```
 
+#### Producer with Intelligent Batching
+```go
+// Create producer with batching configuration
+producerConfig := &rustmq.ProducerConfig{
+    BatchSize:    100,
+    BatchTimeout: 100 * time.Millisecond,
+    AckLevel:     rustmq.AckAll,
+    Idempotent:   true,
+}
+
+producer, err := client.CreateProducer("topic", producerConfig)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Send message with automatic batching
+result, err := producer.Send(ctx, message)
+```
+
 #### Connection Statistics
 ```go
 stats := client.Stats()
 fmt.Printf("Active: %d/%d, Reconnects: %d, Health Checks: %d", 
     stats.ActiveConnections, stats.TotalConnections,
     stats.ReconnectAttempts, stats.HealthChecks)
+
+// Additional statistics available
+fmt.Printf("Bytes: Sent=%d, Received=%d, Errors=%d", 
+    stats.BytesSent, stats.BytesReceived, stats.Errors)
 ```
 
 ### Common SDK Features
@@ -1350,12 +1376,33 @@ fmt.Printf("Active: %d/%d, Reconnects: %d, Health Checks: %d",
 - **Security**: TLS/mTLS, authentication, authorization
 
 ### Quick Start
-```bash
-# Rust SDK
-cd sdk/rust && cargo run --example simple_producer
 
-# Go SDK  
-cd sdk/go && go run examples/simple_producer.go
+#### Rust SDK
+```bash
+cd sdk/rust
+
+# Basic producer example
+cargo run --example simple_producer
+
+# Advanced consumer with multi-partition support
+cargo run --example advanced_consumer
+
+# Stream processing example
+cargo run --example stream_processor
+```
+
+#### Go SDK
+```bash
+cd sdk/go
+
+# Basic producer example
+go run examples/simple_producer.go
+
+# Basic consumer example
+go run examples/simple_consumer.go
+
+# Advanced stream processing
+go run examples/advanced_stream_processor.go
 ```
 
 See individual SDK READMEs for detailed usage, configuration, performance tuning, and API documentation.
@@ -1371,88 +1418,82 @@ See individual SDK READMEs for detailed usage, configuration, performance tuning
 ```rust
 // Cargo.toml
 [dependencies]
-rustmq-client = "0.1.0"  # Not yet published
+rustmq-client = { path = "sdk/rust" }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 
 // main.rs
-use rustmq_client::{RustMqClient, ProduceRequest, FetchRequest, Record};
+use rustmq_client::*;
 use serde::{Serialize, Deserialize};
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize)]
 struct OrderEvent {
     order_id: String,
     customer_id: String,
     amount: f64,
-    timestamp: i64,
+    timestamp: u64,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to RustMQ cluster
-    let client = RustMqClient::new("quic://rustmq-broker:9092").await?;
-
-    // Create topic
-    client.create_topic("orders", 12, 3).await?;
-    println!("Topic 'orders' created with 12 partitions");
+    // Create client connection
+    let config = ClientConfig {
+        brokers: vec!["localhost:9092".to_string()],
+        client_id: Some("order-processor".to_string()),
+        ..Default::default()
+    };
+    
+    let client = RustMqClient::new(config).await?;
+    
+    // Create producer
+    let producer = ProducerBuilder::new()
+        .topic("orders")
+        .client(client.clone())
+        .build()
+        .await?;
 
     // Produce messages
     let order = OrderEvent {
         order_id: "order-123".to_string(),
         customer_id: "customer-456".to_string(),
         amount: 99.99,
-        timestamp: chrono::Utc::now().timestamp_millis(),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
     };
 
-    let record = Record {
-        key: Some(order.order_id.as_bytes().to_vec()),
-        value: serde_json::to_vec(&order)?,
-        headers: vec![],
-        timestamp: order.timestamp,
-    };
+    let message = Message::builder()
+        .topic("orders")
+        .key(&order.order_id)
+        .payload(serde_json::to_vec(&order)?)
+        .header("content-type", "application/json")
+        .build()?;
 
-    let request = ProduceRequest {
-        topic: "orders".to_string(),
-        partition_id: 0,
-        records: vec![record],
-        acks: rustmq_client::AcknowledgmentLevel::All,
-        timeout_ms: 5000,
-    };
+    let result = producer.send(message).await?;
+    println!("Message produced at offset: {}", result.offset);
 
-    let response = client.produce(request).await?;
-    println!("Message produced at offset: {}", response.offset);
-
-    // Consume messages
-    let fetch_request = FetchRequest {
-        topic: "orders".to_string(),
-        partition_id: 0,
-        fetch_offset: 0,
-        max_bytes: 1024 * 1024, // 1MB
-        timeout_ms: 5000,
-    };
-
-    let fetch_response = client.fetch(fetch_request).await?;
-    for record in fetch_response.records {
-        let order: OrderEvent = serde_json::from_slice(&record.value)?;
-        println!("Received order: {:?}", order);
-    }
-
-    // Create consumer group
-    let mut consumer = client.create_consumer("order-processors", &["orders"]).await?;
+    // Create consumer
+    let consumer = ConsumerBuilder::new()
+        .topic("orders")
+        .consumer_group("order-processors")
+        .client(client)
+        .build()
+        .await?;
     
     // Consume with automatic offset management
-    loop {
-        let records = consumer.poll(std::time::Duration::from_millis(1000)).await?;
-        for (record, partition, offset) in records {
-            let order: OrderEvent = serde_json::from_slice(&record.value)?;
-            
-            // Process the order
-            process_order(order).await?;
-            
-            // Commit offset
-            consumer.commit_offset("orders", partition, offset).await?;
-        }
+    while let Some(consumer_message) = consumer.receive().await? {
+        let message = &consumer_message.message;
+        let order: OrderEvent = serde_json::from_slice(&message.payload)?;
+        
+        // Process the order
+        process_order(order).await?;
+        
+        // Acknowledge message
+        consumer_message.ack().await?;
     }
+    
+    Ok(())
 }
 
 async fn process_order(order: OrderEvent) -> Result<(), Box<dyn std::error::Error>> {
@@ -1460,7 +1501,7 @@ async fn process_order(order: OrderEvent) -> Result<(), Box<dyn std::error::Erro
              order.order_id, order.customer_id, order.amount);
     
     // Your business logic here
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     
     Ok(())
 }
@@ -1475,7 +1516,7 @@ module rustmq-example
 go 1.21
 
 require (
-    github.com/rustmq/rustmq-go v0.1.0  // Not yet available
+    github.com/rustmq/rustmq/sdk/go v0.1.0
     github.com/google/uuid v1.3.0
 )
 
@@ -1490,7 +1531,7 @@ import (
     "time"
 
     "github.com/google/uuid"
-    "github.com/rustmq/rustmq-go"
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
 )
 
 type OrderEvent struct {
@@ -1501,99 +1542,89 @@ type OrderEvent struct {
 }
 
 func main() {
-    // Connect to RustMQ cluster
-    client, err := rustmq.NewClient(rustmq.Config{
-        Brokers: []string{"rustmq-broker:9092"},
-        Timeout: 30 * time.Second,
-    })
+    // Create client configuration
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"localhost:9092"},
+        ClientID: "order-processor",
+    }
+    
+    client, err := rustmq.NewClient(config)
     if err != nil {
         log.Fatal("Failed to create client:", err)
     }
     defer client.Close()
 
-    // Create topic
-    err = client.CreateTopic(context.Background(), "orders", 12, 3)
-    if err != nil {
-        log.Fatal("Failed to create topic:", err)
-    }
-    fmt.Println("Topic 'orders' created with 12 partitions")
-
     // Producer example
-    go func() {
-        producer := client.NewProducer(rustmq.ProducerConfig{
-            Topic:        "orders",
-            Acknowledgment: rustmq.AckAll,
-            Timeout:      5 * time.Second,
-        })
-        defer producer.Close()
+    producer, err := client.CreateProducer("orders")
+    if err != nil {
+        log.Fatal("Failed to create producer:", err)
+    }
+    defer producer.Close()
 
-        for i := 0; i < 1000; i++ {
-            order := OrderEvent{
-                OrderID:    uuid.New().String(),
-                CustomerID: fmt.Sprintf("customer-%d", i%100),
-                Amount:     float64(i * 10),
-                Timestamp:  time.Now().UnixMilli(),
-            }
-
-            orderBytes, _ := json.Marshal(order)
-            
-            record := rustmq.Record{
-                Key:       []byte(order.OrderID),
-                Value:     orderBytes,
-                Headers:   map[string][]byte{},
-                Timestamp: order.Timestamp,
-            }
-
-            offset, err := producer.Send(context.Background(), record)
-            if err != nil {
-                log.Printf("Failed to send message: %v", err)
-                continue
-            }
-            
-            fmt.Printf("Message sent at offset: %d\n", offset)
-            time.Sleep(100 * time.Millisecond)
+    // Send some orders
+    for i := 0; i < 10; i++ {
+        order := OrderEvent{
+            OrderID:    uuid.New().String(),
+            CustomerID: fmt.Sprintf("customer-%d", i%5),
+            Amount:     float64((i + 1) * 25),
+            Timestamp:  time.Now().UnixMilli(),
         }
-    }()
+
+        orderBytes, _ := json.Marshal(order)
+        
+        message := rustmq.NewMessage().
+            Topic("orders").
+            KeyString(order.OrderID).
+            Payload(orderBytes).
+            Header("content-type", "application/json").
+            Build()
+
+        ctx := context.Background()
+        result, err := producer.Send(ctx, message)
+        if err != nil {
+            log.Printf("Failed to send message: %v", err)
+            continue
+        }
+        
+        fmt.Printf("Message sent at offset: %d, partition: %d\n", 
+            result.Offset, result.Partition)
+    }
 
     // Consumer example
-    consumer := client.NewConsumer(rustmq.ConsumerConfig{
-        GroupID:     "order-processors",
-        Topics:      []string{"orders"},
-        AutoCommit:  true,
-        StartOffset: rustmq.OffsetEarliest,
-    })
+    consumer, err := client.CreateConsumer("orders", "order-processors")
+    if err != nil {
+        log.Fatal("Failed to create consumer:", err)
+    }
     defer consumer.Close()
 
-    // Subscribe to topics
-    err = consumer.Subscribe(context.Background())
-    if err != nil {
-        log.Fatal("Failed to subscribe:", err)
-    }
-
     // Consume messages
-    for {
-        records, err := consumer.Poll(context.Background(), time.Second)
+    for i := 0; i < 10; i++ {
+        ctx := context.Background()
+        message, err := consumer.Receive(ctx)
         if err != nil {
-            log.Printf("Poll error: %v", err)
+            log.Printf("Receive error: %v", err)
             continue
         }
 
-        for _, record := range records {
-            var order OrderEvent
-            if err := json.Unmarshal(record.Value, &order); err != nil {
-                log.Printf("Failed to unmarshal order: %v", err)
-                continue
-            }
-
-            // Process the order
-            if err := processOrder(order); err != nil {
-                log.Printf("Failed to process order %s: %v", order.OrderID, err)
-                continue
-            }
-
-            fmt.Printf("Processed order %s for customer %s amount $%.2f\n",
-                order.OrderID, order.CustomerID, order.Amount)
+        var order OrderEvent
+        if err := json.Unmarshal(message.Message.Payload, &order); err != nil {
+            log.Printf("Failed to unmarshal order: %v", err)
+            message.Ack()
+            continue
         }
+
+        // Process the order
+        if err := processOrder(order); err != nil {
+            log.Printf("Failed to process order %s: %v", order.OrderID, err)
+            message.Nack() // Retry
+            continue
+        }
+
+        fmt.Printf("Processed order %s for customer %s amount $%.2f\n",
+            order.OrderID, order.CustomerID, order.Amount)
+            
+        // Acknowledge successful processing
+        message.Ack()
     }
 }
 
