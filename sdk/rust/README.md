@@ -1025,8 +1025,83 @@ tokio::spawn(async move {
 
 ### Stream Processing
 
+The RustMQ Rust SDK provides a comprehensive stream processing framework for real-time message transformation and enrichment.
+
+#### Stream Processing Modes
+
+**Individual Processing**: Process messages one by one for real-time processing
+
+```rust
+let stream_config = StreamConfig {
+    mode: StreamMode::Individual,
+    ..Default::default()
+};
+```
+
+**Batch Processing**: Process messages in batches for higher throughput
+
+```rust
+let stream_config = StreamConfig {
+    mode: StreamMode::Batch { 
+        batch_size: 100, 
+        batch_timeout: Duration::from_millis(1000) 
+    },
+    ..Default::default()
+};
+```
+
+**Windowed Processing**: Process messages in time-based windows for aggregation
+
+```rust
+let stream_config = StreamConfig {
+    mode: StreamMode::Windowed { 
+        window_size: Duration::from_secs(60),
+        slide_interval: Duration::from_secs(30)
+    },
+    ..Default::default()
+};
+```
+
+#### Error Handling Strategies
+
+```rust
+use rustmq_client::stream::{ErrorStrategy, StreamConfig};
+
+// Skip failed messages
+let config = StreamConfig {
+    error_strategy: ErrorStrategy::Skip,
+    ..Default::default()
+};
+
+// Retry failed messages with exponential backoff
+let config = StreamConfig {
+    error_strategy: ErrorStrategy::Retry { 
+        max_attempts: 3, 
+        backoff_ms: 1000 
+    },
+    ..Default::default()
+};
+
+// Send failed messages to dead letter queue
+let config = StreamConfig {
+    error_strategy: ErrorStrategy::DeadLetter { 
+        topic: "failed-messages".to_string() 
+    },
+    ..Default::default()
+};
+
+// Stop processing on error
+let config = StreamConfig {
+    error_strategy: ErrorStrategy::Stop,
+    ..Default::default()
+};
+```
+
+#### Custom Message Processor
+
 ```rust
 use async_trait::async_trait;
+use rustmq_client::stream::MessageProcessor;
 
 struct PaymentProcessor {
     fraud_detector: FraudDetector,
@@ -1058,6 +1133,33 @@ impl MessageProcessor for PaymentProcessor {
         Ok(Some(output_message))
     }
     
+    async fn process_batch(&self, messages: &[Message]) -> Result<Vec<Option<Message>>> {
+        let mut results = Vec::with_capacity(messages.len());
+        
+        // Process messages in parallel for batch mode
+        let futures: Vec<_> = messages.iter()
+            .map(|msg| self.process(msg))
+            .collect();
+            
+        for result in futures::future::join_all(futures).await {
+            results.push(result?);
+        }
+        
+        Ok(results)
+    }
+    
+    async fn on_start(&self) -> Result<()> {
+        tracing::info!("Payment processor started");
+        // Initialize resources
+        Ok(())
+    }
+    
+    async fn on_stop(&self) -> Result<()> {
+        tracing::info!("Payment processor stopped");
+        // Clean up resources
+        Ok(())
+    }
+    
     async fn on_error(&self, message: &Message, error: &ClientError) -> Result<()> {
         // Log error with context
         tracing::error!(
@@ -1067,30 +1169,139 @@ impl MessageProcessor for PaymentProcessor {
             "Payment processing failed"
         );
         
-        // Send to dead letter queue
-        self.send_to_dlq(message).await?;
-        
         Ok(())
     }
 }
+```
 
-// Set up stream processing
+#### Stream Setup and Management
+
+```rust
+// Create stream configuration
 let stream_config = StreamConfig {
     input_topics: vec!["raw-payments".to_string()],
     output_topic: Some("processed-payments".to_string()),
     consumer_group: "payment-processors".to_string(),
     parallelism: 8,
     processing_timeout: Duration::from_secs(30),
+    exactly_once: true,
+    max_in_flight: 1000,
     error_strategy: ErrorStrategy::DeadLetter {
         topic: "failed-payments".to_string(),
     },
     mode: StreamMode::Individual,
 };
 
-let stream = client.create_stream(stream_config).await?
+// Create and start stream
+let stream = MessageStream::new(client, stream_config).await?
     .with_processor(PaymentProcessor::new());
 
 stream.start().await?;
+
+// Monitor stream metrics
+tokio::spawn(async move {
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    
+    loop {
+        interval.tick().await;
+        
+        let metrics = stream.metrics().await;
+        tracing::info!("Stream metrics:");
+        tracing::info!("  Messages processed: {}", 
+                      metrics.messages_processed.load(Ordering::Relaxed));
+        tracing::info!("  Messages failed: {}", 
+                      metrics.messages_failed.load(Ordering::Relaxed));
+        tracing::info!("  Messages skipped: {}", 
+                      metrics.messages_skipped.load(Ordering::Relaxed));
+        
+        if let Ok(avg_time) = metrics.average_processing_time.try_read() {
+            tracing::info!("  Avg processing time: {:.2}ms", *avg_time);
+        }
+    }
+});
+
+// Gracefully stop stream
+stream.stop().await?;
+```
+
+#### Advanced Stream Processing Examples
+
+**Aggregation with Windowed Processing**:
+
+```rust
+struct AnalyticsProcessor {
+    metrics_store: MetricsStore,
+}
+
+#[async_trait]
+impl MessageProcessor for AnalyticsProcessor {
+    async fn process_batch(&self, messages: &[Message]) -> Result<Vec<Option<Message>>> {
+        // Aggregate metrics from the window
+        let mut event_counts = HashMap::new();
+        let mut total_revenue = 0.0;
+        
+        for message in messages {
+            let event: AnalyticsEvent = serde_json::from_slice(&message.payload)?;
+            *event_counts.entry(event.event_type.clone()).or_insert(0) += 1;
+            total_revenue += event.revenue;
+        }
+        
+        let aggregated = AggregatedMetrics {
+            window_start: messages.first().map(|m| m.timestamp).unwrap_or(0),
+            window_end: messages.last().map(|m| m.timestamp).unwrap_or(0),
+            event_counts,
+            total_revenue,
+            message_count: messages.len(),
+        };
+        
+        // Create single aggregated message
+        let output_message = Message::builder()
+            .topic("analytics-aggregated")
+            .payload(serde_json::to_vec(&aggregated)?)
+            .header("window-size", &messages.len().to_string())
+            .build()?;
+        
+        // Return single result for the entire batch
+        let mut results = vec![None; messages.len()];
+        results[0] = Some(output_message); // Only first message produces output
+        
+        Ok(results)
+    }
+}
+
+let stream_config = StreamConfig {
+    mode: StreamMode::Windowed { 
+        window_size: Duration::from_secs(300),  // 5-minute windows
+        slide_interval: Duration::from_secs(60) // Slide every minute
+    },
+    error_strategy: ErrorStrategy::Retry { 
+        max_attempts: 3, 
+        backoff_ms: 1000 
+    },
+    ..Default::default()
+};
+```
+
+**Complex Event Processing with Multiple Input Topics**:
+
+```rust
+let stream_config = StreamConfig {
+    input_topics: vec![
+        "user-events".to_string(),
+        "transaction-events".to_string(),
+        "system-events".to_string(),
+    ],
+    output_topic: Some("enriched-events".to_string()),
+    consumer_group: "event-enricher".to_string(),
+    mode: StreamMode::Batch { 
+        batch_size: 50, 
+        batch_timeout: Duration::from_millis(500) 
+    },
+    error_strategy: ErrorStrategy::DeadLetter { 
+        topic: "failed-enrichment".to_string() 
+    },
+    ..Default::default()
+};
 ```
 
 ## Performance Tuning

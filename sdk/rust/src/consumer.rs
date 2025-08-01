@@ -69,6 +69,7 @@ pub struct ConsumerMetrics {
 }
 
 /// Consumer message with acknowledgment capability
+#[derive(Debug, Clone)]
 pub struct ConsumerMessage {
     pub message: Message,
     ack_sender: mpsc::UnboundedSender<AckRequest>,
