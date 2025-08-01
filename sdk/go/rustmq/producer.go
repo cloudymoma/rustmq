@@ -2,7 +2,10 @@ package rustmq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -355,30 +358,163 @@ func (b *MessageBatcher) sendBatch(batch []*BatchItem) {
 		return
 	}
 
-	// TODO: Implement actual batch sending to broker
-	// For now, simulate successful sending
-	for _, item := range batch {
-		result := &MessageResult{
-			MessageID: item.Message.ID,
-			Topic:     item.Message.Topic,
-			Partition: 0, // Would be assigned by broker
-			Offset:    0, // Would be assigned by broker
-			Timestamp: time.Now(),
+	// Extract messages from batch items
+	messages := make([]*Message, len(batch))
+	for i, item := range batch {
+		messages[i] = item.Message
+	}
+
+	// Create produce request
+	request := &ProduceRequest{
+		Type:       "produce",
+		Topic:      b.producer.topic,
+		ProducerID: b.producer.id,
+		Messages:   messages,
+		AckLevel:   b.producer.config.AckLevel,
+		Timestamp:  time.Now(),
+		ClientID:   b.producer.client.config.ClientID,
+		Idempotent: b.producer.config.Idempotent,
+	}
+
+	// Marshal request to JSON
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		b.handleBatchError(batch, fmt.Errorf("failed to marshal produce request: %w", err))
+		return
+	}
+
+	// Send request to broker with retry logic
+	var response *ProduceResponse
+	var sendErr error
+	
+	for attempt := 0; attempt <= b.producer.client.config.RetryConfig.MaxRetries; attempt++ {
+		responseData, err := b.producer.client.connection.sendRequest(requestData)
+		if err != nil {
+			sendErr = err
+			if attempt < b.producer.client.config.RetryConfig.MaxRetries {
+				// Calculate backoff delay
+				delay := time.Duration(float64(b.producer.client.config.RetryConfig.BaseDelay) * 
+					math.Pow(b.producer.client.config.RetryConfig.Multiplier, float64(attempt)))
+				if delay > b.producer.client.config.RetryConfig.MaxDelay {
+					delay = b.producer.client.config.RetryConfig.MaxDelay
+				}
+				
+				// Add jitter if enabled
+				if b.producer.client.config.RetryConfig.Jitter {
+					jitterRange := delay / 10 // 10% jitter
+					jitter := time.Duration(rand.Int63n(int64(jitterRange)))
+					delay += jitter
+				}
+				
+				time.Sleep(delay)
+				continue
+			}
+			break
 		}
 
+		// Parse response
+		response = &ProduceResponse{}
+		if err := json.Unmarshal(responseData, response); err != nil {
+			sendErr = fmt.Errorf("failed to parse produce response: %w", err)
+			if attempt < b.producer.client.config.RetryConfig.MaxRetries {
+				continue
+			}
+			break
+		}
+
+		// Success - exit retry loop
+		sendErr = nil
+		break
+	}
+
+	// Handle send error
+	if sendErr != nil {
+		b.handleBatchError(batch, fmt.Errorf("failed to send batch after %d attempts: %w", 
+			b.producer.client.config.RetryConfig.MaxRetries+1, sendErr))
+		return
+	}
+
+	// Handle response error
+	if !response.Success {
+		errorMsg := "unknown error"
+		if response.Error != nil {
+			errorMsg = *response.Error
+		}
+		b.handleBatchError(batch, fmt.Errorf("broker rejected batch: %s", errorMsg))
+		return
+	}
+
+	// Process successful response
+	b.handleBatchSuccess(batch, response)
+}
+
+// handleBatchError handles errors for an entire batch
+func (b *MessageBatcher) handleBatchError(batch []*BatchItem, err error) {
+	for _, item := range batch {
 		if item.Callback != nil {
-			item.Callback(result, nil)
-		} else if item.ResultChan != nil {
+			item.Callback(nil, err)
+		} else if item.ErrorChan != nil {
 			select {
-			case item.ResultChan <- result:
+			case item.ErrorChan <- err:
 			default:
 			}
 		}
 	}
 
-	// Update metrics
+	// Update error metrics
+	atomic.AddUint64(&b.producer.metrics.MessagesFailed, uint64(len(batch)))
 	atomic.AddUint64(&b.producer.metrics.BatchesSent, 1)
-	atomic.AddUint64(&b.producer.metrics.BytesSent, uint64(len(batch)*1024)) // Estimate
+}
+
+// handleBatchSuccess handles successful batch responses
+func (b *MessageBatcher) handleBatchSuccess(batch []*BatchItem, response *ProduceResponse) {
+	// Calculate total bytes sent
+	totalBytes := uint64(0)
+	for _, item := range batch {
+		totalBytes += uint64(item.Message.TotalSize())
+	}
+
+	// If we have individual results, use them
+	if len(response.Results) == len(batch) {
+		for i, item := range batch {
+			result := response.Results[i]
+			
+			if item.Callback != nil {
+				item.Callback(result, nil)
+			} else if item.ResultChan != nil {
+				select {
+				case item.ResultChan <- result:
+				default:
+				}
+			}
+		}
+	} else {
+		// Fallback: create results based on base offset
+		baseOffset := response.BaseOffset
+		for i, item := range batch {
+			result := &MessageResult{
+				MessageID: item.Message.ID,
+				Topic:     item.Message.Topic,
+				Partition: response.PartitionID,
+				Offset:    baseOffset + uint64(i),
+				Timestamp: time.Now(),
+			}
+
+			if item.Callback != nil {
+				item.Callback(result, nil)
+			} else if item.ResultChan != nil {
+				select {
+				case item.ResultChan <- result:
+				default:
+				}
+			}
+		}
+	}
+
+	// Update success metrics
+	atomic.AddUint64(&b.producer.metrics.MessagesSent, uint64(len(batch)))
+	atomic.AddUint64(&b.producer.metrics.BatchesSent, 1)
+	atomic.AddUint64(&b.producer.metrics.BytesSent, totalBytes)
 	
 	// Update average batch size
 	totalBatches := atomic.LoadUint64(&b.producer.metrics.BatchesSent)
@@ -386,6 +522,9 @@ func (b *MessageBatcher) sendBatch(batch []*BatchItem) {
 	if totalBatches > 0 {
 		b.producer.metrics.AverageBatchSize = float64(totalMessages) / float64(totalBatches)
 	}
+
+	// Update last send time
+	b.producer.metrics.LastSendTime = time.Now()
 }
 
 // flush flushes any pending messages

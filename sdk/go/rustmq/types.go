@@ -326,3 +326,34 @@ type ConsumerGroupJoinResponse struct {
 	Assignment    []TopicPartition  `json:"assignment,omitempty"`
 	Error         *string           `json:"error,omitempty"`
 }
+
+// ProduceRequest represents a request to produce messages to a topic
+type ProduceRequest struct {
+	Type        string     `json:"type"`
+	Topic       string     `json:"topic"`
+	ProducerID  string     `json:"producer_id"`
+	Messages    []*Message `json:"messages"`
+	AckLevel    AckLevel   `json:"ack_level"`
+	Timestamp   time.Time  `json:"timestamp"`
+	ClientID    string     `json:"client_id"`
+	Idempotent  bool       `json:"idempotent"`
+}
+
+// ProduceResponse represents a response to a produce request
+type ProduceResponse struct {
+	Success     bool             `json:"success"`
+	Results     []*MessageResult `json:"results,omitempty"`
+	Error       *string          `json:"error,omitempty"`
+	PartitionID uint32           `json:"partition_id"`
+	BaseOffset  uint64           `json:"base_offset"`
+}
+
+// BatchProduceResult represents the result for individual messages in a batch
+type BatchProduceResult struct {
+	MessageID string    `json:"message_id"`
+	Success   bool      `json:"success"`
+	Offset    uint64    `json:"offset"`
+	Partition uint32    `json:"partition"`
+	Timestamp time.Time `json:"timestamp"`
+	Error     *string   `json:"error,omitempty"`
+}
