@@ -28,8 +28,9 @@ async fn main() -> Result<()> {
             .topic("example-topic")
             .payload(format!("Hello, World! Message #{}", i))
             .header("message-id", &format!("msg-{}", i))
-            .header("timestamp", &chrono::Utc::now().to_rfc3339())
-            .build()?;
+            .header("timestamp", &std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs().to_string())
+            .build()
+            .map_err(|e| ClientError::InvalidMessage(e))?;
 
         match producer.send(message).await {
             Ok(result) => {

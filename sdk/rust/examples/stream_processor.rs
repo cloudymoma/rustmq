@@ -1,4 +1,4 @@
-use rustmq_client::*;
+use rustmq_client::{*, stream::{MessageProcessor, ErrorStrategy, StreamMode}};
 use tokio;
 use tracing_subscriber;
 use async_trait::async_trait;
@@ -21,7 +21,7 @@ impl MessageProcessor for UppercaseProcessor {
             .payload(uppercase_payload)
             .header("processor", "uppercase")
             .header("original-topic", &message.topic)
-            .header("processed-at", &chrono::Utc::now().to_rfc3339())
+            .header("processed-at", &std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs().to_string())
             .build()
             .map_err(|e| ClientError::Stream(e))?;
 
@@ -86,25 +86,9 @@ async fn main() -> Result<()> {
     stream.start().await?;
     println!("Stream processing started");
 
-    // Monitor metrics
-    let metrics_stream = stream.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-        loop {
-            interval.tick().await;
-            
-            if !metrics_stream.is_running().await {
-                break;
-            }
-            
-            let metrics = metrics_stream.metrics().await;
-            println!("Stream metrics - Processed: {}, Failed: {}, Skipped: {}", 
-                metrics.messages_processed.load(std::sync::atomic::Ordering::Relaxed),
-                metrics.messages_failed.load(std::sync::atomic::Ordering::Relaxed),
-                metrics.messages_skipped.load(std::sync::atomic::Ordering::Relaxed)
-            );
-        }
-    });
+    // Note: Metrics monitoring would require MessageStream to implement Clone
+    // For this example, we'll proceed without metrics monitoring
+    println!("Stream processing active - metrics monitoring would go here");
 
     // Wait for Ctrl+C
     tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");

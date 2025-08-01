@@ -55,6 +55,21 @@ The RustMQ Rust SDK provides a native, high-performance client library for inter
 - **🌊 Streaming**: Real-time message processing pipelines
 - **⚡ Zero-Copy**: Efficient memory usage with `Bytes`
 
+### Consumer Features
+
+- **🔄 Auto-Retry**: Exponential backoff retry with dead letter queue support
+- **🎯 Offset Management**: Manual and automatic offset commits with seeking
+- **📈 Consumer Lag**: Real-time lag monitoring and alerting per partition
+- **⏰ Timestamp Seeking**: Seek to specific timestamps for historical processing
+- **🔀 Multi-Partition Control**: Full multi-partition assignment, pausing, and resuming
+- **🌊 Stream Interface**: Async stream support with `futures::Stream`
+- **💾 Persistent State**: Reliable per-partition offset tracking and recovery
+- **🚨 Error Handling**: Comprehensive retry logic and failure monitoring
+- **📊 Partition Assignment**: Automatic partition assignment with rebalancing support
+- **🎯 Selective Processing**: Pause/resume individual partitions for load balancing
+- **🔍 Per-Partition Metrics**: Individual partition lag and offset tracking
+- **⚡ Concurrent Fetching**: Parallel message fetching from multiple partitions
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -325,6 +340,365 @@ let consumer = ConsumerBuilder::new()
     .await?;
 ```
 
+### Advanced Consumer Features
+
+The Consumer implementation provides production-ready features including:
+
+#### Offset Management
+
+```rust
+// Manual offset commits
+consumer.commit().await?;
+
+// Get current lag
+let lag = consumer.get_lag().await?;
+println!("Consumer lag: {:?}", lag);
+
+// Get committed offset for partition
+let offset = consumer.committed_offset(0).await?;
+println!("Committed offset for partition 0: {}", offset);
+```
+
+#### Seeking
+
+```rust
+// Seek to specific offset
+consumer.seek(12345).await?;
+
+// Seek to timestamp (finds offset for timestamp)
+let one_hour_ago = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap()
+    .as_secs() - 3600;
+consumer.seek_to_timestamp(one_hour_ago).await?;
+```
+
+#### Failed Message Handling
+
+```rust
+let consumer_config = ConsumerConfig {
+    // Retry configuration
+    max_retry_attempts: 5,
+    dead_letter_queue: Some("failed-messages".to_string()),
+    
+    // Failed messages are automatically retried with exponential backoff:
+    // 1st retry: 2 seconds
+    // 2nd retry: 4 seconds  
+    // 3rd retry: 8 seconds
+    // After max retries: sent to dead letter queue
+    
+    ..Default::default()
+};
+```
+
+#### Multi-Partition Management
+
+The Consumer implementation provides comprehensive multi-partition support with automatic partition assignment, per-partition offset tracking, and flexible partition control.
+
+```rust
+// Get assigned partitions
+let partitions = consumer.assigned_partitions().await;
+println!("Assigned partitions: {:?}", partitions);
+
+// Get detailed partition assignment information
+if let Some(assignment) = consumer.partition_assignment().await {
+    println!("Assignment ID: {}", assignment.assignment_id);
+    println!("Assigned at: {:?}", assignment.assigned_at);
+    println!("Partitions: {:?}", assignment.partitions);
+}
+
+// Pause consumption from specific partitions
+consumer.pause_partitions(vec![0, 1]).await?;
+
+// Resume consumption
+consumer.resume_partitions(vec![0, 1]).await?;
+
+// Get currently paused partitions
+let paused = consumer.paused_partitions().await;
+println!("Paused partitions: {:?}", paused);
+
+// Multi-partition seeking
+// Seek specific partition to offset
+consumer.seek(0, 12345).await?;
+
+// Seek all partitions to same offset
+consumer.seek_all(10000).await?;
+
+// Seek specific partition to timestamp
+consumer.seek_to_timestamp(0, timestamp).await?;
+
+// Seek all partitions to timestamp (returns partition -> offset mapping)
+let partition_offsets = consumer.seek_all_to_timestamp(timestamp).await?;
+println!("Seeked to timestamp with offsets: {:?}", partition_offsets);
+
+// Get per-partition consumer lag
+let lag_map = consumer.get_lag().await?;
+for (partition, lag) in lag_map {
+    println!("Partition {}: {} messages behind", partition, lag);
+}
+
+// Get committed offset for specific partition
+let offset = consumer.committed_offset(0).await?;
+println!("Committed offset for partition 0: {}", offset);
+```
+
+#### Advanced Multi-Partition Features
+
+```rust
+// Per-partition state management
+let assigned_partitions = consumer.assigned_partitions().await;
+for partition in assigned_partitions {
+    // Check individual partition lag
+    match consumer.committed_offset(partition).await {
+        Ok(offset) => println!("Partition {} at offset {}", partition, offset),
+        Err(e) => println!("Error getting offset for partition {}: {}", partition, e),
+    }
+}
+
+// Selective partition processing
+let partitions_to_process = vec![0, 2, 4]; // Process only even partitions
+let all_partitions = consumer.assigned_partitions().await;
+let partitions_to_pause: Vec<u32> = all_partitions
+    .into_iter()
+    .filter(|p| !partitions_to_process.contains(p))
+    .collect();
+
+consumer.pause_partitions(partitions_to_pause).await?;
+
+// Process only active partitions
+while let Some(message) = consumer.receive().await? {
+    // Message will only come from unpaused partitions
+    println!("Received from partition {}: {}", 
+             message.message.partition, 
+             message.message.payload_as_string()?);
+    message.ack().await?;
+}
+```
+
+## Comprehensive Multi-Partition Consumer Guide
+
+The RustMQ Rust SDK provides industry-leading multi-partition consumer support with production-ready features for high-throughput, distributed message processing.
+
+### Multi-Partition Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Multi-Partition Consumer                 │
+├─────────────────────────────────────────────────────────────┤
+│  PartitionAssignment        OffsetTracker                  │
+│  ├── partitions: [0,1,2,4]  ├── Per-partition offsets     │
+│  ├── assignment_id          ├── Pending message tracking  │
+│  └── assigned_at            └── Consecutive commit logic  │
+├─────────────────────────────────────────────────────────────┤
+│  Concurrent Fetching     │  Partition Management          │
+│  ├── Parallel requests  │  ├── Pause/Resume individual   │
+│  ├── Load balancing     │  ├── Selective processing      │
+│  └── Backpressure       │  └── Error isolation          │
+├─────────────────────────────────────────────────────────────┤
+│  Advanced Seeking        │  Performance Monitoring        │
+│  ├── Per-partition seek  │  ├── Per-partition lag        │
+│  ├── Bulk operations     │  ├── Processing metrics       │
+│  └── Timestamp seeking   │  └── Health monitoring        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Multi-Partition Features
+
+✅ **Production-Ready Implementation**
+- **Automatic Partition Assignment**: Seamless integration with RustMQ's partition rebalancing
+- **Per-Partition Offset Tracking**: Independent offset management with gap handling
+- **Concurrent Message Fetching**: Parallel requests across assigned partitions
+- **Intelligent Commit Strategy**: Consecutive offset calculation with out-of-order support
+
+✅ **Advanced Partition Control**
+- **Selective Partition Processing**: Pause/resume individual partitions for load balancing
+- **Partition-Specific Seeking**: Seek individual partitions to different offsets/timestamps
+- **Bulk Operations**: Seek all partitions simultaneously with atomic operations
+- **Error Isolation**: Handle partition-specific errors without affecting others
+
+✅ **Performance & Reliability**
+- **Zero-Copy Operations**: Efficient memory usage across multiple partitions
+- **Backpressure Handling**: Automatic flow control per partition
+- **Comprehensive Error Handling**: Retry logic with partition-specific strategies
+- **Real-Time Monitoring**: Per-partition lag tracking and health metrics
+
+### Complete Multi-Partition Example
+
+```rust
+use rustmq_client::*;
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create client with multi-partition optimization
+    let config = ClientConfig {
+        brokers: vec!["localhost:9092".to_string()],
+        max_connections: 15, // More connections for concurrent fetching
+        ..Default::default()
+    };
+    let client = RustMqClient::new(config).await?;
+    
+    // Configure consumer for multi-partition workloads
+    let consumer_config = ConsumerConfig {
+        consumer_group: "multi-partition-processors".to_string(),
+        enable_auto_commit: false, // Manual commits for precision
+        fetch_size: 1000,          // Larger batches for efficiency
+        fetch_timeout: Duration::from_millis(500),
+        max_retry_attempts: 5,
+        dead_letter_queue: Some("failed-mp-messages".to_string()),
+        ..Default::default()
+    };
+    
+    let consumer = ConsumerBuilder::new()
+        .topic("high-throughput-topic")
+        .consumer_group("multi-partition-processors")
+        .config(consumer_config)
+        .client(client)
+        .build()
+        .await?;
+    
+    // Get partition assignment
+    let partitions = consumer.assigned_partitions().await;
+    println!("Assigned to {} partitions: {:?}", partitions.len(), partitions);
+    
+    // Process messages from all partitions
+    let mut partition_counts = HashMap::new();
+    for _ in 0..100 {
+        if let Some(consumer_message) = consumer.receive().await? {
+            let message = &consumer_message.message;
+            
+            // Track per-partition processing
+            *partition_counts.entry(message.partition).or_insert(0) += 1;
+            
+            println!("Processing message from partition {}: {}", 
+                     message.partition, message.payload_as_string()?);
+            
+            // Acknowledge message
+            consumer_message.ack().await?;
+            
+            // Commit every 10 messages
+            if partition_counts.values().sum::<u32>() % 10 == 0 {
+                consumer.commit().await?;
+            }
+        }
+    }
+    
+    // Show processing distribution
+    println!("Messages processed per partition: {:?}", partition_counts);
+    
+    // Get consumer lag across all partitions
+    let lag_map = consumer.get_lag().await?;
+    for (partition, lag) in lag_map {
+        println!("Partition {}: {} messages behind", partition, lag);
+    }
+    
+    Ok(())
+}
+```
+
+### Advanced Multi-Partition Scenarios
+
+#### Partition-Specific Error Handling
+
+```rust
+// Handle errors per partition
+while let Some(consumer_message) = consumer.receive().await? {
+    let message = &consumer_message.message;
+    
+    match process_message_for_partition(message).await {
+        Ok(_) => consumer_message.ack().await?,
+        Err(PartitionError::Retryable(partition)) => {
+            // Pause problematic partition temporarily
+            consumer.pause_partitions(vec![partition]).await?;
+            consumer_message.nack().await?;
+            
+            // Resume after delay
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            consumer.resume_partitions(vec![partition]).await?;
+        }
+        Err(PartitionError::Fatal(partition)) => {
+            // Skip message but continue processing other partitions
+            consumer_message.ack().await?;
+            eprintln!("Fatal error on partition {}, continuing with others", partition);
+        }
+    }
+}
+```
+
+#### Bulk Partition Operations
+
+```rust
+// Seek all partitions to 1 hour ago
+let one_hour_ago = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)?
+    .as_secs() - 3600;
+
+let partition_offsets = consumer.seek_all_to_timestamp(one_hour_ago).await?;
+println!("Seeked all partitions: {:?}", partition_offsets);
+
+// Selective partition processing
+let high_priority_partitions = vec![0, 1]; // Process high-priority partitions only
+let all_partitions = consumer.assigned_partitions().await;
+let low_priority: Vec<u32> = all_partitions.into_iter()
+    .filter(|p| !high_priority_partitions.contains(p))
+    .collect();
+
+consumer.pause_partitions(low_priority).await?;
+// Now only receive messages from high-priority partitions
+```
+
+#### Performance Monitoring
+
+```rust
+// Monitor multi-partition performance
+let metrics = consumer.metrics().await;
+let lag_map = consumer.get_lag().await?;
+
+println!("Multi-Partition Performance:");
+println!("  Total messages processed: {}", 
+         metrics.messages_processed.load(Ordering::Relaxed));
+println!("  Active partitions: {}", consumer.assigned_partitions().await.len());
+println!("  Paused partitions: {:?}", consumer.paused_partitions().await);
+
+// Calculate total lag across all partitions
+let total_lag: u64 = lag_map.values().sum();
+println!("  Total consumer lag: {} messages", total_lag);
+
+// Efficiency calculation
+let received = metrics.messages_received.load(Ordering::Relaxed);
+let processed = metrics.messages_processed.load(Ordering::Relaxed);
+if received > 0 {
+    let efficiency = (processed as f64 / received as f64) * 100.0;
+    println!("  Processing efficiency: {:.1}%", efficiency);
+}
+```
+
+### Multi-Partition Best Practices
+
+🎯 **Configuration Optimization**
+- Use `enable_auto_commit: false` for precise offset control across partitions
+- Set `fetch_size: 1000+` for efficient batch processing across multiple partitions
+- Configure `max_connections: 15+` for concurrent partition fetching
+- Enable `dead_letter_queue` for robust error handling per partition
+
+⚡ **Performance Tuning**
+- Monitor per-partition lag to identify bottlenecks: `consumer.get_lag().await?`
+- Use partition pause/resume for dynamic load balancing
+- Implement parallel processing for independent partitions
+- Batch commits across multiple partitions for efficiency
+
+🛡️ **Error Handling Strategy**
+- Isolate partition-specific errors to prevent cascading failures
+- Use partition pausing for temporary issues (network, resource constraints)
+- Implement partition-aware retry logic with exponential backoff
+- Monitor partition health and rebalance as needed
+
+📊 **Monitoring & Observability**
+- Track per-partition processing rates and lag
+- Monitor partition assignment changes and rebalancing events
+- Set up alerts for high lag or failed partitions
+- Use metrics for capacity planning and scaling decisions
+
 ## Connection Layer
 
 The RustMQ Rust SDK implements a sophisticated QUIC-based connection layer that provides:
@@ -570,6 +944,83 @@ while let Some(message) = consumer.receive().await? {
         consumer.commit().await?;
     }
 }
+```
+
+#### Error Handling with Dead Letter Queue
+
+```rust
+while let Some(consumer_message) = consumer.receive().await? {
+    let message = &consumer_message.message;
+    
+    match process_critical_message(message).await {
+        Ok(_) => {
+            // Successful processing
+            consumer_message.ack().await?;
+        }
+        Err(ProcessingError::Retryable(e)) => {
+            // Will be retried with exponential backoff
+            warn!("Processing failed, will retry: {}", e);
+            consumer_message.nack().await?;
+        }
+        Err(ProcessingError::Fatal(e)) => {
+            // Mark as processed to avoid infinite retries
+            error!("Fatal processing error: {}", e);
+            consumer_message.ack().await?;
+        }
+    }
+}
+```
+
+#### Consumer with Seeking
+
+```rust
+// Start processing from a specific timestamp
+let yesterday = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap()
+    .as_secs() - 86400; // 24 hours ago
+
+consumer.seek_to_timestamp(yesterday).await?;
+
+// Or seek to specific offset
+consumer.seek(5000).await?;
+
+// Now consume from that position
+while let Some(message) = consumer.receive().await? {
+    process_historical_message(&message.message).await?;
+    message.ack().await?;
+}
+```
+
+#### Consumer Metrics and Monitoring
+
+```rust
+use std::time::Duration;
+
+// Monitor consumer health
+tokio::spawn(async move {
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    
+    loop {
+        interval.tick().await;
+        
+        let metrics = consumer.metrics().await;
+        let lag = consumer.get_lag().await.unwrap_or_default();
+        
+        info!("Consumer metrics:");
+        info!("  Messages received: {}", metrics.messages_received.load(Ordering::Relaxed));
+        info!("  Messages processed: {}", metrics.messages_processed.load(Ordering::Relaxed));
+        info!("  Messages failed: {}", metrics.messages_failed.load(Ordering::Relaxed));
+        info!("  Consumer lag: {:?}", lag);
+        
+        // Alert if lag is too high
+        for (partition, lag_count) in lag {
+            if lag_count > 10000 {
+                warn!("High lag detected on partition {}: {} messages", partition, lag_count);
+            }
+        }
+    }
+});
 ```
 
 ### Stream Processing
@@ -975,6 +1426,8 @@ See the `examples/` directory for complete examples:
 
 - [`simple_producer.rs`](examples/simple_producer.rs) - Basic message production
 - [`simple_consumer.rs`](examples/simple_consumer.rs) - Basic message consumption
+- [`advanced_consumer.rs`](examples/advanced_consumer.rs) - Advanced consumer with seeking, error handling, and partition management
+- [`multi_partition_consumer.rs`](examples/multi_partition_consumer.rs) - **Comprehensive multi-partition consumer demonstration**
 - [`stream_processor.rs`](examples/stream_processor.rs) - Stream processing pipeline
 
 ### Running Examples
@@ -985,6 +1438,12 @@ cargo run --example simple_producer
 
 # Run consumer example  
 cargo run --example simple_consumer
+
+# Run advanced consumer example
+cargo run --example advanced_consumer
+
+# Run comprehensive multi-partition consumer demo
+cargo run --example multi_partition_consumer
 
 # Run stream processor
 cargo run --example stream_processor
