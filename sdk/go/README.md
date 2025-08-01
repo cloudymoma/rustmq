@@ -127,6 +127,203 @@ go build -tags "production" ./...
 
 ## Configuration
 
+### Client Configuration
+
+The Go SDK supports comprehensive configuration for production deployments:
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers:           []string{"localhost:9092", "localhost:9093"},
+    ClientID:          "my-app",
+    ConnectTimeout:    10 * time.Second,
+    RequestTimeout:    30 * time.Second,
+    EnableTLS:         true,
+    MaxConnections:    10,
+    KeepAliveInterval: 30 * time.Second,
+    TLSConfig: &rustmq.TLSConfig{
+        CACert:     "/etc/ssl/certs/ca.pem",
+        ClientCert: "/etc/ssl/certs/client.pem", 
+        ClientKey:  "/etc/ssl/private/client.key",
+        ServerName: "rustmq.example.com",
+    },
+    RetryConfig: &rustmq.RetryConfig{
+        MaxRetries: 5,
+        BaseDelay:  100 * time.Millisecond,
+        MaxDelay:   30 * time.Second,
+        Multiplier: 2.0,
+        Jitter:     true,
+    },
+}
+```
+
+### TLS/mTLS Configuration
+
+The SDK provides comprehensive TLS support for secure connections:
+
+#### Basic TLS with Server Verification
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers:   []string{"rustmq.example.com:9092"},
+    EnableTLS: true,
+    TLSConfig: &rustmq.TLSConfig{
+        CACert:     "/etc/ssl/certs/ca.pem",
+        ServerName: "rustmq.example.com",
+    },
+}
+```
+
+#### Mutual TLS (mTLS) with Client Certificates
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers:   []string{"rustmq.example.com:9092"},
+    EnableTLS: true,
+    TLSConfig: &rustmq.TLSConfig{
+        CACert:     "/etc/ssl/certs/ca.pem",
+        ClientCert: "/etc/ssl/certs/client.pem",
+        ClientKey:  "/etc/ssl/private/client.key", 
+        ServerName: "rustmq.example.com",
+    },
+}
+```
+
+#### Development/Testing with Insecure Skip Verify
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers:   []string{"localhost:9092"},
+    EnableTLS: true,
+    TLSConfig: &rustmq.TLSConfig{
+        InsecureSkipVerify: true, // Only for development!
+    },
+}
+```
+
+### Connection Health Checks
+
+The SDK includes comprehensive health checking with automatic reconnection:
+
+#### Health Check Configuration
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers:           []string{"localhost:9092"},
+    KeepAliveInterval: 30 * time.Second, // Health check interval
+    RequestTimeout:    5 * time.Second,  // Health check timeout
+}
+
+client, err := rustmq.NewClient(config)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Manual health check
+if err := client.HealthCheck(); err != nil {
+    log.Printf("Health check failed: %v", err)
+}
+```
+
+#### Health Check Response Format
+
+Health checks exchange JSON messages with brokers:
+
+```json
+{
+  "status": "healthy",
+  "details": {
+    "broker_id": "broker-001",
+    "uptime": "24h30m15s",
+    "memory_usage": "45%"
+  },
+  "timestamp": "2023-10-15T14:30:00Z"
+}
+```
+
+### Reconnection Configuration
+
+Robust reconnection with exponential backoff and jitter:
+
+#### Basic Reconnection Setup
+
+```go
+config := &rustmq.ClientConfig{
+    Brokers: []string{"localhost:9092", "localhost:9093"},
+    RetryConfig: &rustmq.RetryConfig{
+        MaxRetries: 10,                    // Maximum retry attempts per broker
+        BaseDelay:  100 * time.Millisecond, // Initial retry delay
+        MaxDelay:   30 * time.Second,      // Maximum retry delay
+        Multiplier: 2.0,                   // Exponential backoff multiplier
+        Jitter:     true,                  // Add random jitter to prevent thundering herd
+    },
+}
+```
+
+#### Advanced Reconnection Patterns
+
+```go
+// Create client with custom reconnection strategy
+client, err := rustmq.NewClient(config)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Monitor connection status
+go func() {
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+    
+    for range ticker.C {
+        if !client.IsConnected() {
+            log.Println("Connection lost, automatic reconnection in progress...")
+        }
+        
+        // Get detailed connection statistics
+        stats := client.Stats()
+        log.Printf("Active connections: %d/%d, Reconnect attempts: %d",
+            stats.ActiveConnections, stats.TotalConnections, stats.ReconnectAttempts)
+    }
+}()
+```
+
+### Connection Statistics and Monitoring
+
+Comprehensive statistics for monitoring and observability:
+
+#### Available Statistics
+
+```go
+stats := client.Stats()
+
+// Connection health
+fmt.Printf("Active connections: %d/%d\n", stats.ActiveConnections, stats.TotalConnections)
+fmt.Printf("Brokers: %v\n", stats.Brokers)
+
+// Traffic statistics  
+fmt.Printf("Bytes sent: %d, received: %d\n", stats.BytesSent, stats.BytesReceived)
+fmt.Printf("Requests: %d, responses: %d\n", stats.RequestsSent, stats.ResponsesReceived)
+
+// Error tracking
+fmt.Printf("Total errors: %d\n", stats.Errors)
+
+// Health monitoring
+fmt.Printf("Health checks: %d (errors: %d)\n", stats.HealthChecks, stats.HealthCheckErrors)
+fmt.Printf("Last heartbeat: %v\n", stats.LastHeartbeat)
+
+// Reconnection tracking
+fmt.Printf("Reconnection attempts: %d\n", stats.ReconnectAttempts)
+```
+
+#### JSON Statistics Export
+
+```go
+// Export statistics as JSON for monitoring systems
+statsJSON, err := json.MarshalIndent(client.Stats(), "", "  ")
+if err == nil {
+    fmt.Println(string(statsJSON))
+}
+```
+
 ## Quick Start
 
 ### Producer Example
@@ -138,20 +335,50 @@ import (
     "context"
     "fmt"
     "log"
+    "time"
 
     "github.com/rustmq/rustmq/sdk/go/rustmq"
 )
 
 func main() {
-    // Create client
-    config := rustmq.DefaultClientConfig()
-    config.Brokers = []string{"localhost:9092"}
+    // Create client with TLS and retry configuration
+    config := &rustmq.ClientConfig{
+        Brokers:           []string{"localhost:9092", "localhost:9093"},
+        ClientID:          "go-producer-example",
+        ConnectTimeout:    10 * time.Second,
+        RequestTimeout:    30 * time.Second,
+        EnableTLS:         false, // Set to true for production
+        KeepAliveInterval: 30 * time.Second,
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 5,
+            BaseDelay:  100 * time.Millisecond,
+            MaxDelay:   10 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
+        },
+    }
     
     client, err := rustmq.NewClient(config)
     if err != nil {
         log.Fatal(err)
     }
     defer client.Close()
+
+    // Monitor connection health
+    go func() {
+        ticker := time.NewTicker(10 * time.Second)
+        defer ticker.Stop()
+        
+        for range ticker.C {
+            if err := client.HealthCheck(); err != nil {
+                log.Printf("Health check failed: %v", err)
+            } else {
+                stats := client.Stats()
+                log.Printf("Health check OK - Active connections: %d/%d", 
+                    stats.ActiveConnections, stats.TotalConnections)
+            }
+        }
+    }()
 
     // Create producer
     producer, err := client.CreateProducer("my-topic")
@@ -160,11 +387,12 @@ func main() {
     }
     defer producer.Close()
 
-    // Send message
+    // Send message with connection monitoring
     message := rustmq.NewMessage().
         Topic("my-topic").
-        PayloadString("Hello, RustMQ!").
+        PayloadString("Hello, RustMQ with enhanced connection layer!").
         Header("sender", "go-client").
+        Header("version", "v2.0").
         Build()
 
     ctx := context.Background()
@@ -174,6 +402,11 @@ func main() {
     }
 
     fmt.Printf("Message sent: offset=%d, partition=%d\n", result.Offset, result.Partition)
+    
+    // Print connection statistics
+    stats := client.Stats()
+    fmt.Printf("Connection stats: Sent=%d bytes, Received=%d bytes, Errors=%d\n",
+        stats.BytesSent, stats.BytesReceived, stats.Errors)
 }
 ```
 
@@ -186,20 +419,51 @@ import (
     "context"
     "fmt"
     "log"
+    "time"
 
     "github.com/rustmq/rustmq/sdk/go/rustmq"
 )
 
 func main() {
-    // Create client
-    config := rustmq.DefaultClientConfig()
-    config.Brokers = []string{"localhost:9092"}
+    // Create client with production-ready configuration
+    config := &rustmq.ClientConfig{
+        Brokers:           []string{"localhost:9092", "localhost:9093"},
+        ClientID:          "go-consumer-example",
+        ConnectTimeout:    10 * time.Second,
+        RequestTimeout:    30 * time.Second,
+        EnableTLS:         false, // Set to true for production
+        KeepAliveInterval: 30 * time.Second,
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 5,
+            BaseDelay:  100 * time.Millisecond,
+            MaxDelay:   10 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
+        },
+    }
     
     client, err := rustmq.NewClient(config)
     if err != nil {
         log.Fatal(err)
     }
     defer client.Close()
+
+    // Start connection monitoring
+    go func() {
+        ticker := time.NewTicker(30 * time.Second)
+        defer ticker.Stop()
+        
+        for range ticker.C {
+            stats := client.Stats()
+            log.Printf("Connection Health: Active=%d/%d, Reconnects=%d, Health Checks=%d", 
+                stats.ActiveConnections, stats.TotalConnections,
+                stats.ReconnectAttempts, stats.HealthChecks)
+                
+            if stats.HealthCheckErrors > 0 {
+                log.Printf("Health check errors detected: %d", stats.HealthCheckErrors)
+            }
+        }
+    }()
 
     // Create consumer
     consumer, err := client.CreateConsumer("my-topic", "my-group")
@@ -208,12 +472,18 @@ func main() {
     }
     defer consumer.Close()
 
-    // Consume messages
+    // Consume messages with connection resilience
     for {
         ctx := context.Background()
         message, err := consumer.Receive(ctx)
         if err != nil {
-            log.Printf("Error: %v", err)
+            log.Printf("Receive error: %v", err)
+            
+            // Check if it's a connection issue
+            if !client.IsConnected() {
+                log.Println("Connection lost, waiting for automatic reconnection...")
+                time.Sleep(1 * time.Second)
+            }
             continue
         }
 
@@ -282,6 +552,176 @@ func main() {
 
     // Stream processes messages automatically
     select {} // Keep running
+}
+```
+
+### Production TLS Example
+
+Complete example with mTLS for production environments:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Production TLS configuration
+    config := &rustmq.ClientConfig{
+        Brokers:           []string{"rustmq-prod-1.example.com:9092", "rustmq-prod-2.example.com:9092"},
+        ClientID:          "production-service",
+        ConnectTimeout:    15 * time.Second,
+        RequestTimeout:    30 * time.Second,
+        EnableTLS:         true,
+        KeepAliveInterval: 30 * time.Second,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:     "/etc/ssl/certs/rustmq-ca.pem",
+            ClientCert: "/etc/ssl/certs/client.pem",
+            ClientKey:  "/etc/ssl/private/client.key",
+            ServerName: "rustmq.example.com",
+        },
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 10,
+            BaseDelay:  200 * time.Millisecond,
+            MaxDelay:   30 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
+        },
+    }
+
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatalf("Failed to create client: %v", err)
+    }
+    defer client.Close()
+
+    // Verify TLS connection
+    if err := client.HealthCheck(); err != nil {
+        log.Fatalf("Initial health check failed: %v", err)
+    }
+    
+    log.Println("Successfully connected with TLS")
+    
+    // Your application logic here...
+}
+```
+
+### Connection Resilience Example
+
+Example showing robust connection handling:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    config := &rustmq.ClientConfig{
+        Brokers: []string{"localhost:9092", "localhost:9093"},
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 5,
+            BaseDelay:  100 * time.Millisecond,
+            MaxDelay:   10 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
+        },
+    }
+
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    // Connection monitoring and alerting
+    go monitorConnection(client)
+
+    producer, err := client.CreateProducer("events")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer producer.Close()
+
+    // Resilient message sending
+    for i := 0; i < 1000; i++ {
+        message := rustmq.NewMessage().
+            Topic("events").
+            PayloadString(fmt.Sprintf("Event %d", i)).
+            Build()
+
+        // Retry sending with exponential backoff
+        err := retryWithBackoff(func() error {
+            _, err := producer.Send(context.Background(), message)
+            return err
+        }, 3, 100*time.Millisecond)
+
+        if err != nil {
+            log.Printf("Failed to send message %d after retries: %v", i, err)
+        } else {
+            log.Printf("Sent message %d", i)
+        }
+
+        time.Sleep(100 * time.Millisecond)
+    }
+}
+
+func monitorConnection(client *rustmq.Client) {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
+
+    for range ticker.C {
+        stats := client.Stats()
+        
+        if stats.ActiveConnections == 0 {
+            log.Println("ALERT: No active connections!")
+        } else if stats.ActiveConnections < stats.TotalConnections {
+            log.Printf("WARNING: %d/%d connections active", 
+                stats.ActiveConnections, stats.TotalConnections)
+        }
+
+        // Check error rates
+        if stats.Errors > 0 {
+            errorRate := float64(stats.Errors) / float64(stats.RequestsSent)
+            if errorRate > 0.05 { // 5% error rate threshold
+                log.Printf("ALERT: High error rate: %.2f%%", errorRate*100)
+            }
+        }
+
+        // Health check performance
+        if stats.HealthCheckErrors > 0 {
+            log.Printf("Health check issues: %d errors out of %d checks",
+                stats.HealthCheckErrors, stats.HealthChecks)
+        }
+    }
+}
+
+func retryWithBackoff(operation func() error, maxRetries int, baseDelay time.Duration) error {
+    var err error
+    for i := 0; i < maxRetries; i++ {
+        err = operation()
+        if err == nil {
+            return nil
+        }
+
+        if i < maxRetries-1 {
+            delay := time.Duration(1<<uint(i)) * baseDelay
+            log.Printf("Operation failed, retrying in %v: %v", delay, err)
+            time.Sleep(delay)
+        }
+    }
+    return err
 }
 ```
 

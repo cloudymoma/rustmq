@@ -50,10 +50,12 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
 - **Docker Environment**: Complete Docker Compose setup for development and testing
 - **Message Broker Core**: **FULLY IMPLEMENTED** high-level produce/consume API with comprehensive integration tests
-- **Comprehensive Testing**: 88 passing unit tests + 9 broker core integration tests + additional integration tests covering all major components
+- **Go SDK**: **FULLY IMPLEMENTED** production-ready client library with advanced connection management, TLS/mTLS support, health checking, and robust reconnection logic
+- **Rust SDK**: **FULLY IMPLEMENTED** complete client library with async/await, QUIC transport, and comprehensive producer API
+- **Comprehensive Testing**: 88 passing unit tests + 9 broker core integration tests + 11 Go SDK connection tests + additional integration tests covering all major components
 
 ### 🚧 In Development  
-- **Client Libraries**: Rust, Go, and other language client implementations
+- **Advanced Client Features**: Additional language bindings and advanced streaming features
 
 ### ❌ Not Yet Implemented
 - **Admin API**: REST API for cluster management
@@ -1286,10 +1288,56 @@ async fn shutdown_producer(producer: Producer) -> Result<(), ClientError> {
 
 ### 🐹 Go SDK  
 - **Location**: [`sdk/go/`](sdk/go/)
-- **Status**: ✅ **Fully Implemented** - Complete client library with goroutines, connection pooling
-- **Features**: QUIC transport, concurrent processing, automatic retries, metrics integration
+- **Status**: ✅ **Fully Implemented** - Complete client library with enhanced connection layer
+- **Features**: 
+  - **Advanced Connection Management**: QUIC transport with intelligent connection pooling and round-robin load balancing
+  - **Comprehensive TLS/mTLS Support**: Full client certificate authentication with CA validation
+  - **Health Check System**: Real-time broker health monitoring with JSON message exchange
+  - **Robust Reconnection Logic**: Exponential backoff with jitter, per-broker state tracking, and automatic failure recovery
+  - **Extensive Statistics**: Connection metrics, health check tracking, error monitoring, and performance analytics
+  - **Production-Ready Features**: Concurrent-safe operations, goroutine-based processing, configurable timeouts
 - **Build**: `go build ./...`
 - **Install**: `import "github.com/rustmq/rustmq/sdk/go/rustmq"`
+
+### Go SDK Connection Layer Highlights
+
+The Go SDK features a sophisticated connection management system designed for production environments:
+
+#### TLS/mTLS Configuration
+```go
+config := &rustmq.ClientConfig{
+    EnableTLS: true,
+    TLSConfig: &rustmq.TLSConfig{
+        CACert:     "/etc/ssl/certs/ca.pem",
+        ClientCert: "/etc/ssl/certs/client.pem",
+        ClientKey:  "/etc/ssl/private/client.key",
+        ServerName: "rustmq.example.com",
+    },
+}
+```
+
+#### Health Check & Reconnection
+```go
+// Automatic health monitoring with configurable intervals
+config.KeepAliveInterval = 30 * time.Second
+
+// Exponential backoff with jitter for reconnection
+config.RetryConfig = &rustmq.RetryConfig{
+    MaxRetries: 10,
+    BaseDelay:  100 * time.Millisecond,
+    MaxDelay:   30 * time.Second,
+    Multiplier: 2.0,
+    Jitter:     true,
+}
+```
+
+#### Connection Statistics
+```go
+stats := client.Stats()
+fmt.Printf("Active: %d/%d, Reconnects: %d, Health Checks: %d", 
+    stats.ActiveConnections, stats.TotalConnections,
+    stats.ReconnectAttempts, stats.HealthChecks)
+```
 
 ### Common SDK Features
 - **QUIC/HTTP3 Transport**: Low-latency, multiplexed connections
