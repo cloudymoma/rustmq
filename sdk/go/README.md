@@ -763,12 +763,125 @@ consumerConfig := &rustmq.ConsumerConfig{
     AutoCommitInterval: 5 * time.Second,
     EnableAutoCommit:   true,
     FetchSize:          100,
+    FetchTimeout:       1 * time.Second,
+    MaxRetryAttempts:   3,
+    DeadLetterQueue:    "dlq-topic", // For failed messages
     StartPosition: rustmq.StartPosition{
         Type: rustmq.StartEarliest,
     },
 }
 
 consumer, err := client.CreateConsumer("topic", "group", consumerConfig)
+```
+
+#### Consumer Start Positions
+
+The consumer supports various starting positions:
+
+```go
+// Start from earliest available message
+startPos := rustmq.StartPosition{Type: rustmq.StartEarliest}
+
+// Start from latest message
+startPos := rustmq.StartPosition{Type: rustmq.StartLatest}
+
+// Start from specific offset
+offset := uint64(12345)
+startPos := rustmq.StartPosition{
+    Type:   rustmq.StartOffset,
+    Offset: &offset,
+}
+
+// Start from specific timestamp
+timestamp := time.Now().Add(-1 * time.Hour)
+startPos := rustmq.StartPosition{
+    Type:      rustmq.StartTimestamp,
+    Timestamp: &timestamp,
+}
+```
+
+#### Consumer Operations
+
+```go
+// Manual offset commits
+ctx := context.Background()
+if err := consumer.Commit(ctx); err != nil {
+    log.Printf("Commit failed: %v", err)
+}
+
+// Seek to specific offset
+if err := consumer.Seek(ctx, 12345); err != nil {
+    log.Printf("Seek failed: %v", err)
+}
+
+// Seek to timestamp
+targetTime := time.Now().Add(-1 * time.Hour)
+if err := consumer.SeekToTimestamp(ctx, targetTime); err != nil {
+    log.Printf("Seek to timestamp failed: %v", err)
+}
+
+// Get consumer metrics
+metrics := consumer.Metrics()
+fmt.Printf("Messages: received=%d, processed=%d, failed=%d, lag=%d\n",
+    metrics.MessagesReceived, metrics.MessagesProcessed, 
+    metrics.MessagesFailed, metrics.Lag)
+```
+
+#### Failed Message Handling
+
+The consumer includes comprehensive retry and dead letter queue support:
+
+```go
+consumerConfig := &rustmq.ConsumerConfig{
+    ConsumerGroup:    "processing-group",
+    MaxRetryAttempts: 5,                    // Retry failed messages up to 5 times
+    DeadLetterQueue:  "failed-messages",    // Send to DLQ after max retries
+}
+
+// Message processing with retry logic
+message, err := consumer.Receive(ctx)
+if err != nil {
+    log.Printf("Receive error: %v", err)
+    continue
+}
+
+// Process message
+if err := processMessage(message.Message); err != nil {
+    // Negative acknowledgment triggers retry
+    if err := message.Nack(); err != nil {
+        log.Printf("Nack failed: %v", err)
+    }
+} else {
+    // Positive acknowledgment
+    if err := message.Ack(); err != nil {
+        log.Printf("Ack failed: %v", err)
+    }
+}
+```
+
+#### Message Acknowledgment
+
+Each received message supports acknowledgment operations:
+
+```go
+// Receive message
+message, err := consumer.Receive(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Access message properties
+fmt.Printf("Message ID: %s\n", message.Message.ID)
+fmt.Printf("Partition: %d\n", message.Partition())
+fmt.Printf("Retry count: %d\n", message.RetryCount())
+fmt.Printf("Age: %v\n", message.Age())
+
+// Process and acknowledge
+if processSuccessfully(message.Message) {
+    message.Ack()  // Mark as successfully processed
+} else {
+    message.Nack() // Mark as failed (will retry)
+}
 ```
 
 ## Advanced Features

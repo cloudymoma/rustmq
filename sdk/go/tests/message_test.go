@@ -1,13 +1,11 @@
 package tests
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/rustmq/rustmq/sdk/go/rustmq"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMessageBuilder(t *testing.T) {
@@ -56,7 +54,7 @@ func TestMessageBuilderWithJSONPayload(t *testing.T) {
 
 	var decoded map[string]interface{}
 	err := message.PayloadAsJSON(&decoded)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	
 	assert.Equal(t, "John Doe", decoded["name"])
 	assert.Equal(t, float64(30), decoded["age"]) // JSON numbers are float64
@@ -101,12 +99,12 @@ func TestMessageSerialization(t *testing.T) {
 
 	// Serialize to JSON
 	jsonData, err := message.ToJSON()
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	assert.NotEmpty(t, jsonData)
 
 	// Deserialize from JSON
 	deserialized, err := rustmq.FromJSON(jsonData)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 
 	assert.Equal(t, message.ID, deserialized.ID)
 	assert.Equal(t, message.Topic, deserialized.Topic)

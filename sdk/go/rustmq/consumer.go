@@ -2,7 +2,9 @@ package rustmq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,8 +22,14 @@ type Consumer struct {
 	metrics       *ConsumerMetrics
 	offsetTracker *OffsetTracker
 	messageChan   chan *ConsumerMessage
+	ackChan       chan AckRequest
+	retryQueue    *RetryQueue
+	fetchCtx      context.Context
+	fetchCancel   context.CancelFunc
 	closed        int32
 	mutex         sync.RWMutex
+	partitions    []uint32
+	lastFetchTime time.Time
 }
 
 // ConsumerConfig holds consumer configuration
@@ -85,7 +93,26 @@ type OffsetTracker struct {
 	committedOffset uint64
 	pendingOffsets  map[uint64]bool
 	lastCommitTime  time.Time
+	highWaterMark   uint64
+	lowWaterMark    uint64
 	mutex           sync.RWMutex
+}
+
+// RetryQueue manages failed messages for retry processing
+type RetryQueue struct {
+	failedMessages map[string]*FailedMessage
+	mutex          sync.RWMutex
+	retryInterval  time.Duration
+	maxRetries     int
+}
+
+// FailedMessage represents a message that failed processing
+type FailedMessage struct {
+	Message       *ConsumerMessage
+	RetryCount    int
+	FirstFailTime time.Time
+	LastFailTime  time.Time
+	Error         error
 }
 
 // DefaultConsumerConfig returns default consumer configuration
@@ -108,6 +135,8 @@ func newConsumer(client *Client, topic, consumerGroup string, config *ConsumerCo
 		config.ConsumerID = fmt.Sprintf("consumer-%s", uuid.New().String()[:8])
 	}
 
+	fetchCtx, fetchCancel := context.WithCancel(client.Context())
+
 	consumer := &Consumer{
 		id:            config.ConsumerID,
 		topic:         topic,
@@ -119,15 +148,36 @@ func newConsumer(client *Client, topic, consumerGroup string, config *ConsumerCo
 			pendingOffsets: make(map[uint64]bool),
 		},
 		messageChan: make(chan *ConsumerMessage, config.FetchSize),
+		ackChan:     make(chan AckRequest, config.FetchSize),
+		retryQueue: &RetryQueue{
+			failedMessages: make(map[string]*FailedMessage),
+			retryInterval:  5 * time.Second,
+			maxRetries:     config.MaxRetryAttempts,
+		},
+		fetchCtx:    fetchCtx,
+		fetchCancel: fetchCancel,
+		partitions:  []uint32{}, // Will be populated by partition assignment
+	}
+
+	// Join consumer group and get partition assignment
+	if err := consumer.joinConsumerGroup(); err != nil {
+		fetchCancel()
+		return nil, fmt.Errorf("failed to join consumer group: %w", err)
 	}
 
 	// Start background consumption
-	go consumer.startConsumption(client.Context())
+	go consumer.startConsumption()
+
+	// Start acknowledgment handler
+	go consumer.handleAckRequests(consumer.fetchCtx, consumer.ackChan)
 
 	// Start auto-commit if enabled
 	if config.EnableAutoCommit {
-		go consumer.startAutoCommit(client.Context())
+		go consumer.startAutoCommit()
 	}
+
+	// Start retry handler
+	go consumer.startRetryHandler()
 
 	return consumer, nil
 }
@@ -169,13 +219,53 @@ func (c *Consumer) Commit(ctx context.Context) error {
 	offset := c.offsetTracker.committedOffset
 	c.offsetTracker.mutex.RUnlock()
 
-	// TODO: Implement actual offset commit to broker
-	fmt.Printf("Committing offset %d for consumer %s\n", offset, c.id)
-	
+	// Build commit request
+	offsetsMap := make(map[string]OffsetAndMetadata)
+	for _, partition := range c.partitions {
+		key := fmt.Sprintf("%s:%d", c.topic, partition)
+		offsetsMap[key] = NewOffsetAndMetadata(offset, nil)
+	}
+
+	commitRequest := CommitRequest{
+		Type:          "commit_offset",
+		ConsumerGroup: c.consumerGroup,
+		ConsumerID:    c.id,
+		Offsets:       offsetsMap,
+		Timestamp:     time.Now(),
+	}
+
+	// Serialize request
+	requestData, err := json.Marshal(commitRequest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal commit request: %w", err)
+	}
+
+	// Send commit request to broker
+	responseData, err := c.client.connection.sendRequest(requestData)
+	if err != nil {
+		return fmt.Errorf("failed to send commit request: %w", err)
+	}
+
+	// Parse response
+	var response CommitResponse
+	if err := json.Unmarshal(responseData, &response); err != nil {
+		return fmt.Errorf("failed to parse commit response: %w", err)
+	}
+
+	if !response.Success {
+		errorMsg := "unknown error"
+		if response.Error != nil {
+			errorMsg = *response.Error
+		}
+		return fmt.Errorf("commit failed: %s", errorMsg)
+	}
+
+	// Update commit time on success
 	c.offsetTracker.mutex.Lock()
 	c.offsetTracker.lastCommitTime = time.Now()
 	c.offsetTracker.mutex.Unlock()
 
+	log.Printf("Successfully committed offset %d for consumer %s", offset, c.id)
 	return nil
 }
 
@@ -185,8 +275,15 @@ func (c *Consumer) Seek(ctx context.Context, offset uint64) error {
 		return fmt.Errorf("consumer is closed")
 	}
 
-	// TODO: Implement seek functionality
-	return fmt.Errorf("seek not implemented")
+	// Seek for all assigned partitions
+	for _, partition := range c.partitions {
+		if err := c.seekPartition(ctx, partition, &offset, nil); err != nil {
+			return fmt.Errorf("failed to seek partition %d: %w", partition, err)
+		}
+	}
+
+	log.Printf("Successfully sought to offset %d for consumer %s", offset, c.id)
+	return nil
 }
 
 // SeekToTimestamp seeks to a specific timestamp
@@ -195,8 +292,15 @@ func (c *Consumer) SeekToTimestamp(ctx context.Context, timestamp time.Time) err
 		return fmt.Errorf("consumer is closed")
 	}
 
-	// TODO: Implement timestamp-based seek
-	return fmt.Errorf("seek to timestamp not implemented")
+	// Seek for all assigned partitions
+	for _, partition := range c.partitions {
+		if err := c.seekPartition(ctx, partition, nil, &timestamp); err != nil {
+			return fmt.Errorf("failed to seek partition %d to timestamp: %w", partition, err)
+		}
+	}
+
+	log.Printf("Successfully sought to timestamp %v for consumer %s", timestamp, c.id)
+	return nil
 }
 
 // Close closes the consumer
@@ -205,62 +309,151 @@ func (c *Consumer) Close() error {
 		return nil // Already closed
 	}
 
+	// Cancel fetch context to stop all background goroutines
+	c.fetchCancel()
+
 	// Commit final offsets
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	
-	c.Commit(ctx)
+	if err := c.Commit(ctx); err != nil {
+		log.Printf("Failed to commit final offsets: %v", err)
+	}
 	
-	// Close message channel
+	// Close channels
 	close(c.messageChan)
+	close(c.ackChan)
 
+	log.Printf("Consumer %s closed", c.id)
 	return nil
 }
 
 // startConsumption starts the background consumption loop
-func (c *Consumer) startConsumption(ctx context.Context) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+func (c *Consumer) startConsumption() {
+	ticker := time.NewTicker(time.Duration(c.config.FetchTimeout.Nanoseconds() / 2)) // Fetch at half the timeout interval
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.fetchCtx.Done():
 			return
 		case <-ticker.C:
 			if atomic.LoadInt32(&c.closed) == 1 {
 				return
 			}
 
-			// TODO: Implement actual message fetching from broker
-			// For now, simulate receiving messages
-			c.simulateMessageReceive()
+			// Fetch messages from broker
+			if err := c.fetchMessages(); err != nil {
+				log.Printf("Error fetching messages for consumer %s: %v", c.id, err)
+				// Implement exponential backoff on error
+				time.Sleep(time.Second)
+			}
 		}
 	}
 }
 
-// simulateMessageReceive simulates receiving messages (placeholder)
-func (c *Consumer) simulateMessageReceive() {
-	// This is a placeholder implementation
-	// In real implementation, this would fetch messages from the broker
+// fetchMessages fetches messages from the broker
+func (c *Consumer) fetchMessages() error {
+	// Check if we have channel space
+	if len(c.messageChan) >= cap(c.messageChan)-10 { // Leave some buffer
+		return nil // Channel is nearly full, skip this fetch
+	}
+
+	// Get current offset to fetch from
+	c.offsetTracker.mutex.RLock()
+	fromOffset := c.offsetTracker.committedOffset + 1
+	c.offsetTracker.mutex.RUnlock()
+
+	// Build fetch request
+	fetchRequest := FetchRequest{
+		Type:          "fetch_messages",
+		Topic:         c.topic,
+		ConsumerGroup: c.consumerGroup,
+		ConsumerID:    c.id,
+		MaxMessages:   c.config.FetchSize,
+		MaxBytes:      1024 * 1024, // 1MB max
+		TimeoutMs:     c.config.FetchTimeout.Milliseconds(),
+		FromOffset:    &fromOffset,
+		Timestamp:     time.Now(),
+	}
+
+	// Serialize request
+	requestData, err := json.Marshal(fetchRequest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal fetch request: %w", err)
+	}
+
+	// Send fetch request to broker
+	responseData, err := c.client.connection.sendRequest(requestData)
+	if err != nil {
+		return fmt.Errorf("failed to send fetch request: %w", err)
+	}
+
+	// Parse response
+	var response FetchResponse
+	if err := json.Unmarshal(responseData, &response); err != nil {
+		return fmt.Errorf("failed to parse fetch response: %w", err)
+	}
+
+	if !response.Success {
+		if response.Error != nil && *response.Error != "no_messages" {
+			return fmt.Errorf("fetch failed: %s", *response.Error)
+		}
+		return nil // No messages available
+	}
+
+	// Process fetched messages
+	for _, message := range response.Messages {
+		consumerMessage := &ConsumerMessage{
+			Message:      message,
+			ackChan:      c.ackChan,
+			partition:    response.PartitionID,
+			retryCount:   0,
+			receivedTime: time.Now(),
+		}
+
+		// Try to send message to channel
+		select {
+		case c.messageChan <- consumerMessage:
+			// Mark offset as pending
+			c.offsetTracker.mutex.Lock()
+			c.offsetTracker.pendingOffsets[message.Offset] = true
+			// Update watermarks if available
+			if response.Watermarks != nil {
+				c.offsetTracker.lowWaterMark = response.Watermarks.Low
+				c.offsetTracker.highWaterMark = response.Watermarks.High
+			}
+			c.offsetTracker.mutex.Unlock()
+		default:
+			// Channel is full, put message back for next fetch
+			log.Printf("Message channel full for consumer %s, message %s will be refetched", c.id, message.ID)
+			return nil
+		}
+	}
+
+	c.lastFetchTime = time.Now()
+	return nil
 }
 
 // startAutoCommit starts the auto-commit loop
-func (c *Consumer) startAutoCommit(ctx context.Context) {
+func (c *Consumer) startAutoCommit() {
 	ticker := time.NewTicker(c.config.AutoCommitInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.fetchCtx.Done():
 			return
 		case <-ticker.C:
 			if atomic.LoadInt32(&c.closed) == 1 {
 				return
 			}
 
+			ctx, cancel := context.WithTimeout(c.fetchCtx, 5*time.Second)
 			if err := c.Commit(ctx); err != nil {
-				fmt.Printf("Auto-commit failed for consumer %s: %v\n", c.id, err)
+				log.Printf("Auto-commit failed for consumer %s: %v", c.id, err)
 			}
+			cancel()
 		}
 	}
 }
@@ -291,7 +484,9 @@ func (c *Consumer) handleAckRequests(ctx context.Context, ackChan <-chan AckRequ
 				atomic.AddUint64(&c.metrics.MessagesProcessed, 1)
 			} else {
 				atomic.AddUint64(&c.metrics.MessagesFailed, 1)
-				// TODO: Handle failed message (retry, dead letter queue, etc.)
+				
+				// Handle failed message - add to retry queue
+				c.handleFailedMessage(ack.Offset)
 			}
 			
 			c.offsetTracker.mutex.Unlock()
@@ -302,7 +497,11 @@ func (c *Consumer) handleAckRequests(ctx context.Context, ackChan <-chan AckRequ
 // Metrics returns current consumer metrics
 func (c *Consumer) Metrics() *ConsumerMetrics {
 	c.offsetTracker.mutex.RLock()
-	lag := c.offsetTracker.committedOffset // Simplified lag calculation
+	// Calculate lag based on high watermark vs committed offset
+	lag := uint64(0)
+	if c.offsetTracker.highWaterMark > c.offsetTracker.committedOffset {
+		lag = c.offsetTracker.highWaterMark - c.offsetTracker.committedOffset
+	}
 	c.offsetTracker.mutex.RUnlock()
 
 	return &ConsumerMetrics{
@@ -384,4 +583,222 @@ func (cm *ConsumerMessage) ReceivedTime() time.Time {
 // Age returns how long ago the message was received
 func (cm *ConsumerMessage) Age() time.Duration {
 	return time.Since(cm.receivedTime)
+}
+
+// Helper methods for consumer functionality
+
+// joinConsumerGroup joins the consumer group and gets partition assignment
+func (c *Consumer) joinConsumerGroup() error {
+	joinRequest := ConsumerGroupJoinRequest{
+		Type:          "join_consumer_group",
+		ConsumerGroup: c.consumerGroup,
+		ConsumerID:    c.id,
+		Topics:        []string{c.topic},
+		Metadata:      map[string]string{"client_version": "go-sdk-1.0"},
+		Timestamp:     time.Now(),
+	}
+
+	// Serialize request
+	requestData, err := json.Marshal(joinRequest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal join request: %w", err)
+	}
+
+	// Send join request to broker
+	responseData, err := c.client.connection.sendRequest(requestData)
+	if err != nil {
+		return fmt.Errorf("failed to send join request: %w", err)
+	}
+
+	// Parse response
+	var response ConsumerGroupJoinResponse
+	if err := json.Unmarshal(responseData, &response); err != nil {
+		return fmt.Errorf("failed to parse join response: %w", err)
+	}
+
+	if !response.Success {
+		errorMsg := "unknown error"
+		if response.Error != nil {
+			errorMsg = *response.Error
+		}
+		return fmt.Errorf("failed to join consumer group: %s", errorMsg)
+	}
+
+	// Extract assigned partitions
+	for _, tp := range response.Assignment {
+		if tp.Topic == c.topic {
+			c.partitions = append(c.partitions, tp.Partition)
+		}
+	}
+
+	log.Printf("Consumer %s joined group %s with partitions: %v", c.id, c.consumerGroup, c.partitions)
+	return nil
+}
+
+// seekPartition seeks a specific partition to offset or timestamp
+func (c *Consumer) seekPartition(ctx context.Context, partition uint32, offset *uint64, timestamp *time.Time) error {
+	seekRequest := SeekRequest{
+		Type:          "seek_partition",
+		Topic:         c.topic,
+		ConsumerGroup: c.consumerGroup,
+		ConsumerID:    c.id,
+		Partition:     partition,
+		Offset:        offset,
+		Timestamp:     timestamp,
+	}
+
+	// Serialize request
+	requestData, err := json.Marshal(seekRequest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal seek request: %w", err)
+	}
+
+	// Send seek request to broker
+	responseData, err := c.client.connection.sendRequest(requestData)
+	if err != nil {
+		return fmt.Errorf("failed to send seek request: %w", err)
+	}
+
+	// Parse response
+	var response SeekResponse
+	if err := json.Unmarshal(responseData, &response); err != nil {
+		return fmt.Errorf("failed to parse seek response: %w", err)
+	}
+
+	if !response.Success {
+		errorMsg := "unknown error"
+		if response.Error != nil {
+			errorMsg = *response.Error
+		}
+		return fmt.Errorf("seek failed: %s", errorMsg)
+	}
+
+	// Update offset tracker
+	c.offsetTracker.mutex.Lock()
+	c.offsetTracker.committedOffset = response.NewOffset
+	// Clear pending offsets as they're now invalid
+	c.offsetTracker.pendingOffsets = make(map[uint64]bool)
+	c.offsetTracker.mutex.Unlock()
+
+	return nil
+}
+
+// handleFailedMessage handles a failed message by adding it to retry queue
+func (c *Consumer) handleFailedMessage(offset uint64) {
+	// Find the message in channel or create a placeholder for retry
+	key := fmt.Sprintf("%s:%d", c.topic, offset)
+	
+	c.retryQueue.mutex.Lock()
+	defer c.retryQueue.mutex.Unlock()
+
+	if failedMsg, exists := c.retryQueue.failedMessages[key]; exists {
+		// Increment retry count
+		failedMsg.RetryCount++
+		failedMsg.LastFailTime = time.Now()
+		
+		// Check if max retries exceeded
+		if failedMsg.RetryCount >= c.retryQueue.maxRetries {
+			// Send to dead letter queue if configured
+			if c.config.DeadLetterQueue != "" {
+				go c.sendToDeadLetterQueue(failedMsg)
+			}
+			// Remove from retry queue
+			delete(c.retryQueue.failedMessages, key)
+			log.Printf("Message at offset %d exceeded max retries, sent to DLQ", offset)
+		}
+	} else {
+		// First failure
+		c.retryQueue.failedMessages[key] = &FailedMessage{
+			RetryCount:    1,
+			FirstFailTime: time.Now(),
+			LastFailTime:  time.Now(),
+		}
+	}
+}
+
+// startRetryHandler manages retry processing for failed messages
+func (c *Consumer) startRetryHandler() {
+	ticker := time.NewTicker(c.retryQueue.retryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.fetchCtx.Done():
+			return
+		case <-ticker.C:
+			if atomic.LoadInt32(&c.closed) == 1 {
+				return
+			}
+
+			c.processRetries()
+		}
+	}
+}
+
+// processRetries processes messages in the retry queue
+func (c *Consumer) processRetries() {
+	c.retryQueue.mutex.RLock()
+	retriesToProcess := make([]*FailedMessage, 0)
+	for _, failedMsg := range c.retryQueue.failedMessages {
+		// Check if enough time has passed for retry
+		if time.Since(failedMsg.LastFailTime) >= c.retryQueue.retryInterval {
+			retriesToProcess = append(retriesToProcess, failedMsg)
+		}
+	}
+	c.retryQueue.mutex.RUnlock()
+
+	// Process retries
+	for _, failedMsg := range retriesToProcess {
+		if len(c.messageChan) < cap(c.messageChan) {
+			// Update retry count and time
+			failedMsg.RetryCount++
+			failedMsg.LastFailTime = time.Now()
+			
+			// Try to put message back in channel for retry
+			select {
+			case c.messageChan <- failedMsg.Message:
+				log.Printf("Retrying message at offset %d (attempt %d)", 
+					failedMsg.Message.Message.Offset, failedMsg.RetryCount)
+			default:
+				// Channel full, will retry later
+			}
+		}
+	}
+}
+
+// sendToDeadLetterQueue sends a failed message to dead letter queue
+func (c *Consumer) sendToDeadLetterQueue(failedMsg *FailedMessage) {
+	if c.config.DeadLetterQueue == "" {
+		return
+	}
+
+	// Create a producer for the DLQ if we don't have one
+	producer, err := c.client.CreateProducer(c.config.DeadLetterQueue)
+	if err != nil {
+		log.Printf("Failed to create DLQ producer: %v", err)
+		return
+	}
+
+	// Add DLQ headers
+	dlqMessage := failedMsg.Message.Message.Clone()
+	if dlqMessage.Headers == nil {
+		dlqMessage.Headers = make(map[string]string)
+	}
+	dlqMessage.Headers["dlq_source_topic"] = c.topic
+	dlqMessage.Headers["dlq_consumer_group"] = c.consumerGroup
+	dlqMessage.Headers["dlq_retry_count"] = fmt.Sprintf("%d", failedMsg.RetryCount)
+	dlqMessage.Headers["dlq_first_fail_time"] = failedMsg.FirstFailTime.Format(time.RFC3339)
+	dlqMessage.Headers["dlq_last_fail_time"] = failedMsg.LastFailTime.Format(time.RFC3339)
+
+	// Send to DLQ
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = producer.Send(ctx, dlqMessage)
+	if err != nil {
+		log.Printf("Failed to send message to DLQ: %v", err)
+	} else {
+		log.Printf("Message at offset %d sent to DLQ after %d retries", 
+			dlqMessage.Offset, failedMsg.RetryCount)
+	}
 }

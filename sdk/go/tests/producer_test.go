@@ -7,7 +7,6 @@ import (
 
 	"github.com/rustmq/rustmq/sdk/go/rustmq"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestProducerConfiguration(t *testing.T) {

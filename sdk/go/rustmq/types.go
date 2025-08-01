@@ -232,3 +232,97 @@ func DefaultFeatureFlags() FeatureFlags {
 		Monitoring:            true,
 	}
 }
+
+// Protocol structures for consumer operations
+
+// FetchRequest represents a request to fetch messages from a topic
+type FetchRequest struct {
+	Type          string    `json:"type"`
+	Topic         string    `json:"topic"`
+	ConsumerGroup string    `json:"consumer_group"`
+	ConsumerID    string    `json:"consumer_id"`
+	MaxMessages   int       `json:"max_messages"`
+	MaxBytes      int       `json:"max_bytes"`
+	TimeoutMs     int64     `json:"timeout_ms"`
+	FromOffset    *uint64   `json:"from_offset,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+// FetchResponse represents a response containing fetched messages
+type FetchResponse struct {
+	Success     bool               `json:"success"`
+	Messages    []*Message         `json:"messages,omitempty"`
+	Error       *string            `json:"error,omitempty"`
+	EndOffset   uint64             `json:"end_offset"`
+	PartitionID uint32             `json:"partition_id"`
+	Watermarks  *Watermarks        `json:"watermarks,omitempty"`
+}
+
+// CommitRequest represents a request to commit offsets
+type CommitRequest struct {
+	Type          string                       `json:"type"`
+	ConsumerGroup string                       `json:"consumer_group"`
+	ConsumerID    string                       `json:"consumer_id"`
+	Offsets       map[string]OffsetAndMetadata `json:"offsets"` // topic:partition -> offset
+	Timestamp     time.Time                    `json:"timestamp"`
+}
+
+// CommitResponse represents a response to a commit request
+type CommitResponse struct {
+	Success bool                `json:"success"`
+	Results map[string]*string  `json:"results,omitempty"` // topic:partition -> error (if any)
+	Error   *string             `json:"error,omitempty"`
+}
+
+// SeekRequest represents a request to seek to a specific offset or timestamp
+type SeekRequest struct {
+	Type          string     `json:"type"`
+	Topic         string     `json:"topic"`
+	ConsumerGroup string     `json:"consumer_group"`
+	ConsumerID    string     `json:"consumer_id"`
+	Partition     uint32     `json:"partition"`
+	Offset        *uint64    `json:"offset,omitempty"`
+	Timestamp     *time.Time `json:"timestamp,omitempty"`
+}
+
+// SeekResponse represents a response to a seek request
+type SeekResponse struct {
+	Success   bool    `json:"success"`
+	NewOffset uint64  `json:"new_offset"`
+	Error     *string `json:"error,omitempty"`
+}
+
+// PartitionAssignmentRequest represents a request for partition assignment
+type PartitionAssignmentRequest struct {
+	Type          string    `json:"type"`
+	ConsumerGroup string    `json:"consumer_group"`
+	ConsumerID    string    `json:"consumer_id"`
+	Topic         string    `json:"topic"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+// PartitionAssignmentResponse represents a response containing assigned partitions
+type PartitionAssignmentResponse struct {
+	Success    bool       `json:"success"`
+	Partitions []uint32   `json:"partitions,omitempty"`
+	Error      *string    `json:"error,omitempty"`
+}
+
+// ConsumerGroupJoinRequest represents a request to join a consumer group
+type ConsumerGroupJoinRequest struct {
+	Type          string            `json:"type"`
+	ConsumerGroup string            `json:"consumer_group"`
+	ConsumerID    string            `json:"consumer_id"`
+	Topics        []string          `json:"topics"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Timestamp     time.Time         `json:"timestamp"`
+}
+
+// ConsumerGroupJoinResponse represents a response to joining a consumer group
+type ConsumerGroupJoinResponse struct {
+	Success       bool              `json:"success"`
+	MemberID      string            `json:"member_id,omitempty"`
+	GenerationID  uint32            `json:"generation_id,omitempty"`
+	Assignment    []TopicPartition  `json:"assignment,omitempty"`
+	Error         *string           `json:"error,omitempty"`
+}

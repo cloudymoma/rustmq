@@ -1,13 +1,11 @@
 package tests
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/rustmq/rustmq/sdk/go/rustmq"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestClientCreation(t *testing.T) {
