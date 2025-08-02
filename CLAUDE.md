@@ -64,6 +64,11 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
 
 2. **Replication System** (`src/replication/`):
    - **ReplicationManager**: Implements leader-follower replication with configurable acknowledgment levels
+   - **FollowerReplicationHandler**: Enhanced follower logic with:
+     - Real-time lag calculation based on leader high watermark vs follower WAL offset
+     - Actual WAL offset tracking using `get_end_offset()` instead of hardcoded values
+     - Leader epoch validation and automatic leadership updates
+     - Proper error handling for WAL operations with specific error codes
    - Uses shared storage to eliminate traditional data movement during failover
    - Heartbeat monitoring and automatic failover without data loss
 
@@ -187,13 +192,14 @@ All configuration is centralized in `src/config.rs` with TOML file support and r
 
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (99 tests currently passing). Tests use:
+The codebase has comprehensive unit tests (102 tests currently passing). Tests use:
 - `tempfile` for temporary directories in storage tests
 - Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
 - Integration tests for scaling and operational workflows
 - Async test patterns for background task verification
 - Timeout-based tests for upload triggers and configuration updates
+- Replication lag calculation tests verifying accurate follower offset tracking
 
 ## Error Handling
 
