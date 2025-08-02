@@ -45,6 +45,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Network Layer**: **FULLY IMPLEMENTED** QUIC/gRPC servers with connection pooling and request routing
 - **Replication System**: **FULLY IMPLEMENTED** leader-follower replication with epoch validation and ISR tracking
 - **Controller Service**: **FULLY IMPLEMENTED** with Raft consensus, metadata management, and decommission slots
+- **Controller Binary**: **FULLY IMPLEMENTED** production-ready controller with gRPC services and cluster coordination
 - **ETL Processing**: **FULLY IMPLEMENTED** WebAssembly-based stream processing with resource limiting
 - **BigQuery Subscriber**: Functional BigQuery integration with comprehensive configuration options
 - **Scaling Operations**: Complete decommissioning slot management and broker scaling logic
@@ -105,7 +106,7 @@ docker-compose up -d
 # Run broker (fully implemented with all core components)
 ./target/release/rustmq-broker --config config/broker.toml
 
-# Run controller (loads config and sleeps - placeholder implementation) 
+# Run controller (production-ready with Raft consensus and cluster coordination) 
 ./target/release/rustmq-controller --config config/controller.toml
 
 # Run admin CLI (shows available commands)
@@ -124,7 +125,7 @@ RustMQ provides a Docker-based development environment for local testing and dev
 The following Docker containers are available:
 
 - **Dockerfile.broker** - RustMQ message broker (fully implemented with all core components)
-- **Dockerfile.controller** - RustMQ controller (placeholder implementation)  
+- **Dockerfile.controller** - RustMQ controller (production-ready with Raft consensus)  
 - **Dockerfile.admin** - Admin CLI tool (basic command structure)
 - **Dockerfile.bigquery-subscriber** - Google BigQuery subscriber demo
 
@@ -149,12 +150,12 @@ docker-compose logs -f rustmq-broker-1
 The Docker Compose setup includes:
 
 - **3 Broker nodes** (`rustmq-broker-1/2/3`) - Fully implemented broker instances with all core components
-- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Placeholder controller services
+- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Production-ready controller services with Raft consensus
 - **MinIO** - S3-compatible object storage for local development
 - **Admin CLI** - Basic admin tool with command structure
 - **BigQuery Subscriber** - Demo BigQuery integration
 
-**Note**: The broker service is now fully implemented with all core components. Controller services are still placeholder implementations that load configuration and demonstrate the intended architecture.
+**Note**: Both broker and controller services are now fully implemented with all core components including Raft consensus, cluster coordination, and production-ready operational capabilities.
 
 ### Service Endpoints
 
@@ -163,9 +164,9 @@ The Docker Compose setup includes:
 | Broker 1 | 9092/9093 | 9092/9093 | QUIC/RPC | **Functional** |
 | Broker 2 | 9092/9093 | 9192/9193 | QUIC/RPC | **Functional** |  
 | Broker 3 | 9092/9093 | 9292/9293 | QUIC/RPC | **Functional** |
-| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP | Placeholder |
-| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP | Placeholder |
-| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP | Placeholder |
+| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP | Production |
+| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP | Production |
+| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP | Production |
 | Admin REST API | 8080 | 8080 | Cluster Management | **Functional** |
 | MinIO | 9000/9001 | 9000/9001 | API/Console | Functional |
 | BigQuery Subscriber | 8081 | 8081 | Health/Metrics | Demo |
@@ -2185,7 +2186,7 @@ groups:
 
 1. **Services Not Responding**
 ```bash
-# Current broker/controller services are placeholders that just load config and sleep
+# Both broker and controller services are now production-ready with full functionality
 # Check if they started successfully
 docker-compose logs rustmq-broker-1
 docker-compose logs rustmq-controller-1

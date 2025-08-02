@@ -37,7 +37,7 @@ cargo fmt
 
 # Run specific binary targets
 cargo run --bin rustmq-broker -- --config config/broker.toml    # Fully implemented broker
-cargo run --bin rustmq-controller -- --config config/controller.toml  # Placeholder implementation
+cargo run --bin rustmq-controller -- --config config/controller.toml  # Production-ready controller with Raft consensus
 cargo run --bin rustmq-admin -- --config config/admin.toml      # CLI tool
 ```
 
@@ -256,7 +256,7 @@ Centralized error handling through `src/error.rs` with:
 - `operations/`: Operational management depends on scaling and storage modules
 - `admin/`: Admin REST API depends on controller service for cluster management and health tracking
 - `bin/broker.rs`: **FULLY IMPLEMENTED** - Broker binary that orchestrates all components into a production-ready service
-- `bin/controller.rs`: **PLACEHOLDER** - Controller binary with basic configuration loading (TODO: implement Raft consensus)
+- `bin/controller.rs`: **FULLY IMPLEMENTED** - Production-ready controller binary with complete Raft consensus, gRPC services, and cluster coordination
 - `bin/admin.rs`: **PARTIALLY IMPLEMENTED** - CLI tool with command structure and REST API server capability
 - `bin/admin_server.rs`: **FULLY IMPLEMENTED** - Standalone admin REST API server
 - `bin/bigquery_subscriber.rs`: **FULLY IMPLEMENTED** - BigQuery integration for real-time data streaming
@@ -320,19 +320,16 @@ RustMQ provides production-ready Kubernetes manifests including:
 3. **Network Layer**: QUIC/HTTP3 and gRPC servers with connection pooling
 4. **Message Broker Core**: High-level producer/consumer APIs with comprehensive functionality
 5. **Broker Binary**: Complete production-ready broker with all component initialization
-6. **Admin REST API**: Comprehensive cluster management with health tracking
-7. **ETL Processing**: WebAssembly-based stream processing with resource limiting
-8. **BigQuery Subscriber**: Real-time data streaming to Google BigQuery
-9. **Scaling Operations**: Automated broker scaling and partition rebalancing
-10. **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
-11. **Client SDKs**: Both Rust and Go SDKs with advanced features and comprehensive testing
+6. **Controller Binary**: Production-ready controller with complete Raft consensus, gRPC services, and cluster coordination
+7. **Admin REST API**: Comprehensive cluster management with health tracking
+8. **ETL Processing**: WebAssembly-based stream processing with resource limiting
+9. **BigQuery Subscriber**: Real-time data streaming to Google BigQuery
+10. **Scaling Operations**: Automated broker scaling and partition rebalancing
+11. **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
+12. **Client SDKs**: Both Rust and Go SDKs with advanced features and comprehensive testing
 
 ### 🚧 Partially Implemented Components
-1. **Controller Service**: Raft consensus logic implemented but controller binary is placeholder
-2. **Admin CLI**: Command structure present but core operations need controller integration
-
-### ❌ Placeholder Components
-1. **Controller Binary**: Basic configuration loading but needs full Raft implementation
+1. **Admin CLI**: Command structure present but core operations need controller integration
 
 ### 📊 Codebase Statistics
 - **Total Source Files**: 47 Rust files
