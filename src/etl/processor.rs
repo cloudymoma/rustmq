@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 
 /// ETL processor that manages WebAssembly modules for real-time data processing
 pub struct EtlProcessor {
+    #[allow(dead_code)]
     config: EtlConfig,
     modules: Arc<RwLock<HashMap<String, EtlModule>>>,
     execution_semaphore: Arc<Semaphore>,
@@ -379,6 +380,7 @@ impl EtlPipeline for EtlProcessor {
 /// Mock ETL processor for testing
 #[derive(Clone)]
 pub struct MockEtlProcessor {
+    #[allow(dead_code)]
     config: EtlConfig,
     modules: Arc<RwLock<HashMap<String, String>>>, // Just store module IDs
 }
@@ -394,15 +396,15 @@ impl MockEtlProcessor {
 
 #[async_trait]
 impl EtlPipeline for MockEtlProcessor {
-    async fn process_record(&self, record: Record, _modules: Vec<String>) -> Result<ProcessedRecord> {
-        // Mock processing - just return the record unchanged
+    async fn process_record(&self, record: Record, modules: Vec<String>) -> Result<ProcessedRecord> {
+        // Mock processing - simulate processing through all modules
         Ok(ProcessedRecord {
             original: record.clone(),
             transformed: record,
             processing_metadata: ProcessingMetadata {
-                modules_applied: vec!["mock-module".to_string()],
-                total_execution_time_ms: 1,
-                transformations_count: 1,
+                modules_applied: modules.clone(), // Use actual modules passed in
+                total_execution_time_ms: modules.len() as u64, // Simulate time per module
+                transformations_count: modules.len(), // Count of actual transformations
                 error_count: 0,
             },
         })

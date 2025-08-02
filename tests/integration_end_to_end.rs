@@ -105,7 +105,7 @@ async fn test_full_system_integration() {
         1,
         replica_set,
         replication_config,
-        wal,
+        wal.clone(),
         rpc_client,
     );
 
@@ -172,6 +172,17 @@ async fn test_full_system_integration() {
     // 4. Test network layer (gRPC service)
     let grpc_service = BrokerReplicationService::new("broker-1".to_string());
 
+    // Register the partition handler for the topic partition we created
+    use rustmq::replication::FollowerReplicationHandler;
+    let follower_handler = Arc::new(FollowerReplicationHandler::new(
+        topic_partition.clone(),
+        1, // leader epoch
+        Some("broker-1".to_string()),
+        wal.clone(),
+        "broker-1".to_string(),
+    ));
+    grpc_service.register_follower_handler(topic_partition.clone(), follower_handler);
+
     let replicate_request = ReplicateDataRequest {
         leader_epoch: 1,
         topic_partition,
@@ -227,7 +238,7 @@ async fn test_failure_recovery_scenarios() {
 
     let controller = ControllerService::new(
         "controller-1".to_string(),
-        vec!["controller-2".to_string()],
+        vec![], // No peer controllers for simplified test scenario
         scaling_config
     );
 
@@ -625,9 +636,10 @@ async fn test_data_consistency_across_components() {
     let replication_result = replication_manager.replicate_record(wal_record).await.unwrap();
     assert_eq!(replication_result.offset, 0);
 
-    // Verify high watermark is consistent
+    // Verify high watermark is consistent - it should be set to the local offset after replication
     let hwm = replication_manager.get_high_watermark().await.unwrap();
-    assert!(hwm >= 0);
+    // For single-replica setup, high watermark should be set to the replicated record's offset
+    assert_eq!(hwm, 0, "High watermark should match replicated record offset in single-replica setup");
 
     // Verify metadata is still consistent after operations
     let final_metadata = controller.get_cluster_metadata().await.unwrap();

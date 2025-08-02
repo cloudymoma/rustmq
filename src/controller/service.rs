@@ -173,7 +173,7 @@ pub struct SlotAcquisitionResult {
 }
 
 impl RaftState {
-    pub fn new(node_id: String, peers: Vec<String>) -> Self {
+    pub fn new(_node_id: String, peers: Vec<String>) -> Self {
         Self {
             current_term: AtomicU64::new(0),
             voted_for: RwLock::new(None),
@@ -493,11 +493,11 @@ impl ControllerService {
         
         tracing::info!("Starting election for term {}", new_term);
         
-        let mut votes = 1; // Vote for self
+        let votes = 1; // Vote for self
         let last_log_index = self.raft_state.get_last_log_index().await;
         let last_log_term = self.raft_state.get_last_log_term().await;
         
-        let vote_request = VoteRequest {
+        let _vote_request = VoteRequest {
             term: new_term,
             candidate_id: self.node_id.clone(),
             last_log_index,
@@ -525,7 +525,7 @@ impl ControllerService {
     /// Start heartbeat timer (leader only)
     async fn start_heartbeat_timer(&self) {
         let raft_state = self.raft_state.clone();
-        let node_id = self.node_id.clone();
+        let _node_id = self.node_id.clone();
         
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(150)); // 150ms heartbeat
@@ -534,7 +534,7 @@ impl ControllerService {
                 interval.tick().await;
                 
                 let current_term = raft_state.get_current_term();
-                let commit_index = raft_state.commit_index.load(Ordering::SeqCst);
+                let _commit_index = raft_state.commit_index.load(Ordering::SeqCst);
                 
                 // In a full implementation, would send heartbeats to all followers
                 tracing::debug!("Sending heartbeat for term {}", current_term);
@@ -1106,7 +1106,7 @@ mod tests {
         let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
 
         // Acquire slot
-        let result = controller
+        let _result = controller
             .acquire_decommission_slot("broker-1".to_string(), "admin-tool".to_string())
             .await
             .unwrap();

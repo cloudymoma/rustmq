@@ -35,6 +35,7 @@ pub struct StreamingInsertsClient {
 
 /// Storage Write API implementation of BigQueryWriter (placeholder for future implementation)
 pub struct StorageWriteClient {
+    #[allow(dead_code)]
     config: BigQuerySubscriberConfig,
 }
 
@@ -283,6 +284,7 @@ impl StreamingInsertsClient {
     }
     
     /// Check if an error is retryable
+    #[allow(dead_code)]
     fn is_retryable_error(error: &gcp_bigquery_client::error::BQError) -> bool {
         // Implement logic to determine if error is retryable
         // This is a simplified implementation

@@ -15,6 +15,7 @@ pub struct BrokerReplicationService {
     /// Map of topic partitions to their follower handlers
     follower_handlers: Arc<RwLock<HashMap<TopicPartition, Arc<FollowerReplicationHandler>>>>,
     /// Current broker ID
+    #[allow(dead_code)]
     broker_id: BrokerId,
 }
 

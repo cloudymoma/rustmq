@@ -9,6 +9,7 @@ use tokio::time::timeout;
 use std::cmp::Reverse;
 
 pub struct ReplicationManager {
+    #[allow(dead_code)]
     stream_id: u64,
     topic_partition: TopicPartition,
     current_leader: Option<BrokerId>,

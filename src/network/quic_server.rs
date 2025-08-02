@@ -369,8 +369,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_pool_lru_eviction() {
-        use std::sync::Arc;
-        use tokio::time::{sleep, Duration};
         
         let pool = ConnectionPool::new(2);
         

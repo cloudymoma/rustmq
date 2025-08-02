@@ -2,7 +2,6 @@ use super::*;
 use crate::{Result, config::OperationsConfig, scaling::BrokerInfo};
 use std::collections::HashMap;
 use tokio::sync::RwLock as AsyncRwLock;
-use uuid::Uuid;
 
 pub struct RollingUpgradeManagerImpl {
     config: OperationsConfig,

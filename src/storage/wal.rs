@@ -27,6 +27,7 @@ enum WriteCommand {
         size: usize,
         response: oneshot::Sender<Result<Vec<u8>>>,
     },
+    #[allow(dead_code)]
     Seek {
         position: u64,
         response: oneshot::Sender<Result<()>>,
@@ -56,6 +57,7 @@ struct WalSegmentMetadata {
     end_offset: u64,
     file_offset: u64,
     size_bytes: u64,
+    #[allow(dead_code)]
     created_at: Instant,
 }
 
@@ -735,7 +737,7 @@ mod tests {
         });
 
         // Append several records
-        let mut expected_end_offset = 0;
+        let mut _expected_end_offset = 0;
         for i in 0..5 {
             let record = WalRecord {
                 topic_partition: TopicPartition {
@@ -751,7 +753,7 @@ mod tests {
                 },
                 crc32: 0,
             };
-            expected_end_offset = wal.append(record).await.unwrap() + 1;
+            _expected_end_offset = wal.append(record).await.unwrap() + 1;
         }
 
         // Wait for upload callback to be triggered by size
@@ -900,7 +902,7 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 5)); // Small pool for testing
-        let initial_pool_size = 5; // We know the pool starts with 5 buffers
+        let _initial_pool_size = 5; // We know the pool starts with 5 buffers
         
         let wal = DirectIOWal::new(config, buffer_pool.clone()).await.unwrap();
 

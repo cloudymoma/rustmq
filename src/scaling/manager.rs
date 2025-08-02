@@ -1,6 +1,7 @@
 use super::*;
 use crate::{Result, config::ScalingConfig, controller::ControllerService};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
 use uuid::Uuid;
 

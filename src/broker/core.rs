@@ -405,6 +405,7 @@ where
     N: NetworkHandler + Send + Sync,
 {
     core: Arc<MessageBrokerCore<W, O, C, R, N>>,
+    #[allow(dead_code)]
     consumer_group: String,
     subscribed_topics: Vec<TopicName>,
     partition_offsets: HashMap<TopicPartition, Offset>,
@@ -452,7 +453,7 @@ where
         Ok(())
     }
 
-    async fn poll(&mut self, timeout_ms: u32) -> Result<Vec<ConsumeRecord>> {
+    async fn poll(&mut self, _timeout_ms: u32) -> Result<Vec<ConsumeRecord>> {
         let mut records = Vec::new();
 
         for (topic_partition, current_offset) in &mut self.partition_offsets {
@@ -523,7 +524,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     // Mock implementations for testing
     struct MockWal {
@@ -588,50 +588,50 @@ mod tests {
 
     #[async_trait]
     impl ObjectStorage for MockObjectStorage {
-        async fn put(&self, key: &str, data: bytes::Bytes) -> Result<()> {
+        async fn put(&self, _key: &str, _data: bytes::Bytes) -> Result<()> {
             Ok(())
         }
 
-        async fn get(&self, key: &str) -> Result<bytes::Bytes> {
+        async fn get(&self, _key: &str) -> Result<bytes::Bytes> {
             Ok(bytes::Bytes::new())
         }
 
-        async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<bytes::Bytes> {
+        async fn get_range(&self, _key: &str, _range: std::ops::Range<u64>) -> Result<bytes::Bytes> {
             Ok(bytes::Bytes::new())
         }
 
-        async fn delete(&self, key: &str) -> Result<()> {
+        async fn delete(&self, _key: &str) -> Result<()> {
             Ok(())
         }
 
-        async fn list(&self, prefix: &str) -> Result<Vec<String>> {
+        async fn list(&self, _prefix: &str) -> Result<Vec<String>> {
             Ok(vec![])
         }
 
-        async fn exists(&self, key: &str) -> Result<bool> {
+        async fn exists(&self, _key: &str) -> Result<bool> {
             Ok(false)
         }
 
-        async fn open_read_stream(&self, key: &str) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        async fn open_read_stream(&self, _key: &str) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
             Err(RustMqError::NotFound("mock".to_string()))
         }
 
-        async fn open_write_stream(&self, key: &str) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
+        async fn open_write_stream(&self, _key: &str) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
             Err(RustMqError::NotFound("mock".to_string()))
         }
     }
 
     #[async_trait]
     impl Cache for MockCache {
-        async fn get(&self, key: &str) -> Result<Option<bytes::Bytes>> {
+        async fn get(&self, _key: &str) -> Result<Option<bytes::Bytes>> {
             Ok(None)
         }
 
-        async fn put(&self, key: &str, value: bytes::Bytes) -> Result<()> {
+        async fn put(&self, _key: &str, _value: bytes::Bytes) -> Result<()> {
             Ok(())
         }
 
-        async fn remove(&self, key: &str) -> Result<()> {
+        async fn remove(&self, _key: &str) -> Result<()> {
             Ok(())
         }
 
@@ -653,11 +653,11 @@ mod tests {
             })
         }
 
-        async fn add_follower(&self, broker_id: BrokerId) -> Result<()> {
+        async fn add_follower(&self, _broker_id: BrokerId) -> Result<()> {
             Ok(())
         }
 
-        async fn remove_follower(&self, broker_id: BrokerId) -> Result<()> {
+        async fn remove_follower(&self, _broker_id: BrokerId) -> Result<()> {
             Ok(())
         }
 
@@ -665,7 +665,7 @@ mod tests {
             Ok(vec![])
         }
 
-        async fn update_high_watermark(&self, offset: Offset) -> Result<()> {
+        async fn update_high_watermark(&self, _offset: Offset) -> Result<()> {
             Ok(())
         }
 

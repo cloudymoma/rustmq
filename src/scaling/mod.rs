@@ -1,8 +1,5 @@
-use crate::{Result, config::ScalingConfig, types::*};
+use crate::{Result, types::TopicPartition};
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
-use parking_lot::RwLock;
 use tokio::time::{Duration, Instant};
 
 pub mod manager;
