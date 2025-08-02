@@ -1,0 +1,79 @@
+# RustMQ Controller Configuration
+# This configuration is for testing the standalone controller binary
+
+[broker]
+id = "test-broker-001"
+rack_id = "test"
+
+[network]
+quic_listen = "127.0.0.1:9092"
+rpc_listen = "127.0.0.1:9093"
+max_connections = 1000
+connection_timeout_ms = 10000
+
+[network.quic_config]
+max_concurrent_uni_streams = 100
+max_concurrent_bidi_streams = 100
+max_idle_timeout_ms = 30000
+max_stream_data = 1048576  # 1MB
+max_connection_data = 10485760  # 10MB
+
+[wal]
+path = "/tmp/rustmq/controller-wal"
+capacity_bytes = 1073741824
+fsync_on_write = false
+segment_size_bytes = 16777216
+buffer_size = 16384
+upload_interval_ms = 60000
+flush_interval_ms = 500
+
+[cache]
+write_cache_size_bytes = 67108864  # 64MB
+read_cache_size_bytes = 134217728  # 128MB
+eviction_policy = "Lru"
+
+[object_storage]
+storage_type = { Local = { path = "/tmp/rustmq/controller-storage" } }
+bucket = "controller-bucket"
+region = "local"
+endpoint = ""
+access_key = ""
+secret_key = ""
+multipart_threshold = 10485760  # 10MB
+max_concurrent_uploads = 2
+
+[controller]
+# Single controller for testing
+endpoints = ["127.0.0.1:9094"]
+election_timeout_ms = 3000
+heartbeat_interval_ms = 1000
+
+[replication]
+min_in_sync_replicas = 1
+ack_timeout_ms = 2000
+max_replication_lag = 5000
+heartbeat_timeout_ms = 3000
+
+[etl]
+enabled = true
+memory_limit_bytes = 16777216  # 16MB
+execution_timeout_ms = 2000
+max_concurrent_executions = 10
+
+[scaling]
+max_concurrent_additions = 3
+max_concurrent_decommissions = 1
+rebalance_timeout_ms = 300000  # 5 minutes
+traffic_migration_rate = 0.1
+health_check_timeout_ms = 30000  # 30 seconds
+
+[operations]
+allow_runtime_config_updates = true
+upgrade_velocity = 2  # 2 brokers per minute
+graceful_shutdown_timeout_ms = 30000  # 30 seconds
+
+[operations.kubernetes]
+use_stateful_sets = true
+pvc_storage_class = "fast-ssd"
+wal_volume_size = "100Gi"
+enable_pod_affinity = true
