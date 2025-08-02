@@ -19,6 +19,40 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Auto-Balancing**: Continuous load distribution optimization
 - **Google Cloud Native**: Default configurations optimized for GCP services 
 
+## 🏗️ Architecture Overview
+
+RustMQ implements a **storage-compute separation architecture** with stateless brokers and shared cloud storage for unprecedented elasticity and cost efficiency.
+
+![RustMQ Architecture](docs/rustmq-architecture.svg)
+
+*Click to view the interactive architecture diagram showing RustMQ's innovative storage-compute separation design*
+
+### Key Architectural Principles
+
+1. **Storage-Compute Separation**: Brokers are stateless; all persistent data in shared object storage
+2. **Intelligent Tiered Storage**: Hot data in WAL/cache, cold data in object storage
+3. **Replication Without Data Movement**: Shared storage enables instant failover
+4. **QUIC/HTTP3 Protocol**: Modern transport for reduced latency and head-of-line blocking elimination
+5. **Raft Consensus**: Distributed coordination for metadata and cluster management
+6. **Auto-scaling & Operations**: Cloud-native operational capabilities with Kubernetes integration
+
+### Architecture Layers
+
+The diagram above illustrates RustMQ's layered architecture:
+
+- **🔵 Client Layer** - Multi-language SDKs (Rust, Go, JavaScript) and admin tools
+- **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore and QUIC/gRPC servers
+- **🟠 Tiered Storage** - Local WAL for hot data, intelligent caching, and cloud object storage for cold data
+- **🟣 Controller Cluster** - Raft consensus-based metadata management and cluster coordination
+- **🔴 Operational Layer** - Admin REST API, auto-scaling, and Kubernetes integration
+- **🟦 Integration Layer** - WebAssembly ETL processing, BigQuery streaming, and monitoring
+
+### Data Flow Patterns
+
+- **Write Path**: `Client → QUIC → Broker → WAL → Cache → Object Storage`
+- **Read Path**: `Client ← QUIC ← Broker ← Cache ← Object Storage (if cache miss)`
+- **Replication**: `Leader → Followers (Metadata Only)` - no data movement due to shared storage
+
 ## 📋 Table of Contents
 
 - [Quick Start](#-quick-start)
