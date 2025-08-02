@@ -41,9 +41,10 @@ gcp-bigquery-client = "0.22"
 google-cloud-auth = "0.16"
 google-cloud-googleapis = "0.12"
 
-# Additional dependencies for BigQuery subscriber
+# HTTP server for admin API
 warp = "0.3"
 clap = { version = "4.5", features = ["derive"] }
+hyper = "0.14"
 
 # Error handling
 anyhow = "1.0"
@@ -106,6 +107,10 @@ path = "src/bin/admin.rs"
 [[bin]]
 name = "rustmq-bigquery-subscriber"
 path = "src/bin/bigquery_subscriber.rs"
+
+[[bin]]
+name = "rustmq-admin-server"
+path = "src/bin/admin_server.rs"
 
 [profile.release]
 opt-level = 3

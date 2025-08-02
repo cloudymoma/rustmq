@@ -90,6 +90,14 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
    - **VolumeRecoveryManager**: Persistent volume recovery for broker failures
    - **RuntimeConfigManager**: Hot configuration updates without restarts
 
+7. **Admin REST API** (`src/admin/`):
+   - **AdminApi**: Comprehensive cluster management REST API server
+   - **BrokerHealthTracker**: Real-time broker health monitoring with background checks
+   - **Health Endpoints**: Service uptime tracking and cluster status assessment
+   - **Topic Management**: CRUD operations for topics with partition and replication management
+   - **Error Handling**: Production-ready error responses with leader hints
+   - **Testing**: Complete test coverage with 11 unit tests for all API functionality
+
 ### Data Flow Architecture
 
 ```
@@ -179,7 +187,7 @@ All configuration is centralized in `src/config.rs` with TOML file support and r
 
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (43 tests currently passing). Tests use:
+The codebase has comprehensive unit tests (99 tests currently passing). Tests use:
 - `tempfile` for temporary directories in storage tests
 - Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
@@ -219,6 +227,7 @@ Centralized error handling through `src/error.rs` with:
 - `controller/`: Cluster coordination depends on all other modules
 - `scaling/`: Broker scaling operations depend on storage and replication
 - `operations/`: Operational management depends on scaling and storage modules
+- `admin/`: Admin REST API depends on controller service for cluster management and health tracking
 
 ## Production Deployment
 

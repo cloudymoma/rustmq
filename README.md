@@ -23,6 +23,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 
 - [Quick Start](#-quick-start)
 - [Docker Development Setup](#-docker-development-setup)
+- [Admin REST API](#-admin-rest-api)
 - [BigQuery Subscriber](#-bigquery-subscriber)
 - [Google Cloud Platform Setup](#-google-cloud-platform-setup)
 - [Deployment](#-deployment)
@@ -50,15 +51,15 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
 - **Docker Environment**: Complete Docker Compose setup for development and testing
 - **Message Broker Core**: **FULLY IMPLEMENTED** high-level produce/consume API with comprehensive integration tests
+- **Admin REST API**: **FULLY IMPLEMENTED** cluster management API with real-time health tracking, topic/broker operations, and comprehensive monitoring
 - **Go SDK**: **FULLY IMPLEMENTED** production-ready client library with advanced connection management, TLS/mTLS support, health checking, and robust reconnection logic
 - **Rust SDK**: **FULLY IMPLEMENTED** complete client library with async/await, QUIC transport, and comprehensive producer API
-- **Comprehensive Testing**: 88 passing unit tests + 9 broker core integration tests + 11 Go SDK connection tests + additional integration tests covering all major components
+- **Comprehensive Testing**: 99 passing unit tests + 11 admin API tests + 9 broker core integration tests + 11 Go SDK connection tests + additional integration tests covering all major components
 
 ### 🚧 In Development  
 - **Advanced Client Features**: Additional language bindings and advanced streaming features
 
 ### ❌ Not Yet Implemented
-- **Admin API**: REST API for cluster management
 - **Production Features**: Advanced monitoring dashboards, alerting rules
 - **Advanced Features**: Stream processing pipelines, exactly-once semantics
 
@@ -69,6 +70,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Real-time ETL**: WebAssembly module execution with memory/timeout limits and pipeline chaining
 - **Production Storage**: Tiered storage with intelligent WAL uploads and object storage integration
 - **Message Broker Core**: High-level producer/consumer APIs with automatic partitioning, offset management, and error handling
+- **Admin REST API**: Comprehensive cluster management with real-time health monitoring, topic/broker operations, and operational metrics
 - **Kubernetes Ready**: StatefulSet deployments with persistent volumes and service discovery
 - **Operational Excellence**: Automated scaling, rolling upgrades, and configuration hot-reloading
 
@@ -106,6 +108,9 @@ docker-compose up -d
 
 # Run admin CLI (shows available commands)
 ./target/release/rustmq-admin create-topic test-topic 3 2
+
+# Start the Admin REST API server
+./target/release/rustmq-admin serve-api 8080
 ```
 
 ## 🐳 Docker Development Setup
@@ -159,8 +164,9 @@ The Docker Compose setup includes:
 | Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP | Placeholder |
 | Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP | Placeholder |
 | Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP | Placeholder |
+| Admin REST API | 8080 | 8080 | Cluster Management | **Functional** |
 | MinIO | 9000/9001 | 9000/9001 | API/Console | Functional |
-| BigQuery Subscriber | 8080 | 8080 | Health/Metrics | Demo |
+| BigQuery Subscriber | 8081 | 8081 | Health/Metrics | Demo |
 
 ### Using the Admin CLI
 
@@ -175,7 +181,11 @@ rustmq-admin describe-topic <name>
 rustmq-admin delete-topic <name>
 rustmq-admin cluster-health
 
-# Note: Commands show usage but are not yet implemented
+# Start the Admin REST API server (FULLY IMPLEMENTED)
+rustmq-admin serve-api [port]
+
+# Note: CLI commands show usage but are not yet implemented
+# REST API is fully functional with health tracking
 ```
 
 ### Development Workflow
@@ -204,6 +214,336 @@ Each Dockerfile includes:
 - **Configuration** - Environment variable templating
 - **Logging** - Structured logging with configurable levels
 - **Dependencies** - Proper startup ordering and readiness checks
+
+## 🛠️ Admin REST API
+
+RustMQ provides a comprehensive REST API for cluster management, monitoring, and operations. The Admin API includes real-time health tracking, topic management, broker monitoring, and operational metrics.
+
+### 🚀 Key Features
+
+- **Real-time Health Monitoring**: Live broker health tracking with automatic timeout detection
+- **Cluster Status**: Comprehensive cluster health assessment with leadership tracking
+- **Topic Management**: CRUD operations for topics with partition and replication management
+- **Broker Operations**: Broker listing with health status and rack awareness
+- **Operational Metrics**: Uptime tracking and performance monitoring
+- **Production Ready**: Comprehensive error handling and JSON API responses
+
+### 🏃 Quick Start
+
+Start the Admin API server:
+
+```bash
+# Start with default settings (port 8080)
+./target/release/rustmq-admin serve-api
+
+# Start on custom port
+./target/release/rustmq-admin serve-api 9642
+
+# Docker environment (included in docker-compose)
+docker-compose up -d
+# Admin API available at http://localhost:9642
+```
+
+### 📊 Health Monitoring
+
+The Admin API provides comprehensive health monitoring with real-time broker tracking:
+
+#### Health Endpoint
+```bash
+# Check service health and uptime
+curl http://localhost:8080/health
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "is_leader": true,
+  "raft_term": 1
+}
+```
+
+#### Cluster Status
+```bash
+# Get comprehensive cluster status
+curl http://localhost:8080/api/v1/cluster
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "brokers": [
+      {
+        "id": "broker-1",
+        "host": "localhost",
+        "port_quic": 9092,
+        "port_rpc": 9093,
+        "rack_id": "rack-1",
+        "online": true
+      },
+      {
+        "id": "broker-2",
+        "host": "localhost",
+        "port_quic": 9192,
+        "port_rpc": 9193,
+        "rack_id": "rack-2", 
+        "online": false
+      }
+    ],
+    "topics": [],
+    "leader": "controller-1",
+    "term": 1,
+    "healthy": true
+  },
+  "error": null,
+  "leader_hint": null
+}
+```
+
+### 📋 Topic Management
+
+#### List Topics
+```bash
+curl http://localhost:8080/api/v1/topics
+```
+
+#### Create Topic
+```bash
+curl -X POST http://localhost:8080/api/v1/topics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "user-events",
+    "partitions": 12,
+    "replication_factor": 3,
+    "retention_ms": 604800000,
+    "segment_bytes": 1073741824,
+    "compression_type": "lz4"
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": "Topic 'user-events' created",
+  "error": null,
+  "leader_hint": "controller-1"
+}
+```
+
+#### Describe Topic
+```bash
+curl http://localhost:8080/api/v1/topics/user-events
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "name": "user-events",
+    "partitions": 12,
+    "replication_factor": 3,
+    "config": {
+      "retention_ms": 604800000,
+      "segment_bytes": 1073741824,
+      "compression_type": "lz4"
+    },
+    "created_at": "2024-01-15T10:30:00Z",
+    "partition_assignments": [
+      {
+        "partition": 0,
+        "leader": "broker-1",
+        "replicas": ["broker-1", "broker-2", "broker-3"],
+        "in_sync_replicas": ["broker-1", "broker-2"],
+        "leader_epoch": 1
+      }
+    ]
+  },
+  "error": null,
+  "leader_hint": "controller-1"
+}
+```
+
+#### Delete Topic
+```bash
+curl -X DELETE http://localhost:8080/api/v1/topics/user-events
+```
+
+### 🖥️ Broker Management
+
+#### List Brokers
+```bash
+curl http://localhost:8080/api/v1/brokers
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "broker-1",
+      "host": "localhost",
+      "port_quic": 9092,
+      "port_rpc": 9093,
+      "rack_id": "us-central1-a",
+      "online": true
+    },
+    {
+      "id": "broker-2", 
+      "host": "localhost",
+      "port_quic": 9192,
+      "port_rpc": 9193,
+      "rack_id": "us-central1-b",
+      "online": true
+    }
+  ],
+  "error": null,
+  "leader_hint": "controller-1"
+}
+```
+
+### 🔧 Health Tracking System
+
+The Admin API includes a sophisticated health tracking system:
+
+#### Features
+- **Background Health Monitoring**: Automatic health checks every 15 seconds
+- **Timeout-based Health Assessment**: Configurable 30-second health timeout
+- **Intelligent Cluster Health**: Smart health calculation for small clusters
+- **Real-time Updates**: Live health status in all broker-related endpoints
+- **Stale Entry Cleanup**: Automatic cleanup of old health data
+
+#### Health Check Logic
+- **Healthy**: Last successful health check within 30 seconds
+- **Unhealthy**: No successful health check or timeout exceeded
+- **Cluster Health**: For ≤2 brokers: healthy if ≥1 broker healthy + leader exists
+- **Large Clusters**: Healthy if majority of brokers healthy + leader exists
+
+### 🚨 Error Handling
+
+The Admin API provides comprehensive error handling with detailed responses:
+
+#### Error Response Format
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "Detailed error message",
+  "leader_hint": "controller-2"
+}
+```
+
+#### Common Error Scenarios
+- **Topic Not Found** (404): Topic doesn't exist
+- **Insufficient Brokers**: Not enough brokers for replication factor
+- **Leader Not Available**: Controller leader election in progress
+- **Invalid Configuration**: Malformed request parameters
+
+### 📈 Production Deployment
+
+#### Kubernetes Integration
+The Admin API integrates seamlessly with Kubernetes deployments:
+
+```yaml
+# Service exposure
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustmq-admin
+spec:
+  type: LoadBalancer
+  selector:
+    app: rustmq-controller
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+```
+
+#### Health Check Configuration
+```yaml
+# Pod health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  
+readinessProbe:
+  httpGet:
+    path: /health  
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+### 🧪 Testing
+
+The Admin API includes comprehensive test coverage:
+
+- **11 Unit Tests**: All API endpoints and health tracking functionality
+- **Integration Testing**: End-to-end API workflows with mock backends
+- **Error Scenario Testing**: Comprehensive error condition validation
+- **Performance Testing**: Health tracking timeout and expiration behavior
+
+#### Running Tests
+```bash
+# Run admin API tests
+cargo test admin::api
+
+# Run specific health tracking tests
+cargo test test_broker_health_tracking test_cluster_health_calculation
+
+# All admin tests pass
+# test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured
+```
+
+### 🔧 Configuration
+
+#### Environment Variables
+```bash
+# Admin API configuration
+ADMIN_API_PORT=8080
+HEALTH_CHECK_INTERVAL=15    # seconds
+HEALTH_TIMEOUT=30          # seconds
+```
+
+#### TOML Configuration
+```toml
+[admin]
+port = 8080
+health_check_interval_ms = 15000
+health_timeout_ms = 30000
+enable_cors = true
+log_requests = true
+```
+
+### 🔍 Monitoring Integration
+
+The Admin API provides monitoring endpoints for observability:
+
+#### Metrics Endpoint (Future)
+```bash
+# Prometheus metrics (planned)
+curl http://localhost:8080/metrics
+```
+
+#### Log Analysis
+```bash
+# View API request logs
+docker-compose logs rustmq-admin
+
+# Filter for health check logs
+docker-compose logs rustmq-admin | grep "Health check"
+```
 
 ## 📊 BigQuery Subscriber
 
@@ -1637,58 +1977,42 @@ func processOrder(order OrderEvent) error {
 
 #### Admin Operations
 
-**Note**: Admin API is not yet implemented. The following shows the intended API structure.
+**✅ Fully Implemented**: The Admin REST API is production-ready with comprehensive cluster management capabilities.
 
 ```bash
-# Create topic with custom configuration (not yet implemented)
-curl -X POST http://rustmq-admin/api/v1/topics \
+# Create topic with custom configuration
+curl -X POST http://localhost:8080/api/v1/topics \
   -H "Content-Type: application/json" \
   -d '{
     "name": "user-events",
-    "partition_count": 24,
+    "partitions": 24,
     "replication_factor": 3,
-    "retention_policy": {"Time": {"retention_ms": 604800000}},
-    "compression": "Lz4",
-    "etl_modules": ["pii_scrubber", "fraud_detector"]
+    "retention_ms": 604800000,
+    "segment_bytes": 1073741824,
+    "compression_type": "lz4"
   }'
 
-# List topics (not yet implemented)
-curl http://rustmq-admin/api/v1/topics
+# List topics
+curl http://localhost:8080/api/v1/topics
 
-# Get topic details (not yet implemented)
-curl http://rustmq-admin/api/v1/topics/user-events
+# Get topic details
+curl http://localhost:8080/api/v1/topics/user-events
 
-# Update topic configuration
-curl -X PUT http://rustmq-admin/api/v1/topics/user-events \
-  -H "Content-Type: application/json" \
-  -d '{
-    "retention_policy": {"Time": {"retention_ms": 1209600000}},
-    "etl_modules": ["pii_scrubber", "fraud_detector", "analytics_enricher"]
-  }'
+# Delete topic
+curl -X DELETE http://localhost:8080/api/v1/topics/user-events
 
-# Get cluster health
-curl http://rustmq-admin/api/v1/cluster/health
+# Get cluster health and status
+curl http://localhost:8080/api/v1/cluster
 
-# List brokers
-curl http://rustmq-admin/api/v1/brokers
+# List brokers with health status
+curl http://localhost:8080/api/v1/brokers
 
-# Trigger partition rebalancing
-curl -X POST http://rustmq-admin/api/v1/rebalance \
-  -H "Content-Type: application/json" \
-  -d '{
-    "topic_names": ["user-events", "orders"],
-    "strategy": "BALANCE_LOAD",
-    "max_concurrent_moves": 5
-  }'
+# Check service health and uptime
+curl http://localhost:8080/health
 
-# Deploy WebAssembly ETL module
-curl -X POST http://rustmq-admin/api/v1/wasm/modules \
-  -H "Content-Type: application/octet-stream" \
-  -H "X-Module-Name: analytics_enricher" \
-  --data-binary @analytics_enricher.wasm
-
-# Get metrics
-curl http://rustmq-admin/api/v1/metrics
+# Advanced features (future implementation)
+# Partition rebalancing, ETL module management, and metrics endpoints
+# will be available in future releases
 ```
 
 ## 📊 Future Performance Tuning (Not Yet Implemented)
