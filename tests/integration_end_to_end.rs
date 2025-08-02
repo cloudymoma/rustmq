@@ -87,6 +87,7 @@ async fn test_full_system_integration() {
         min_in_sync_replicas: 2,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let topic_partition = TopicPartition {
@@ -241,6 +242,7 @@ async fn test_failure_recovery_scenarios() {
         min_in_sync_replicas: 3, // High requirement
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let topic_partition = TopicPartition {
@@ -366,6 +368,7 @@ async fn test_concurrent_system_operations() {
         min_in_sync_replicas: 1,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let topic_partition = TopicPartition {
@@ -589,6 +592,7 @@ async fn test_data_consistency_across_components() {
         min_in_sync_replicas: 1,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let rpc_client = Arc::new(MockReplicationRpcClient);

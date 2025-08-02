@@ -21,6 +21,8 @@ pub struct ReplicationManager {
     
     min_in_sync_replicas: usize,
     ack_timeout: Duration,
+    max_replication_lag: u64,
+    heartbeat_timeout: Duration,
     
     wal: Arc<dyn WriteAheadLog>,
     rpc_client: Arc<dyn ReplicationRpcClient>,
@@ -106,6 +108,8 @@ impl ReplicationManager {
             follower_states: Arc::new(RwLock::new(HashMap::new())),
             min_in_sync_replicas: config.min_in_sync_replicas,
             ack_timeout: Duration::from_millis(config.ack_timeout_ms),
+            max_replication_lag: config.max_replication_lag,
+            heartbeat_timeout: Duration::from_millis(config.heartbeat_timeout_ms),
             wal,
             rpc_client,
         }
@@ -244,16 +248,14 @@ impl ReplicationManager {
     /// Check if a follower is considered in-sync based on lag and heartbeat
     fn is_follower_in_sync(&self, follower_state: &FollowerState) -> bool {
         let current_offset = self.log_end_offset.load(Ordering::SeqCst);
-        let max_lag = 1000; // TODO: Make configurable
         let lag = current_offset.saturating_sub(follower_state.last_known_offset);
         
         // Check both lag and heartbeat recency
-        let heartbeat_timeout = Duration::from_secs(30); // TODO: Make configurable
         let now = chrono::Utc::now();
         
         // Properly handle chrono duration conversion errors
         let heartbeat_fresh = match (now - follower_state.last_heartbeat).to_std() {
-            Ok(duration) => duration < heartbeat_timeout,
+            Ok(duration) => duration < self.heartbeat_timeout,
             Err(e) => {
                 // If conversion fails (e.g., negative duration due to clock skew),
                 // conservatively mark as stale
@@ -265,7 +267,7 @@ impl ReplicationManager {
             }
         };
         
-        lag <= max_lag && heartbeat_fresh
+        lag <= self.max_replication_lag && heartbeat_fresh
     }
 
     pub fn get_in_sync_replicas(&self) -> Vec<BrokerId> {
@@ -435,6 +437,7 @@ mod tests {
             min_in_sync_replicas: 2,
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec![
@@ -508,6 +511,7 @@ mod tests {
             min_in_sync_replicas: 3, // High requirement
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec!["broker-1".to_string()]; // Only leader, no followers
@@ -571,6 +575,7 @@ mod tests {
             min_in_sync_replicas: 3, // Require 3 replicas (leader + 2 followers)
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec![
@@ -657,6 +662,7 @@ mod tests {
             min_in_sync_replicas: 2,
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec!["broker-1".to_string(), "broker-2".to_string()];
@@ -723,6 +729,7 @@ mod tests {
             min_in_sync_replicas: 2,
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec!["broker-1".to_string(), "broker-2".to_string()];
@@ -792,6 +799,7 @@ mod tests {
             min_in_sync_replicas: 3, // Require 3 replicas (leader + 2 followers)
             ack_timeout_ms: 5000,
             max_replication_lag: 1000,
+            heartbeat_timeout_ms: 30000,
         };
 
         let replica_set = vec![

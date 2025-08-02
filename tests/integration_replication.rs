@@ -29,6 +29,7 @@ async fn test_replication_manager_basic_replication() {
         min_in_sync_replicas: 2,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec![
@@ -101,6 +102,7 @@ async fn test_replication_manager_leader_epoch_handling() {
         min_in_sync_replicas: 1,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec!["broker-1".to_string()];
@@ -159,6 +161,7 @@ async fn test_replication_manager_high_watermark_calculation() {
         min_in_sync_replicas: 3,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec![
@@ -356,6 +359,7 @@ async fn test_replication_timeout_handling() {
         min_in_sync_replicas: 2,
         ack_timeout_ms: 100, // Very short timeout for testing
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec![
@@ -423,6 +427,7 @@ async fn test_concurrent_replication_operations() {
         min_in_sync_replicas: 1,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec!["broker-1".to_string()];
@@ -495,6 +500,7 @@ async fn test_replication_follower_state_updates() {
         min_in_sync_replicas: 2,
         ack_timeout_ms: 5000,
         max_replication_lag: 1000,
+        heartbeat_timeout_ms: 30000,
     };
 
     let replica_set = vec![

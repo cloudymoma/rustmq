@@ -933,6 +933,7 @@ data:
     min_in_sync_replicas = 2
     ack_timeout_ms = 5000
     max_replication_lag = 1000
+    heartbeat_timeout_ms = 30000
 
   controller.toml: |
     [controller]
@@ -1152,6 +1153,7 @@ heartbeat_interval_ms = 1000        # Heartbeat frequency
 min_in_sync_replicas = 2            # Minimum replicas for acknowledgment
 ack_timeout_ms = 5000               # Replication acknowledgment timeout
 max_replication_lag = 1000          # Maximum acceptable lag
+heartbeat_timeout_ms = 30000        # Follower heartbeat timeout (30 seconds)
 
 [etl]
 enabled = true                      # Enable WebAssembly ETL processing
@@ -2047,6 +2049,7 @@ buffer_size = 4096                  # Smaller buffers for low latency
 [replication]
 min_in_sync_replicas = 1            # Reduce for lower latency
 ack_timeout_ms = 1000               # Faster timeouts
+heartbeat_timeout_ms = 10000        # Shorter heartbeat timeout for faster failover
 ```
 
 ### Planned Kubernetes Resource Tuning

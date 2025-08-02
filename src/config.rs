@@ -110,6 +110,8 @@ pub struct ReplicationConfig {
     pub min_in_sync_replicas: usize,
     pub ack_timeout_ms: u64,
     pub max_replication_lag: u64,
+    /// Heartbeat timeout in milliseconds - how long to wait before considering a follower unresponsive
+    pub heartbeat_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +209,7 @@ impl Default for Config {
                 min_in_sync_replicas: 2,
                 ack_timeout_ms: 5000,
                 max_replication_lag: 1000,
+                heartbeat_timeout_ms: 30000, // 30 seconds
             },
             etl: EtlConfig {
                 enabled: false,
@@ -275,6 +278,12 @@ impl Config {
             ));
         }
 
+        if self.replication.heartbeat_timeout_ms == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "replication.heartbeat_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -306,9 +315,26 @@ mod tests {
     }
 
     #[test]
+    fn test_config_validation_heartbeat_timeout() {
+        let mut config = Config::default();
+        
+        // Test zero value (should fail)
+        config.replication.heartbeat_timeout_ms = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("heartbeat_timeout_ms must be greater than 0"));
+
+        // Test valid value (should pass)
+        config.replication.heartbeat_timeout_ms = 30000;
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_default_config_is_valid() {
         let config = Config::default();
         assert!(config.validate().is_ok());
         assert_eq!(config.scaling.max_concurrent_decommissions, 1);
+        assert_eq!(config.replication.heartbeat_timeout_ms, 30000);
     }
 }
