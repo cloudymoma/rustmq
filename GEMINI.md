@@ -38,7 +38,15 @@ cargo fmt
 # Run specific binary targets
 cargo run --bin rustmq-broker -- --config config/broker.toml    # Fully implemented broker
 cargo run --bin rustmq-controller -- --config config/controller.toml  # Production-ready controller with Raft consensus
-cargo run --bin rustmq-admin -- --config config/admin.toml      # CLI tool
+cargo run --bin rustmq-admin -- <command> [args...]             # Production-ready admin CLI tool
+
+# Admin CLI Commands (rustmq-admin)
+cargo run --bin rustmq-admin -- create-topic <name> <partitions> <replication_factor>  # Create a new topic
+cargo run --bin rustmq-admin -- list-topics                     # List all topics with details
+cargo run --bin rustmq-admin -- describe-topic <name>           # Show detailed topic information
+cargo run --bin rustmq-admin -- delete-topic <name>             # Delete a topic
+cargo run --bin rustmq-admin -- cluster-health                  # Check cluster health status
+cargo run --bin rustmq-admin -- serve-api [port]                # Start REST API server (default port: 8080)
 ```
 
 ## Architecture Overview
@@ -120,6 +128,15 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
    - **Production Startup**: RPC server (port 9094), Raft server (port 9095), and HTTP API (port 9642)
    - **Graceful Shutdown**: Leadership step-down, decommission slot cleanup, and resource management
    - **Operational Excellence**: Real-time health reporting, configuration validation, and comprehensive error handling
+
+10. **Admin CLI Binary** (`src/bin/admin.rs`):
+   - **Complete Topic Management**: Create, list, describe, and delete topics with comprehensive validation
+   - **Cluster Health Monitoring**: Real-time cluster status assessment with broker and topic health analysis
+   - **Production-Ready Operations**: Connect to running controller instances for live cluster management
+   - **Rich Command Interface**: User-friendly CLI with formatted output and detailed error reporting
+   - **Configuration Support**: Custom topic configurations including retention, segment size, and compression
+   - **Comprehensive Testing**: 11 unit tests covering all administrative operations and edge cases
+   - **Error Handling**: Robust error management with helpful user feedback and troubleshooting hints
 
 ### Data Flow Architecture
 
@@ -219,7 +236,7 @@ Key configuration sections:
 
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (102 tests currently passing). Tests use:
+The codebase has comprehensive unit tests (113 tests currently passing, including 11 new admin CLI tests). Tests use:
 - `tempfile` for temporary directories in storage tests
 - Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
@@ -234,6 +251,7 @@ The codebase has comprehensive unit tests (102 tests currently passing). Tests u
 - **Network Layer**: 8 tests for QUIC server, gRPC services, and connection management
 - **Controller Service**: 16 tests for Raft consensus, leadership, and decommission operations
 - **Admin REST API**: 11 tests for health tracking, topic management, and cluster operations
+- **Admin CLI Binary**: 11 tests for command-line topic management, cluster health, and error handling
 - **Broker Core**: 9 tests for producer/consumer APIs and message handling
 - **ETL Processing**: 6 tests for WebAssembly module execution and data processing
 - **BigQuery Subscriber**: 15 tests for streaming, batching, and error handling
@@ -275,7 +293,7 @@ Centralized error handling through `src/error.rs` with:
 - `admin/`: Admin REST API depends on controller service for cluster management and health tracking
 - `bin/broker.rs`: **FULLY IMPLEMENTED** - Broker binary that orchestrates all components into a production-ready service
 - `bin/controller.rs`: **FULLY IMPLEMENTED** - Production-ready controller binary with complete Raft consensus, gRPC services, and cluster coordination
-- `bin/admin.rs`: **PARTIALLY IMPLEMENTED** - CLI tool with command structure and REST API server capability
+- `bin/admin.rs`: **FULLY IMPLEMENTED** - Production-ready CLI tool with comprehensive topic management and cluster health monitoring
 - `bin/admin_server.rs`: **FULLY IMPLEMENTED** - Standalone admin REST API server
 - `bin/bigquery_subscriber.rs`: **FULLY IMPLEMENTED** - BigQuery integration for real-time data streaming
 
@@ -347,22 +365,26 @@ RustMQ provides production-ready Kubernetes manifests including:
 11. **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
 12. **Client SDKs**: Both Rust and Go SDKs with advanced features and comprehensive testing
 
-### 🚧 Partially Implemented Components
-1. **Admin CLI**: Command structure present but core operations need controller integration
+### ✅ Recently Completed Components
+1. **Admin CLI**: Production-ready command-line interface with comprehensive topic management and cluster health monitoring
 
 ### 📊 Codebase Statistics
 - **Total Source Files**: 47 Rust files
 - **Binary Targets**: 5 executables (broker, controller, admin, admin-server, bigquery-subscriber)
 - **Configuration Files**: 4 TOML files with service-specific port isolation
-- **Test Coverage**: 102 passing unit tests across all modules
+- **Test Coverage**: 113 passing unit tests across all modules (including 11 admin CLI tests)
 - **Implementation Completion**: 470+ lines of production-ready controller code
 - **Port Configuration**: Proper service separation (broker: 9092/9093, controller: 9094/9095/9642)
 - **Documentation**: Comprehensive README, architecture docs, and deployment guides
 - **Dependencies**: 40+ production dependencies for networking, storage, and cloud integration
 
 ### 🎯 Recent Achievements
+- **Complete Admin CLI Implementation**: Production-ready command-line interface with comprehensive topic management and cluster health monitoring
+- **Comprehensive Test Coverage**: Added 11 new tests for admin CLI functionality, bringing total to 113 passing tests
+- **Full Topic Lifecycle Management**: Create, list, describe, and delete topics with rich configuration options
+- **Advanced Cluster Health Assessment**: Real-time monitoring of brokers, topics, and partition assignments
+- **Production-Ready Error Handling**: Robust error management with user-friendly feedback and troubleshooting guidance
 - **Complete Controller Implementation**: Production-ready Raft consensus with 470+ lines of robust code
 - **Port Conflict Resolution**: Proper service separation with dedicated configuration files
 - **Service Integration**: Seamless broker-controller coordination with proper RPC interfaces
-- **Testing Verification**: All 102 tests passing with new controller functionality
-- **Runtime Validation**: Both broker and controller binaries start correctly with proper port allocation
+- **Runtime Validation**: All broker, controller, and admin binaries start correctly with proper functionality

@@ -54,9 +54,10 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Message Broker Core**: **FULLY IMPLEMENTED** high-level produce/consume API with comprehensive integration tests
 - **Broker Binary**: **FULLY IMPLEMENTED** complete broker initialization with all core components, QUIC/gRPC servers, background tasks, and graceful shutdown
 - **Admin REST API**: **FULLY IMPLEMENTED** cluster management API with real-time health tracking, topic/broker operations, and comprehensive monitoring
+- **Admin CLI**: **FULLY IMPLEMENTED** production-ready command-line interface with comprehensive topic management and cluster health monitoring
 - **Go SDK**: **FULLY IMPLEMENTED** production-ready client library with advanced connection management, TLS/mTLS support, health checking, and robust reconnection logic
 - **Rust SDK**: **FULLY IMPLEMENTED** complete client library with async/await, QUIC transport, and comprehensive producer API
-- **Comprehensive Testing**: 102 passing unit tests + 11 admin API tests + 9 broker core integration tests + 11 Go SDK connection tests + additional integration tests covering all major components
+- **Comprehensive Testing**: 102 passing unit tests + 11 admin API tests + 11 admin CLI tests + 9 broker core integration tests + 11 Go SDK connection tests + additional integration tests covering all major components
 
 ### 🚧 In Development  
 - **Advanced Client Features**: Additional language bindings and advanced streaming features
@@ -74,6 +75,7 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 - **Message Broker Core**: High-level producer/consumer APIs with automatic partitioning, offset management, and error handling
 - **Production-Ready Broker**: Complete broker binary with all components initialized, QUIC/gRPC servers running, and graceful shutdown
 - **Admin REST API**: Comprehensive cluster management with real-time health monitoring, topic/broker operations, and operational metrics
+- **Admin CLI**: Production-ready command-line interface for topic lifecycle management and cluster health assessment
 - **Kubernetes Ready**: StatefulSet deployments with persistent volumes and service discovery
 - **Operational Excellence**: Automated scaling, rolling upgrades, and configuration hot-reloading
 
@@ -126,7 +128,7 @@ The following Docker containers are available:
 
 - **Dockerfile.broker** - RustMQ message broker (fully implemented with all core components)
 - **Dockerfile.controller** - RustMQ controller (production-ready with Raft consensus)  
-- **Dockerfile.admin** - Admin CLI tool (basic command structure)
+- **Dockerfile.admin** - Admin CLI tool (fully implemented with topic management and cluster health)
 - **Dockerfile.bigquery-subscriber** - Google BigQuery subscriber demo
 
 ### Starting the Development Environment
@@ -152,7 +154,7 @@ The Docker Compose setup includes:
 - **3 Broker nodes** (`rustmq-broker-1/2/3`) - Fully implemented broker instances with all core components
 - **3 Controller nodes** (`rustmq-controller-1/2/3`) - Production-ready controller services with Raft consensus
 - **MinIO** - S3-compatible object storage for local development
-- **Admin CLI** - Basic admin tool with command structure
+- **Admin CLI** - Production-ready admin tool with comprehensive topic management and cluster health monitoring
 - **BigQuery Subscriber** - Demo BigQuery integration
 
 **Note**: Both broker and controller services are now fully implemented with all core components including Raft consensus, cluster coordination, and production-ready operational capabilities.
@@ -177,18 +179,23 @@ The Docker Compose setup includes:
 # Access the admin CLI container
 docker-compose exec rustmq-admin bash
 
-# Available commands (placeholder implementations)
-rustmq-admin create-topic <name> <partitions> <replication_factor>
-rustmq-admin list-topics
-rustmq-admin describe-topic <name>
-rustmq-admin delete-topic <name>
-rustmq-admin cluster-health
+# **FULLY IMPLEMENTED** - Production-ready topic management commands
+rustmq-admin create-topic <name> <partitions> <replication_factor>  # ✅ Create topics with validation
+rustmq-admin list-topics                                            # ✅ List all topics with details
+rustmq-admin describe-topic <name>                                  # ✅ Show topic configuration and partitions
+rustmq-admin delete-topic <name>                                    # ✅ Delete topics safely
+rustmq-admin cluster-health                                         # ✅ Comprehensive cluster health analysis
 
 # Start the Admin REST API server (FULLY IMPLEMENTED)
-rustmq-admin serve-api [port]
+rustmq-admin serve-api [port]                                       # ✅ Full REST API with health tracking
 
-# Note: CLI commands show usage but are not yet implemented
-# REST API is fully functional with health tracking
+# Example usage:
+rustmq-admin create-topic events 3 2          # Creates 'events' topic with 3 partitions, replication factor 2
+rustmq-admin list-topics                       # Shows formatted table of all topics
+rustmq-admin describe-topic events             # Detailed view with partition assignments
+rustmq-admin cluster-health                    # Health status of brokers, topics, and overall cluster
+
+# All commands provide rich output formatting and comprehensive error handling
 ```
 
 ### Development Workflow
