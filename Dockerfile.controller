@@ -82,8 +82,8 @@ snapshot_interval = 10000
 log_compaction_threshold = 1000
 
 [metastore]
-type = "etcd"
-endpoints = ["${ETCD_ENDPOINTS:-etcd:2379}"]
+type = "memory"
+# No external metastore - using internal Raft consensus
 timeout_ms = 5000
 retry_attempts = 3
 
@@ -144,13 +144,8 @@ fi
 mkdir -p /var/lib/rustmq/raft
 chown -R rustmq:rustmq /var/lib/rustmq/raft
 
-# Wait for etcd to be available
-echo "Waiting for etcd to be available..."
-until curl -f "${ETCD_ENDPOINTS:-etcd:2379}/health" > /dev/null 2>&1; do
-    echo "Waiting for etcd..."
-    sleep 2
-done
-echo "etcd is available"
+# Controllers use internal Raft consensus - no external dependencies required
+echo "Starting controller with internal Raft consensus..."
 
 # Switch to rustmq user and execute the controller
 exec gosu rustmq "$@"

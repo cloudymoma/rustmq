@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
     libssl3 \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create rustmq user and group
@@ -189,9 +190,9 @@ EXPOSE 9092 9093 9642 9096
 # Set working directory
 WORKDIR /var/lib/rustmq
 
-# Health check
+# Health check - verify QUIC and RPC ports are accessible
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:9642/health || exit 1
+    CMD nc -z localhost 9092 && nc -z localhost 9093 || exit 1
 
 # Use entrypoint script
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

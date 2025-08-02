@@ -35,7 +35,6 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -43,7 +42,7 @@ services:
       - "9094:9094"
       - "9095:9095"
       - "9642:9642"
-    depends_on: []  # Removed etcd dependency as it's not implemented
+    depends_on: []
     networks:
       - rustmq-network
     volumes:
@@ -64,7 +63,6 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -72,7 +70,7 @@ services:
       - "9144:9094"
       - "9145:9095"
       - "9643:9642"
-    depends_on: []  # Removed etcd dependency as it's not implemented
+    depends_on: []
     networks:
       - rustmq-network
     volumes:
@@ -93,7 +91,6 @@ services:
       - CONTROLLER_LISTEN_RPC=0.0.0.0:9094
       - CONTROLLER_LISTEN_RAFT=0.0.0.0:9095
       - CONTROLLER_LISTEN_HTTP=0.0.0.0:9642
-      # Note: etcd not currently used in implementation
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
@@ -101,7 +98,7 @@ services:
       - "9194:9094"
       - "9195:9095"
       - "9644:9642"
-    depends_on: []  # Removed etcd dependency as it's not implemented
+    depends_on: []
     networks:
       - rustmq-network
     volumes:
@@ -148,7 +145,7 @@ services:
       - broker1_wal:/var/lib/rustmq/wal
       - broker1_data:/var/lib/rustmq/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -188,7 +185,7 @@ services:
       - broker2_wal:/var/lib/rustmq/wal
       - broker2_data:/var/lib/rustmq/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -228,7 +225,7 @@ services:
       - broker3_wal:/var/lib/rustmq/wal
       - broker3_data:/var/lib/rustmq/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -249,6 +246,30 @@ services:
     networks:
       - rustmq-network
     command: tail -f /dev/null # Keep container running for interactive use
+
+  # RustMQ Admin Server (REST API)
+  rustmq-admin-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin-server
+    container_name: rustmq-admin-server
+    environment:
+      - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
+      - ADMIN_LISTEN_ADDR=0.0.0.0:8080
+      - RUST_LOG=info
+      - RUSTMQ_LOG_LEVEL=info
+    ports:
+      - "8080:8080"  # Admin REST API
+    depends_on:
+      rustmq-controller-1:
+        condition: service_healthy
+    networks:
+      - rustmq-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # BigQuery Subscriber (optional)
   rustmq-bigquery-subscriber:
