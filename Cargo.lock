@@ -3940,6 +3940,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "dashmap 5.5.3",
+ "fastrand",
  "futures",
  "gcp-bigquery-client",
  "google-cloud-auth",

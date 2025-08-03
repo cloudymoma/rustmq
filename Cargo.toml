@@ -84,6 +84,7 @@ criterion = "0.5"
 tempfile = "3.15"
 pretty_assertions = "1.4"
 rand = "0.8"
+fastrand = "2.0"
 
 [features]
 default = ["wasm"]
@@ -120,4 +121,8 @@ codegen-units = 1
 
 [[bench]]
 name = "replication_manager_benchmarks"
+harness = false
+
+[[bench]]
+name = "wal_performance_bench"
 harness = false

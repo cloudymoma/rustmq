@@ -6,7 +6,7 @@ pub mod tiered;
 pub mod buffer_pool;
 
 pub use traits::*;
-pub use wal::*;
+pub use wal::{DirectIOWal, OptimizedDirectIOWal, WalFactory, PlatformCapabilities};
 pub use cache::*;
 pub use object_storage::*;
 pub use tiered::*;
