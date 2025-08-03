@@ -66,6 +66,7 @@ RustMQ is a cloud-native distributed message queue system with a **storage-compu
      - Time-based upload triggers (default: 10 minutes)
      - Runtime configuration updates
      - Background flush tasks when fsync is disabled
+     - Thread-safe segment tracking with race condition protection using atomic coordination
    - **ObjectStorage**: Abstracts cloud storage backends (S3/GCS/Azure/Local)
    - **CacheManager**: Manages separate write (hot) and read (cold) caches for workload isolation
    - **BufferPool**: Aligned buffer management for zero-copy operations
@@ -236,7 +237,7 @@ Key configuration sections:
 
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (113 tests currently passing, including 11 new admin CLI tests). Tests use:
+The codebase has comprehensive unit tests (104 tests currently passing, including race condition tests). Tests use:
 - `tempfile` for temporary directories in storage tests
 - Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
@@ -246,7 +247,7 @@ The codebase has comprehensive unit tests (113 tests currently passing, includin
 - Replication lag calculation tests verifying accurate follower offset tracking
 
 ### Test Coverage Breakdown
-- **Storage Layer**: 15 tests covering WAL, object storage, cache, and tiered storage
+- **Storage Layer**: 17 tests covering WAL, object storage, cache, and tiered storage (including race condition tests)
 - **Replication System**: 12 tests for follower logic, manager operations, and epoch validation
 - **Network Layer**: 8 tests for QUIC server, gRPC services, and connection management
 - **Controller Service**: 16 tests for Raft consensus, leadership, and decommission operations
@@ -278,6 +279,7 @@ Centralized error handling through `src/error.rs` with:
 - **Async throughout**: All I/O operations are async to prevent blocking
 - **Buffer pooling**: Reuses aligned buffers to reduce allocation overhead
 - **Direct I/O**: Optional direct I/O bypass of OS page cache for WAL
+- **Thread-safe coordination**: Minimal-scope mutex protection for segment tracking operations to prevent race conditions while maintaining high-performance append throughput
 
 ## Module Dependencies
 
@@ -380,7 +382,8 @@ RustMQ provides production-ready Kubernetes manifests including:
 
 ### 🎯 Recent Achievements
 - **Complete Admin CLI Implementation**: Production-ready command-line interface with comprehensive topic management and cluster health monitoring
-- **Comprehensive Test Coverage**: Added 11 new tests for admin CLI functionality, bringing total to 113 passing tests
+- **Comprehensive Test Coverage**: 104 passing unit tests across all modules including race condition tests
+- **Thread-Safe Upload Monitor Fix**: Resolved critical race condition in DirectIOWal upload monitoring using atomic coordination with minimal performance impact
 - **Full Topic Lifecycle Management**: Create, list, describe, and delete topics with rich configuration options
 - **Advanced Cluster Health Assessment**: Real-time monitoring of brokers, topics, and partition assignments
 - **Production-Ready Error Handling**: Robust error management with user-friendly feedback and troubleshooting guidance

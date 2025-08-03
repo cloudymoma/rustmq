@@ -1,7 +1,7 @@
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::time::{Duration, Instant};
@@ -49,6 +49,8 @@ pub struct DirectIOWal {
     current_segment_start_offset: Arc<AtomicU64>,
     upload_callbacks: Arc<RwLock<Vec<Box<dyn Fn(u64, u64) + Send + Sync>>>>,
     upload_in_progress: Arc<AtomicBool>,
+    // Mutex to protect segment tracking operations against race conditions
+    segment_tracking_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +99,7 @@ impl DirectIOWal {
             current_segment_start_offset: Arc::new(AtomicU64::new(0)),
             upload_callbacks: Arc::new(RwLock::new(Vec::new())),
             upload_in_progress: Arc::new(AtomicBool::new(false)),
+            segment_tracking_lock: Arc::new(Mutex::new(())),
         };
 
         wal.recover().await?;
@@ -194,6 +197,7 @@ impl DirectIOWal {
         let upload_callbacks = self.upload_callbacks.clone();
         let current_offset = self.current_offset.clone();
         let upload_in_progress = self.upload_in_progress.clone();
+        let segment_tracking_lock = self.segment_tracking_lock.clone();
 
         tokio::spawn(async move {
             let mut check_interval = tokio::time::interval(Duration::from_secs(1)); // Check more frequently for testing
@@ -210,19 +214,26 @@ impl DirectIOWal {
                 if should_upload && segment_size > 0 {
                     // Use compare-and-swap to prevent race conditions between multiple upload triggers
                     if upload_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                        let end_offset = current_offset.load(Ordering::SeqCst);
-                        let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
+                        // Atomically read offsets and reset segment tracking to prevent race conditions
+                        // with concurrent append operations
+                        let (start_offset, end_offset) = {
+                            let _guard = segment_tracking_lock.lock().unwrap();
+                            let end_offset = current_offset.load(Ordering::SeqCst);
+                            let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
+                            
+                            // Reset segment tracking for next segment while holding the lock
+                            current_segment_size.store(0, Ordering::SeqCst);
+                            current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
+                            *current_segment_start_time.write() = Instant::now();
+                            
+                            (start_offset, end_offset)
+                        };
                         
-                        // Trigger upload callbacks
+                        // Trigger upload callbacks outside the lock to avoid blocking append operations
                         let callbacks = upload_callbacks.read();
                         for callback in callbacks.iter() {
                             callback(start_offset, end_offset);
                         }
-                        
-                        // Reset segment tracking for next segment
-                        current_segment_size.store(0, Ordering::SeqCst);
-                        current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
-                        *current_segment_start_time.write() = Instant::now();
                         
                         // Mark upload as complete
                         upload_in_progress.store(false, Ordering::SeqCst);
@@ -304,8 +315,13 @@ impl DirectIOWal {
         }
 
         self.current_offset.store(logical_offset, Ordering::SeqCst);
-        // After recovery, the current segment starts from the recovered offset
-        self.current_segment_start_offset.store(logical_offset, Ordering::SeqCst);
+        
+        // After recovery, reset segment tracking with lock to prevent race conditions
+        {
+            let _guard = self.segment_tracking_lock.lock().unwrap();
+            self.current_segment_start_offset.store(logical_offset, Ordering::SeqCst);
+            self.current_segment_size.store(0, Ordering::SeqCst);
+        }
 
         Ok(())
     }
@@ -378,8 +394,11 @@ impl WriteAheadLog for DirectIOWal {
 
         self.segments.write().push(segment_meta);
         
-        // Update current segment size for upload monitoring
-        self.current_segment_size.fetch_add(write_buffer.len() as u64, Ordering::SeqCst);
+        // Update current segment size for upload monitoring (with lock to prevent race conditions)
+        {
+            let _guard = self.segment_tracking_lock.lock().unwrap();
+            self.current_segment_size.fetch_add(write_buffer.len() as u64, Ordering::SeqCst);
+        }
 
         Ok(logical_offset)
     }
@@ -515,8 +534,14 @@ impl WriteAheadLog for DirectIOWal {
         let mut segments = self.segments.write();
         segments.retain(|seg| seg.start_offset < offset);
         self.current_offset.store(offset, Ordering::SeqCst);
-        // After truncation, the current segment starts from the truncated offset
-        self.current_segment_start_offset.store(offset, Ordering::SeqCst);
+        
+        // After truncation, reset segment tracking with lock to prevent race conditions
+        {
+            let _guard = self.segment_tracking_lock.lock().unwrap();
+            self.current_segment_start_offset.store(offset, Ordering::SeqCst);
+            self.current_segment_size.store(0, Ordering::SeqCst);
+        }
+        
         Ok(())
     }
 
@@ -1024,5 +1049,209 @@ mod tests {
         assert_eq!(partial_records.len(), 2); // Should get offsets 8 and 9
         assert_eq!(partial_records[0].offset, 8);
         assert_eq!(partial_records[1].offset, 9);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_append_upload_race_condition_fix() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 1024, // Small segment to trigger uploads quickly
+            buffer_size: 4096,
+            upload_interval_ms: 100, // Short interval for frequent uploads
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 20));
+        let wal = Arc::new(DirectIOWal::new(config, buffer_pool).await.unwrap());
+
+        // Track all upload callbacks to verify no data is lost
+        let upload_calls = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
+        let upload_calls_clone = upload_calls.clone();
+        
+        wal.register_upload_callback(move |start_offset, end_offset| {
+            let mut calls = upload_calls_clone.lock().unwrap();
+            calls.push((start_offset, end_offset));
+            println!("Upload callback: {} -> {}", start_offset, end_offset);
+        });
+
+        // Track all appended offsets to verify completeness
+        let appended_offsets = Arc::new(Mutex::new(Vec::<u64>::new()));
+        
+        // Start many concurrent append tasks
+        let mut append_tasks = Vec::new();
+        for thread_id in 0..10 {
+            let wal_clone = wal.clone();
+            let appended_offsets_clone = appended_offsets.clone();
+            
+            let task = tokio::spawn(async move {
+                for i in 0..20 {
+                    let record = WalRecord {
+                        topic_partition: TopicPartition {
+                            topic: format!("test-topic-{}", thread_id),
+                            partition: 0,
+                        },
+                        offset: i,
+                        record: Record {
+                            key: Some(format!("thread-{}-key-{}", thread_id, i).into_bytes()),
+                            value: vec![0u8; 150], // Large enough to trigger size-based uploads
+                            headers: vec![],
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        },
+                        crc32: 0,
+                    };
+                    
+                    let actual_offset = wal_clone.append(record).await.unwrap();
+                    appended_offsets_clone.lock().unwrap().push(actual_offset);
+                    
+                    // Small delay to increase chances of race conditions
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                }
+            });
+            append_tasks.push(task);
+        }
+
+        // Wait for all append tasks to complete
+        for task in append_tasks {
+            task.await.unwrap();
+        }
+
+        // Wait for final upload callbacks to be triggered
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Verify data integrity
+        let all_appended_offsets = {
+            let mut offsets = appended_offsets.lock().unwrap().clone();
+            offsets.sort();
+            offsets
+        };
+        
+        let upload_calls = upload_calls.lock().unwrap().clone();
+        
+        // Should have appended 200 records (10 threads * 20 records each)
+        assert_eq!(all_appended_offsets.len(), 200);
+        
+        // Verify offsets are sequential (0, 1, 2, ..., 199)
+        for (i, &offset) in all_appended_offsets.iter().enumerate() {
+            assert_eq!(offset, i as u64, "Offset {} should be {}", offset, i);
+        }
+        
+        // Verify upload callbacks cover all data without gaps or overlaps
+        if !upload_calls.is_empty() {
+            let mut covered_ranges = upload_calls.clone();
+            covered_ranges.sort_by_key(|&(start, _)| start);
+            
+            // Check for gaps or overlaps
+            for i in 1..covered_ranges.len() {
+                let (_, prev_end) = covered_ranges[i - 1];
+                let (current_start, _) = covered_ranges[i];
+                
+                // Next segment should start exactly where the previous ended
+                assert_eq!(prev_end, current_start, 
+                    "Gap or overlap detected between upload segments: previous ended at {}, next started at {}", 
+                    prev_end, current_start);
+            }
+            
+            // First segment should start at 0
+            assert_eq!(covered_ranges[0].0, 0, "First upload segment should start at offset 0");
+        }
+        
+        // Final WAL offset should be 200
+        assert_eq!(wal.get_end_offset().await.unwrap(), 200);
+        
+        println!("Concurrent test completed successfully:");
+        println!("  - Total appends: {}", all_appended_offsets.len());
+        println!("  - Upload callbacks: {}", upload_calls.len());
+        println!("  - Final WAL offset: {}", wal.get_end_offset().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_segment_tracking_consistency_under_stress() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = WalConfig {
+            path: temp_dir.path().to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 512, // Very small segments for frequent uploads
+            buffer_size: 4096,
+            upload_interval_ms: 50, // Very frequent uploads
+            flush_interval_ms: 1000,
+        };
+
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 50));
+        let wal = Arc::new(DirectIOWal::new(config, buffer_pool).await.unwrap());
+
+        // Track segment boundaries reported by upload callbacks
+        let segment_boundaries = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
+        let segment_boundaries_clone = segment_boundaries.clone();
+        
+        wal.register_upload_callback(move |start_offset, end_offset| {
+            segment_boundaries_clone.lock().unwrap().push((start_offset, end_offset));
+        });
+
+        // Stress test with rapid concurrent appends
+        let mut tasks = Vec::new();
+        for _ in 0..5 {
+            let wal_clone = wal.clone();
+            let task = tokio::spawn(async move {
+                for i in 0..50 {
+                    let record = WalRecord {
+                        topic_partition: TopicPartition {
+                            topic: "stress-test".to_string(),
+                            partition: 0,
+                        },
+                        offset: i,
+                        record: Record {
+                            key: Some(format!("stress-key-{}", i).into_bytes()),
+                            value: vec![0u8; 100], // Large enough to trigger uploads
+                            headers: vec![],
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        },
+                        crc32: 0,
+                    };
+                    
+                    wal_clone.append(record).await.unwrap();
+                }
+            });
+            tasks.push(task);
+        }
+
+        // Wait for all tasks to complete
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        // Wait for final upload callbacks
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Verify segment boundary consistency
+        let boundaries = segment_boundaries.lock().unwrap().clone();
+        
+        if boundaries.len() > 1 {
+            let mut sorted_boundaries = boundaries.clone();
+            sorted_boundaries.sort_by_key(|&(start, _)| start);
+            
+            // Verify no gaps between segments
+            for i in 1..sorted_boundaries.len() {
+                let (_, prev_end) = sorted_boundaries[i - 1];
+                let (current_start, _) = sorted_boundaries[i];
+                
+                assert_eq!(prev_end, current_start, 
+                    "Segment boundary inconsistency: gap between {} and {}", 
+                    prev_end, current_start);
+            }
+            
+            // Verify segments don't overlap
+            for &(start, end) in &sorted_boundaries {
+                assert!(start < end, "Invalid segment: start {} >= end {}", start, end);
+            }
+        }
+        
+        // Final check: WAL should have 250 records (5 tasks * 50 records each)
+        assert_eq!(wal.get_end_offset().await.unwrap(), 250);
+        
+        println!("Stress test completed successfully with {} segment boundaries", boundaries.len());
     }
 }
