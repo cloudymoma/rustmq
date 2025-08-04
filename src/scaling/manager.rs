@@ -139,7 +139,7 @@ impl ScalingManagerImpl {
             let progress = 0.25 * (i + 1) as f64 / broker_ids.len() as f64;
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = progress;
                 }
             }
@@ -159,7 +159,7 @@ impl ScalingManagerImpl {
             let progress = 0.25 + 0.25 * (i + 1) as f64 / broker_ids.len() as f64;
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = progress;
                 }
             }
@@ -172,7 +172,7 @@ impl ScalingManagerImpl {
         {
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 0.75;
                 }
             }
@@ -184,7 +184,7 @@ impl ScalingManagerImpl {
         {
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 1.0;
                 }
             }
@@ -269,7 +269,7 @@ impl ScalingManagerImpl {
 
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 0.2;
                 }
             }
@@ -282,7 +282,7 @@ impl ScalingManagerImpl {
         {
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 0.4;
                 }
             }
@@ -294,7 +294,7 @@ impl ScalingManagerImpl {
         {
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 0.8;
                 }
             }
@@ -309,7 +309,7 @@ impl ScalingManagerImpl {
 
             let mut status_map = operation_status.write().await;
             if let Some(status) = status_map.get_mut(&operation_id) {
-                if let ScalingStatus::InProgress { started_at: _, progress: ref mut p } = status {
+                if let ScalingStatus::InProgress { started_at: _, progress: p } = status {
                     *p = 1.0;
                 }
             }

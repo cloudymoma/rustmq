@@ -253,7 +253,7 @@ Key configuration sections:
 
 ## Testing Strategy
 
-The codebase has comprehensive unit tests (114 tests currently passing, including race condition tests and high-watermark optimization tests). Tests use:
+The codebase has comprehensive unit tests (122 tests currently passing, including race condition tests and high-watermark optimization tests). Tests use:
 - `tempfile` for temporary directories in storage tests
 - Mock implementations for external dependencies (Kubernetes API, broker operations)
 - Property-based testing patterns for complex interactions
@@ -394,7 +394,7 @@ RustMQ provides production-ready Kubernetes manifests including:
 - **Total Source Files**: 47 Rust files
 - **Binary Targets**: 5 executables (broker, controller, admin, admin-server, bigquery-subscriber)
 - **Configuration Files**: 4 TOML files with service-specific port isolation
-- **Test Coverage**: 113 passing unit tests across all modules (including 11 admin CLI tests)
+- **Test Coverage**: 122 passing unit tests across all modules (including 11 admin CLI tests)
 - **Implementation Completion**: 470+ lines of production-ready controller code
 - **Port Configuration**: Proper service separation (broker: 9092/9093, controller: 9094/9095/9642)
 - **Documentation**: Comprehensive README, architecture docs, and deployment guides
@@ -402,7 +402,7 @@ RustMQ provides production-ready Kubernetes manifests including:
 
 ### 🎯 Recent Achievements
 - **Complete Admin CLI Implementation**: Production-ready command-line interface with comprehensive topic management and cluster health monitoring
-- **Comprehensive Test Coverage**: 104 passing unit tests across all modules including race condition tests
+- **Comprehensive Test Coverage**: 122 passing unit tests across all modules including race condition tests
 - **Thread-Safe Upload Monitor Fix**: Resolved critical race condition in DirectIOWal upload monitoring using atomic coordination with minimal performance impact
 - **Full Topic Lifecycle Management**: Create, list, describe, and delete topics with rich configuration options
 - **Advanced Cluster Health Assessment**: Real-time monitoring of brokers, topics, and partition assignments
@@ -411,3 +411,8 @@ RustMQ provides production-ready Kubernetes manifests including:
 - **Port Conflict Resolution**: Proper service separation with dedicated configuration files
 - **Service Integration**: Seamless broker-controller coordination with proper RPC interfaces
 - **Runtime Validation**: All broker, controller, and admin binaries start correctly with proper functionality
+- **Rust Edition 2024 Upgrade**: Successfully upgraded from edition 2021 to 2024 with improved match ergonomics
+  - Fixed match pattern breaking changes in scaling manager
+  - All 122 tests pass with new edition
+  - All binaries build successfully
+  - Only minor syntax adjustments needed (removed unnecessary `ref mut` patterns)

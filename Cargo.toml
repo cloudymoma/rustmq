@@ -1,8 +1,9 @@
 [package]
 name = "rustmq"
-version = "0.1.0"
-edition = "2021"
-authors = ["RustMQ Team"]
+version = "0.9.1"
+edition = "2024"
+rust-version = "1.88"
+authors = ["bindiego"]
 description = "Cloud-native distributed message queue system"
 license = "Apache-2.0"
 repository = "https://github.com/rustmq/rustmq"
