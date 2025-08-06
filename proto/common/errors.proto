@@ -1,0 +1,314 @@
+// Error definitions and status codes for RustMQ
+// This file centralizes all error handling and status reporting
+// Field numbers 1-99 are reserved for core error types
+// Field numbers 100-199 are reserved for component-specific errors
+
+syntax = "proto3";
+
+package rustmq.common;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/common";
+
+// Standard error response envelope
+message ErrorResponse {
+  ErrorCode code = 1;                    // Standardized error code
+  string message = 2;                    // Human-readable error message
+  string details = 3;                    // Detailed error information
+  bool retryable = 4;                    // Whether the operation can be retried
+  string trace_id = 5;                   // Trace ID for debugging
+  google.protobuf.Timestamp timestamp = 6; // Error occurrence timestamp
+  string component = 7;                  // Component that generated the error
+  repeated ErrorContext context = 8;     // Additional error context
+  
+  // Recovery suggestions
+  string recovery_suggestion = 9;        // Suggested recovery action
+  uint32 retry_after_ms = 10;           // Suggested retry delay
+  
+  // Reserved for future error fields
+  reserved 11 to 20;
+}
+
+// Error context for debugging and troubleshooting
+message ErrorContext {
+  string key = 1;                        // Context key
+  string value = 2;                      // Context value
+  string description = 3;                // Context description
+}
+
+// Comprehensive error code enumeration
+enum ErrorCode {
+  // Generic success and unknown errors (0-99)
+  ERROR_CODE_NONE = 0;                    // No error - success
+  ERROR_CODE_UNKNOWN = 1;                 // Unknown/unexpected error
+  ERROR_CODE_INTERNAL_ERROR = 2;          // Internal system error
+  ERROR_CODE_NOT_IMPLEMENTED = 3;         // Feature not implemented
+  ERROR_CODE_DEPRECATED = 4;              // Deprecated API used
+  
+  // Request and validation errors (100-199)
+  ERROR_CODE_INVALID_REQUEST = 100;       // Invalid request format
+  ERROR_CODE_INVALID_PARAMETER = 101;     // Invalid parameter value
+  ERROR_CODE_MISSING_PARAMETER = 102;     // Required parameter missing
+  ERROR_CODE_PARAMETER_OUT_OF_RANGE = 103; // Parameter value out of range
+  ERROR_CODE_INVALID_MESSAGE_FORMAT = 104; // Invalid message format
+  ERROR_CODE_MESSAGE_TOO_LARGE = 105;     // Message exceeds size limit
+  ERROR_CODE_BATCH_TOO_LARGE = 106;       // Batch exceeds size limit
+  ERROR_CODE_INVALID_ENCODING = 107;      // Invalid data encoding
+  ERROR_CODE_CHECKSUM_MISMATCH = 108;     // Data checksum validation failed
+  ERROR_CODE_PROTOCOL_ERROR = 109;        // Protocol violation
+  
+  // Authentication and authorization errors (200-299)
+  ERROR_CODE_AUTHENTICATION_FAILED = 200; // Authentication failed
+  ERROR_CODE_AUTHORIZATION_FAILED = 201;  // Authorization failed
+  ERROR_CODE_ACCESS_DENIED = 202;         // Access denied
+  ERROR_CODE_INVALID_CREDENTIALS = 203;   // Invalid credentials
+  ERROR_CODE_CREDENTIALS_EXPIRED = 204;   // Credentials expired
+  ERROR_CODE_TOKEN_INVALID = 205;         // Invalid token
+  ERROR_CODE_TOKEN_EXPIRED = 206;         // Token expired
+  ERROR_CODE_PERMISSION_DENIED = 207;     // Insufficient permissions
+  ERROR_CODE_QUOTA_EXCEEDED = 208;        // Quota limit exceeded
+  ERROR_CODE_RATE_LIMITED = 209;          // Rate limit exceeded
+  
+  // Resource errors (300-399)
+  ERROR_CODE_RESOURCE_NOT_FOUND = 300;    // Resource not found
+  ERROR_CODE_RESOURCE_ALREADY_EXISTS = 301; // Resource already exists
+  ERROR_CODE_RESOURCE_BUSY = 302;         // Resource is busy
+  ERROR_CODE_RESOURCE_EXHAUSTED = 303;    // Resource exhausted
+  ERROR_CODE_RESOURCE_LOCKED = 304;       // Resource is locked
+  ERROR_CODE_RESOURCE_CORRUPTED = 305;    // Resource is corrupted
+  ERROR_CODE_RESOURCE_UNAVAILABLE = 306;  // Resource temporarily unavailable
+  ERROR_CODE_INSUFFICIENT_STORAGE = 307;  // Insufficient storage space
+  ERROR_CODE_DISK_FULL = 308;             // Disk full
+  ERROR_CODE_MEMORY_EXHAUSTED = 309;      // Out of memory
+  
+  // Topic and partition errors (400-499)
+  ERROR_CODE_TOPIC_NOT_FOUND = 400;       // Topic does not exist
+  ERROR_CODE_TOPIC_ALREADY_EXISTS = 401;  // Topic already exists
+  ERROR_CODE_INVALID_TOPIC_NAME = 402;    // Invalid topic name
+  ERROR_CODE_PARTITION_NOT_FOUND = 403;   // Partition does not exist
+  ERROR_CODE_INVALID_PARTITION_ID = 404;  // Invalid partition ID
+  ERROR_CODE_INVALID_PARTITION_COUNT = 405; // Invalid partition count
+  ERROR_CODE_INVALID_REPLICATION_FACTOR = 406; // Invalid replication factor
+  ERROR_CODE_PARTITION_OFFLINE = 407;     // Partition is offline
+  ERROR_CODE_PARTITION_REASSIGNMENT_IN_PROGRESS = 408; // Partition reassignment active
+  ERROR_CODE_TOPIC_DELETION_IN_PROGRESS = 409; // Topic deletion in progress
+  
+  // Leadership and consensus errors (500-599)
+  ERROR_CODE_NOT_LEADER = 500;            // This broker is not the leader
+  ERROR_CODE_LEADER_NOT_AVAILABLE = 501;  // Leader is not available
+  ERROR_CODE_NO_LEADER = 502;             // No leader elected
+  ERROR_CODE_STALE_LEADER_EPOCH = 503;    // Leader epoch is stale
+  ERROR_CODE_FENCED_LEADER_EPOCH = 504;   // Leader epoch is fenced
+  ERROR_CODE_UNKNOWN_LEADER_EPOCH = 505;  // Unknown leader epoch
+  ERROR_CODE_ELECTION_IN_PROGRESS = 506;  // Leader election in progress
+  ERROR_CODE_SPLIT_BRAIN = 507;           // Split brain detected
+  ERROR_CODE_QUORUM_LOSS = 508;           // Quorum lost
+  ERROR_CODE_CONSENSUS_TIMEOUT = 509;     // Consensus operation timeout
+  
+  // Replication errors (600-699)
+  ERROR_CODE_REPLICATION_FAILED = 600;    // Replication failed
+  ERROR_CODE_REPLICA_NOT_AVAILABLE = 601; // Replica not available
+  ERROR_CODE_NOT_ENOUGH_REPLICAS = 602;   // Not enough replicas
+  ERROR_CODE_NOT_ENOUGH_REPLICAS_AFTER_APPEND = 603; // Not enough replicas after append
+  ERROR_CODE_REPLICA_LAG_TOO_HIGH = 604;  // Replica lag too high
+  ERROR_CODE_ISR_SHRUNK = 605;            // In-sync replica set shrunk
+  ERROR_CODE_OUT_OF_SYNC_REPLICA = 606;   // Replica is out of sync
+  ERROR_CODE_REPLICATION_TIMEOUT = 607;   // Replication timeout
+  ERROR_CODE_FOLLOWER_FETCH_FAILED = 608; // Follower fetch failed
+  ERROR_CODE_LEADER_HWM_STALLED = 609;    // Leader high watermark stalled
+  
+  // Offset and data errors (700-799)
+  ERROR_CODE_OFFSET_OUT_OF_RANGE = 700;   // Offset out of range
+  ERROR_CODE_INVALID_OFFSET = 701;        // Invalid offset value
+  ERROR_CODE_OFFSET_NOT_AVAILABLE = 702;  // Offset not available
+  ERROR_CODE_LOG_TRUNCATED = 703;         // Log has been truncated
+  ERROR_CODE_LOG_COMPACTED = 704;         // Log has been compacted
+  ERROR_CODE_RECORD_TOO_LARGE = 705;      // Record too large
+  ERROR_CODE_RECORD_CORRUPTED = 706;      // Record is corrupted
+  ERROR_CODE_INVALID_RECORD_FORMAT = 707; // Invalid record format
+  ERROR_CODE_COMPRESSION_ERROR = 708;     // Compression/decompression error
+  ERROR_CODE_SERIALIZATION_ERROR = 709;   // Serialization/deserialization error
+  
+  // Network and connectivity errors (800-899)
+  ERROR_CODE_NETWORK_ERROR = 800;         // Network communication error
+  ERROR_CODE_CONNECTION_FAILED = 801;     // Connection failed
+  ERROR_CODE_CONNECTION_TIMEOUT = 802;    // Connection timeout
+  ERROR_CODE_CONNECTION_REFUSED = 803;    // Connection refused
+  ERROR_CODE_CONNECTION_LOST = 804;       // Connection lost
+  ERROR_CODE_DNS_RESOLUTION_FAILED = 805; // DNS resolution failed
+  ERROR_CODE_TLS_ERROR = 806;             // TLS/SSL error
+  ERROR_CODE_CERTIFICATE_ERROR = 807;     // Certificate error
+  ERROR_CODE_HANDSHAKE_FAILED = 808;      // Protocol handshake failed
+  ERROR_CODE_PROTOCOL_VERSION_MISMATCH = 809; // Protocol version mismatch
+  
+  // Broker and cluster errors (900-999)
+  ERROR_CODE_BROKER_NOT_AVAILABLE = 900;  // Broker not available
+  ERROR_CODE_BROKER_NOT_FOUND = 901;      // Broker not found
+  ERROR_CODE_BROKER_OFFLINE = 902;        // Broker is offline
+  ERROR_CODE_BROKER_OVERLOADED = 903;     // Broker is overloaded
+  ERROR_CODE_CLUSTER_UNAVAILABLE = 904;   // Cluster unavailable
+  ERROR_CODE_CONTROLLER_NOT_AVAILABLE = 905; // Controller not available
+  ERROR_CODE_NOT_CONTROLLER = 906;        // This broker is not controller
+  ERROR_CODE_STALE_CONTROLLER_EPOCH = 907; // Controller epoch is stale
+  ERROR_CODE_CLUSTER_CONFIGURATION_ERROR = 908; // Cluster configuration error
+  ERROR_CODE_METADATA_UPDATE_FAILED = 909; // Metadata update failed
+  
+  // Storage and persistence errors (1000-1099)
+  ERROR_CODE_STORAGE_ERROR = 1000;        // Storage system error
+  ERROR_CODE_WAL_ERROR = 1001;            // Write-ahead log error
+  ERROR_CODE_WAL_CORRUPTION = 1002;       // WAL corruption detected
+  ERROR_CODE_WAL_SEGMENT_NOT_FOUND = 1003; // WAL segment not found
+  ERROR_CODE_OBJECT_STORAGE_ERROR = 1004; // Object storage error
+  ERROR_CODE_OBJECT_NOT_FOUND = 1005;     // Object not found in storage
+  ERROR_CODE_CACHE_ERROR = 1006;          // Cache operation error
+  ERROR_CODE_CACHE_MISS = 1007;           // Cache miss
+  ERROR_CODE_CACHE_FULL = 1008;           // Cache is full
+  ERROR_CODE_FLUSH_FAILED = 1009;         // Flush operation failed
+  ERROR_CODE_SYNC_FAILED = 1010;          // Sync operation failed
+  ERROR_CODE_BACKUP_FAILED = 1011;        // Backup operation failed
+  ERROR_CODE_RESTORE_FAILED = 1012;       // Restore operation failed
+  ERROR_CODE_COMPACTION_FAILED = 1013;    // Compaction failed
+  ERROR_CODE_INDEX_CORRUPTION = 1014;     // Index corruption detected
+  
+  // Configuration and management errors (1100-1199)
+  ERROR_CODE_INVALID_CONFIGURATION = 1100; // Invalid configuration
+  ERROR_CODE_CONFIGURATION_ERROR = 1101;  // Configuration error
+  ERROR_CODE_CONFIGURATION_UPDATE_FAILED = 1102; // Configuration update failed
+  ERROR_CODE_SCHEMA_VALIDATION_FAILED = 1103; // Schema validation failed
+  ERROR_CODE_VERSION_MISMATCH = 1104;     // Version mismatch
+  ERROR_CODE_UPGRADE_IN_PROGRESS = 1105;  // Upgrade in progress
+  ERROR_CODE_DOWNGRADE_NOT_SUPPORTED = 1106; // Downgrade not supported
+  ERROR_CODE_FEATURE_NOT_AVAILABLE = 1107; // Feature not available
+  ERROR_CODE_LICENSE_ERROR = 1108;        // License error
+  ERROR_CODE_MAINTENANCE_MODE = 1109;     // System in maintenance mode
+  
+  // ETL and processing errors (1200-1299)
+  ERROR_CODE_ETL_ERROR = 1200;            // ETL processing error
+  ERROR_CODE_ETL_MODULE_NOT_FOUND = 1201; // ETL module not found
+  ERROR_CODE_ETL_COMPILATION_FAILED = 1202; // ETL compilation failed
+  ERROR_CODE_ETL_EXECUTION_FAILED = 1203; // ETL execution failed
+  ERROR_CODE_ETL_TIMEOUT = 1204;          // ETL processing timeout
+  ERROR_CODE_WASM_ERROR = 1205;           // WebAssembly error
+  ERROR_CODE_SANDBOX_ERROR = 1206;        // Sandbox execution error
+  ERROR_CODE_RESOURCE_LIMIT_EXCEEDED = 1207; // Resource limit exceeded
+  ERROR_CODE_MEMORY_LIMIT_EXCEEDED = 1208; // Memory limit exceeded
+  ERROR_CODE_CPU_LIMIT_EXCEEDED = 1209;   // CPU limit exceeded
+  ERROR_CODE_TIME_LIMIT_EXCEEDED = 1210;  // Time limit exceeded
+  
+  // Scaling and operations errors (1300-1399)
+  ERROR_CODE_SCALING_ERROR = 1300;        // Scaling operation error
+  ERROR_CODE_REBALANCING_IN_PROGRESS = 1301; // Rebalancing in progress
+  ERROR_CODE_REBALANCING_FAILED = 1302;   // Rebalancing failed
+  ERROR_CODE_SCALE_OUT_FAILED = 1303;     // Scale out failed
+  ERROR_CODE_SCALE_IN_FAILED = 1304;      // Scale in failed
+  ERROR_CODE_NODE_ADDITION_FAILED = 1305; // Node addition failed
+  ERROR_CODE_NODE_REMOVAL_FAILED = 1306;  // Node removal failed
+  ERROR_CODE_ROLLING_UPGRADE_FAILED = 1307; // Rolling upgrade failed
+  ERROR_CODE_DEPLOYMENT_FAILED = 1308;    // Deployment failed
+  ERROR_CODE_KUBERNETES_ERROR = 1309;     // Kubernetes operation error
+  ERROR_CODE_HEALTH_CHECK_FAILED = 1310;  // Health check failed
+  
+  // Client and SDK errors (1400-1499)
+  ERROR_CODE_CLIENT_ERROR = 1400;         // Client-side error
+  ERROR_CODE_INVALID_CLIENT_ID = 1401;    // Invalid client ID
+  ERROR_CODE_CLIENT_DISCONNECTED = 1402;  // Client disconnected
+  ERROR_CODE_CLIENT_TIMEOUT = 1403;       // Client request timeout
+  ERROR_CODE_CLIENT_QUOTA_EXCEEDED = 1404; // Client quota exceeded
+  ERROR_CODE_SESSION_EXPIRED = 1405;      // Client session expired
+  ERROR_CODE_INVALID_SESSION = 1406;      // Invalid session
+  ERROR_CODE_PRODUCER_FENCED = 1407;      // Producer is fenced
+  ERROR_CODE_IDEMPOTENCE_ERROR = 1408;    // Idempotence error
+  ERROR_CODE_TRANSACTION_ERROR = 1409;    // Transaction error
+  ERROR_CODE_CONSUMER_GROUP_ERROR = 1410; // Consumer group error
+  
+  // Admin and management API errors (1500-1599)
+  ERROR_CODE_ADMIN_API_ERROR = 1500;      // Admin API error
+  ERROR_CODE_INVALID_ADMIN_OPERATION = 1501; // Invalid admin operation
+  ERROR_CODE_ADMIN_PERMISSION_DENIED = 1502; // Admin permission denied
+  ERROR_CODE_TOPIC_CREATION_FAILED = 1503; // Topic creation failed
+  ERROR_CODE_TOPIC_DELETION_FAILED = 1504; // Topic deletion failed
+  ERROR_CODE_PARTITION_CREATION_FAILED = 1505; // Partition creation failed
+  ERROR_CODE_ACL_CREATION_FAILED = 1506;  // ACL creation failed
+  ERROR_CODE_USER_CREATION_FAILED = 1507; // User creation failed
+  ERROR_CODE_QUOTA_UPDATE_FAILED = 1508;  // Quota update failed
+  ERROR_CODE_CONFIG_UPDATE_FAILED = 1509; // Configuration update failed
+  ERROR_CODE_METRICS_UNAVAILABLE = 1510;  // Metrics unavailable
+  
+  // Reserved ranges for future expansion
+  // 1600-1699: Security and encryption errors
+  // 1700-1799: Monitoring and observability errors
+  // 1800-1899: Cloud provider specific errors
+  // 1900-1999: Reserved for custom extensions
+}
+
+// Error severity levels
+enum ErrorSeverity {
+  ERROR_SEVERITY_UNKNOWN = 0;
+  ERROR_SEVERITY_INFO = 1;              // Informational
+  ERROR_SEVERITY_WARNING = 2;           // Warning - operation may continue
+  ERROR_SEVERITY_ERROR = 3;             // Error - operation failed
+  ERROR_SEVERITY_CRITICAL = 4;          // Critical - system integrity at risk
+  ERROR_SEVERITY_FATAL = 5;             // Fatal - immediate attention required
+}
+
+// Error category for classification
+enum ErrorCategory {
+  ERROR_CATEGORY_UNKNOWN = 0;
+  ERROR_CATEGORY_TEMPORARY = 1;         // Temporary/transient error
+  ERROR_CATEGORY_PERMANENT = 2;         // Permanent error
+  ERROR_CATEGORY_CONFIGURATION = 3;     // Configuration-related error
+  ERROR_CATEGORY_NETWORK = 4;           // Network-related error
+  ERROR_CATEGORY_STORAGE = 5;           // Storage-related error
+  ERROR_CATEGORY_CONSENSUS = 6;         // Consensus-related error
+  ERROR_CATEGORY_CLIENT = 7;            // Client-related error
+  ERROR_CATEGORY_SECURITY = 8;          // Security-related error
+  ERROR_CATEGORY_RESOURCE = 9;          // Resource-related error
+  ERROR_CATEGORY_OPERATIONAL = 10;      // Operational error
+}
+
+// Structured error information with metadata
+message StructuredError {
+  ErrorCode code = 1;                    // Error code
+  ErrorSeverity severity = 2;            // Error severity
+  ErrorCategory category = 3;            // Error category
+  string message = 4;                    // Error message
+  string details = 5;                    // Detailed description
+  repeated ErrorContext context = 6;     // Error context
+  google.protobuf.Timestamp timestamp = 7; // Occurrence timestamp
+  string component = 8;                  // Component that generated error
+  string operation = 9;                  // Operation that failed
+  
+  // Recovery and retry information
+  bool retryable = 10;                   // Whether operation can be retried
+  uint32 retry_after_ms = 11;           // Suggested retry delay
+  string recovery_action = 12;           // Suggested recovery action
+  
+  // Correlation and tracing
+  string trace_id = 13;                  // Distributed trace ID
+  string span_id = 14;                   // Span ID within trace
+  string correlation_id = 15;            // Request correlation ID
+  
+  // Impact assessment
+  repeated string affected_resources = 16; // Resources affected by error
+  string impact_description = 17;        // Description of impact
+  
+  // Reserved for future structured error fields
+  reserved 18 to 25;
+}
+
+
+// Warning information for non-fatal issues
+message WarningInfo {
+  string code = 1;                       // Warning code
+  string message = 2;                    // Warning message
+  string description = 3;                // Detailed description
+  google.protobuf.Timestamp timestamp = 4; // Warning timestamp
+  string component = 5;                  // Component that generated warning
+  repeated string affected_resources = 6; // Resources affected
+  string recommended_action = 7;         // Recommended action
+  uint32 severity_level = 8;             // Severity level (1-10)
+  
+  // Reserved for future warning fields
+  reserved 9 to 15;
+}

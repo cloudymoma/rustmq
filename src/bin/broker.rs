@@ -3,7 +3,7 @@ use rustmq::broker::core::{MessageBrokerCore, ProduceRecord, Producer};
 use rustmq::storage::{DirectIOWal, LocalObjectStorage, LruCache, UploadManagerImpl, AlignedBufferPool};
 use rustmq::replication::manager::{ReplicationManager, MockReplicationRpcClient};
 use rustmq::network::quic_server::{QuicServer, ProduceHandler, FetchHandler, MetadataHandler};
-use rustmq::network::grpc_server::BrokerReplicationService;
+use rustmq::network::grpc_server::BrokerReplicationServiceImpl;
 use rustmq::network::traits::NetworkHandler;
 use rustmq::types::*;
 use std::env;
@@ -228,7 +228,7 @@ async fn main() -> Result<()> {
     
     // Initialize gRPC replication service
     info!("Starting gRPC replication service on {}", config.network.rpc_listen);
-    let grpc_service = Arc::new(BrokerReplicationService::new(config.broker.id.clone()));
+    let grpc_service = Arc::new(BrokerReplicationServiceImpl::new(config.broker.id.clone()));
     
     // Start background services
     info!("Starting background services...");

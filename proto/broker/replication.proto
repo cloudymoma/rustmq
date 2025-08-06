@@ -1,0 +1,392 @@
+// Broker replication service definitions for inter-broker communication
+// This service handles leader-follower replication with epoch validation
+// Field numbers 1-99 are reserved for request/response messages
+// Field numbers 100-199 are reserved for service-specific types
+
+syntax = "proto3";
+
+package rustmq.broker;
+
+import "google/protobuf/timestamp.proto";
+import "common/types.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/broker";
+
+// Broker replication service for inter-broker communication
+// All RPCs enforce leader epoch validation to prevent stale leader attacks
+// This service implements the critical leader-follower replication protocol
+service BrokerReplicationService {
+  // Replicate data from leader to follower
+  // CRITICAL: Must validate leader epoch to prevent stale leader attacks
+  rpc ReplicateData(ReplicateDataRequest) returns (ReplicateDataResponse);
+
+  // Send heartbeat from leader to follower
+  // CRITICAL: Must validate leader epoch to prevent stale leader attacks  
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Transfer partition leadership to another broker
+  // Used for graceful leader transitions and load balancing
+  rpc TransferLeadership(TransferLeadershipRequest) returns (TransferLeadershipResponse);
+
+  // Assign new partition to this broker from controller
+  // Used during partition rebalancing and broker scaling
+  rpc AssignPartition(AssignPartitionRequest) returns (AssignPartitionResponse);
+
+  // Remove partition from this broker per controller request
+  // Used during partition rebalancing and broker decommissioning
+  rpc RemovePartition(RemovePartitionRequest) returns (RemovePartitionResponse);
+
+  // Fetch replication status for monitoring and debugging
+  rpc GetReplicationStatus(ReplicationStatusRequest) returns (ReplicationStatusResponse);
+
+  // Sync ISR (In-Sync Replicas) state between leader and controller
+  rpc SyncISR(SyncISRRequest) returns (SyncISRResponse);
+
+  // Request leader to truncate log to specific offset (used during recovery)
+  rpc TruncateLog(TruncateLogRequest) returns (TruncateLogResponse);
+}
+
+// Request to replicate data from leader to follower
+message ReplicateDataRequest {
+  uint64 leader_epoch = 1;                          // Current leader epoch (CRITICAL for safety)
+  rustmq.common.TopicPartition topic_partition = 2; // Target topic and partition
+  repeated rustmq.common.WalRecord records = 3;     // Records to replicate
+  string leader_id = 4;                             // Leader broker ID
+  uint64 leader_high_watermark = 5;                 // Leader's high watermark
+  uint64 request_id = 6;                            // Unique request ID for deduplication
+  rustmq.common.RequestMetadata metadata = 7;       // Request metadata
+  
+  // Batch information for performance optimization
+  uint64 batch_base_offset = 8;                     // Base offset for this batch
+  uint32 batch_record_count = 9;                    // Number of records in batch
+  uint64 batch_size_bytes = 10;                     // Total batch size in bytes
+  
+  // Optional compression information
+  rustmq.common.CompressionType compression = 11;   // Compression used for records
+  
+  // Reserved for future replication features
+  reserved 12 to 20;
+}
+
+// Response to replication data request
+message ReplicateDataResponse {
+  bool success = 1;                                 // Whether replication succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.FollowerState follower_state = 4;   // Current follower state
+  rustmq.common.ResponseMetadata metadata = 5;      // Response metadata
+  
+  // Replication performance metrics
+  uint64 bytes_replicated = 6;                      // Bytes successfully replicated
+  uint64 records_replicated = 7;                    // Records successfully replicated
+  uint64 replication_time_ms = 8;                   // Time taken for replication
+  
+  // Follower feedback for leader optimization
+  uint64 follower_log_end_offset = 9;               // Follower's log end offset
+  uint64 follower_high_watermark = 10;              // Follower's high watermark
+  
+  // Reserved for future response fields
+  reserved 11 to 20;
+}
+
+// Heartbeat request from leader to follower
+message HeartbeatRequest {
+  uint64 leader_epoch = 1;                          // Current leader epoch (CRITICAL for safety)
+  string leader_id = 2;                             // Leader broker ID
+  rustmq.common.TopicPartition topic_partition = 3; // Target topic and partition
+  uint64 high_watermark = 4;                        // Leader's high watermark
+  rustmq.common.RequestMetadata metadata = 5;       // Request metadata
+  
+  // Additional leader state information
+  uint64 leader_log_end_offset = 6;                 // Leader's log end offset
+  repeated string in_sync_replicas = 7;             // Current ISR members
+  uint32 heartbeat_interval_ms = 8;                 // Expected heartbeat interval
+  
+  // Performance monitoring data
+  uint64 leader_messages_per_second = 9;            // Leader throughput
+  uint64 leader_bytes_per_second = 10;              // Leader byte rate
+  
+  // Reserved for future heartbeat fields
+  reserved 11 to 20;
+}
+
+// Response to heartbeat request
+message HeartbeatResponse {
+  bool success = 1;                                 // Whether heartbeat was accepted
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.FollowerState follower_state = 4;   // Current follower state
+  rustmq.common.ResponseMetadata metadata = 5;      // Response metadata
+  
+  // Follower health and performance information
+  double follower_cpu_usage = 6;                    // CPU usage percentage
+  double follower_memory_usage = 7;                 // Memory usage percentage
+  uint64 follower_disk_usage_bytes = 8;             // Disk usage in bytes
+  uint64 follower_network_in_bytes = 9;             // Network input bytes
+  uint64 follower_network_out_bytes = 10;           // Network output bytes
+  
+  // Follower capabilities and preferences
+  repeated string supported_compression = 11;        // Supported compression types
+  uint32 max_batch_size_bytes = 12;                 // Maximum batch size preference
+  
+  // Reserved for future response fields
+  reserved 13 to 20;
+}
+
+// Request to transfer partition leadership
+message TransferLeadershipRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  string current_leader_id = 2;                     // Current leader broker ID
+  uint64 current_leader_epoch = 3;                  // Current leader epoch
+  string new_leader_id = 4;                         // Desired new leader broker ID
+  rustmq.common.RequestMetadata metadata = 5;       // Request metadata
+  
+  // Transfer coordination information
+  string controller_id = 6;                         // Controller coordinating transfer
+  uint64 controller_epoch = 7;                      // Controller epoch
+  uint32 transfer_timeout_ms = 8;                   // Transfer timeout
+  
+  // Optional transfer preferences
+  bool force_transfer = 9;                          // Force transfer even if risky
+  bool wait_for_sync = 10;                          // Wait for new leader to sync
+  
+  // Reserved for future transfer options
+  reserved 11 to 20;
+}
+
+// Response to leadership transfer request
+message TransferLeadershipResponse {
+  bool success = 1;                                 // Whether transfer succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  uint64 new_leader_epoch = 4;                      // New leader epoch (if successful)
+  rustmq.common.ResponseMetadata metadata = 5;      // Response metadata
+  
+  // Transfer completion information
+  string actual_new_leader_id = 6;                  // Actual new leader (may differ from request)
+  uint64 transfer_time_ms = 7;                      // Time taken for transfer
+  uint64 final_log_end_offset = 8;                  // Final log end offset
+  
+  // Post-transfer state
+  repeated string new_isr = 9;                      // ISR after transfer
+  
+  // Reserved for future response fields
+  reserved 10 to 20;
+}
+
+// Request to assign partition to broker from controller
+message AssignPartitionRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  repeated string replica_set = 2;                  // Full replica set
+  string leader_id = 3;                             // Designated leader
+  uint64 leader_epoch = 4;                          // Initial leader epoch
+  string controller_id = 5;                         // Controller making assignment
+  rustmq.common.RequestMetadata metadata = 6;       // Request metadata
+  
+  // Assignment context information
+  uint64 controller_epoch = 7;                      // Controller epoch
+  string assignment_reason = 8;                     // Reason for assignment
+  rustmq.common.TopicConfig topic_config = 9;       // Topic configuration
+  
+  // Initial state information
+  uint64 initial_offset = 10;                       // Starting offset (if applicable)
+  bool is_new_partition = 11;                       // Whether this is a new partition
+  
+  // Performance and resource hints
+  uint64 expected_throughput_mbs = 12;              // Expected throughput MB/s
+  uint32 priority = 13;                             // Assignment priority
+  
+  // Reserved for future assignment fields
+  reserved 14 to 20;
+}
+
+// Response to partition assignment request
+message AssignPartitionResponse {
+  bool success = 1;                                 // Whether assignment succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4;      // Response metadata
+  
+  // Assignment result information
+  uint64 assigned_log_end_offset = 5;               // Log end offset after assignment
+  string assigned_wal_path = 6;                     // WAL path for this partition
+  uint64 estimated_setup_time_ms = 7;               // Estimated setup time
+  
+  // Resource allocation details
+  uint64 allocated_memory_bytes = 8;                // Memory allocated for partition
+  uint64 allocated_disk_bytes = 9;                  // Disk space allocated
+  uint32 allocated_network_mbs = 10;                // Network bandwidth allocated
+  
+  // Reserved for future response fields
+  reserved 11 to 20;
+}
+
+// Request to remove partition from broker
+message RemovePartitionRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  string controller_id = 2;                         // Controller requesting removal
+  rustmq.common.RequestMetadata metadata = 3;       // Request metadata
+  
+  // Removal context information
+  uint64 controller_epoch = 4;                      // Controller epoch
+  string removal_reason = 5;                        // Reason for removal
+  bool graceful_removal = 6;                        // Whether to remove gracefully
+  uint32 removal_timeout_ms = 7;                    // Removal timeout
+  
+  // Data preservation options
+  bool preserve_data = 8;                           // Whether to preserve data
+  string backup_location = 9;                       // Optional backup location
+  
+  // Reserved for future removal options
+  reserved 10 to 20;
+}
+
+// Response to partition removal request
+message RemovePartitionResponse {
+  bool success = 1;                                 // Whether removal succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4;      // Response metadata
+  
+  // Removal result information
+  uint64 final_log_end_offset = 5;                  // Final log end offset
+  uint64 removed_data_bytes = 6;                    // Amount of data removed
+  uint64 removal_time_ms = 7;                       // Time taken for removal
+  
+  // Resource cleanup details
+  uint64 freed_memory_bytes = 8;                    // Memory freed
+  uint64 freed_disk_bytes = 9;                      // Disk space freed
+  string cleanup_status = 10;                       // Cleanup status description
+  
+  // Reserved for future response fields
+  reserved 11 to 20;
+}
+
+// Request for replication status information
+message ReplicationStatusRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  rustmq.common.RequestMetadata metadata = 2;       // Request metadata
+  
+  // Status query options
+  bool include_follower_details = 3;                // Include detailed follower info
+  bool include_performance_metrics = 4;             // Include performance data
+  bool include_lag_analysis = 5;                    // Include lag analysis
+  
+  // Reserved for future status options
+  reserved 6 to 10;
+}
+
+// Response with replication status information
+message ReplicationStatusResponse {
+  bool success = 1;                                 // Whether request succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4;      // Response metadata
+  
+  // Replication state information
+  string current_leader = 5;                        // Current leader ID
+  uint64 leader_epoch = 6;                          // Current leader epoch
+  repeated string in_sync_replicas = 7;             // Current ISR
+  repeated string out_of_sync_replicas = 8;         // Out-of-sync replicas
+  
+  // Performance metrics
+  uint64 replication_lag_messages = 9;              // Max lag in messages
+  uint64 replication_lag_time_ms = 10;              // Max lag in time
+  double replication_throughput_mbs = 11;           // Replication throughput
+  
+  // Detailed follower information (if requested)
+  repeated FollowerDetails follower_details = 12;   // Per-follower details
+  
+  // Reserved for future status fields
+  reserved 13 to 20;
+}
+
+// Detailed information about a specific follower
+message FollowerDetails {
+  string broker_id = 1;                             // Follower broker ID
+  rustmq.common.FollowerState state = 2;            // Follower state
+  uint64 last_fetch_offset = 3;                     // Last fetched offset
+  google.protobuf.Timestamp last_fetch_time = 4;    // Last fetch timestamp
+  uint64 fetch_rate_mbs = 5;                        // Fetch rate MB/s
+  uint32 error_count = 6;                           // Recent error count
+  string last_error = 7;                            // Last error message
+  double health_score = 8;                          // Health score (0-1)
+  
+  // Reserved for future follower fields
+  reserved 9 to 15;
+}
+
+// Request to sync ISR state with controller
+message SyncISRRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  string leader_id = 2;                             // Leader broker ID
+  uint64 leader_epoch = 3;                          // Current leader epoch
+  repeated string current_isr = 4;                  // Current ISR members
+  repeated string proposed_isr = 5;                 // Proposed ISR changes
+  rustmq.common.RequestMetadata metadata = 6;       // Request metadata
+  
+  // ISR change context
+  string change_reason = 7;                         // Reason for ISR change
+  repeated string added_replicas = 8;               // Replicas to add to ISR
+  repeated string removed_replicas = 9;             // Replicas to remove from ISR
+  
+  // Performance data supporting ISR changes
+  repeated FollowerDetails follower_performance = 10; // Follower performance data
+  
+  // Reserved for future ISR fields
+  reserved 11 to 15;
+}
+
+// Response to ISR sync request
+message SyncISRResponse {
+  bool success = 1;                                 // Whether sync succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4;      // Response metadata
+  
+  // Updated ISR information
+  repeated string approved_isr = 5;                 // Controller-approved ISR
+  uint64 isr_version = 6;                           // ISR version number
+  
+  // Controller feedback
+  string controller_comment = 7;                    // Controller feedback/reasoning
+  
+  // Reserved for future response fields
+  reserved 8 to 15;
+}
+
+// Request to truncate log to specific offset
+message TruncateLogRequest {
+  rustmq.common.TopicPartition topic_partition = 1; // Target topic and partition
+  uint64 truncate_offset = 2;                       // Offset to truncate to
+  string requester_id = 3;                          // Broker requesting truncation
+  uint64 requester_epoch = 4;                       // Requester's epoch
+  rustmq.common.RequestMetadata metadata = 5;       // Request metadata
+  
+  // Truncation context
+  string truncation_reason = 6;                     // Reason for truncation
+  bool force_truncation = 7;                        // Force truncation even if unsafe
+  
+  // Reserved for future truncation options
+  reserved 8 to 15;
+}
+
+// Response to log truncation request  
+message TruncateLogResponse {
+  bool success = 1;                                 // Whether truncation succeeded
+  uint32 error_code = 2;                            // Error code (0 = success)
+  string error_message = 3;                         // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4;      // Response metadata
+  
+  // Truncation result information
+  uint64 actual_truncate_offset = 5;                // Actual truncation offset
+  uint64 truncated_bytes = 6;                       // Bytes truncated
+  uint64 truncation_time_ms = 7;                    // Time taken for truncation
+  
+  // Post-truncation state
+  uint64 new_log_end_offset = 8;                    // New log end offset
+  uint64 new_high_watermark = 9;                    // New high watermark
+  
+  // Reserved for future response fields
+  reserved 10 to 15;
+}

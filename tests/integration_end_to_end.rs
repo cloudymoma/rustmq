@@ -3,7 +3,7 @@ use rustmq::replication::ReplicationManager;
 use rustmq::replication::manager::MockReplicationRpcClient;
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
 use rustmq::etl::processor::{MockEtlProcessor, EtlPipeline, ModuleConfig, DataFormat};
-use rustmq::network::grpc_server::{BrokerReplicationService, BrokerReplicationRpc};
+use rustmq::network::grpc_server::{BrokerReplicationServiceImpl, BrokerReplicationRpc};
 use rustmq::storage::{DirectIOWal, AlignedBufferPool};
 use rustmq::config::{ScalingConfig, ReplicationConfig, WalConfig, EtlConfig};
 use rustmq::types::*;
@@ -170,7 +170,7 @@ async fn test_full_system_integration() {
     assert!(metadata.leader.is_some());
 
     // 4. Test network layer (gRPC service)
-    let grpc_service = BrokerReplicationService::new("broker-1".to_string());
+    let grpc_service = BrokerReplicationServiceImpl::new("broker-1".to_string());
 
     // Register the partition handler for the topic partition we created
     use rustmq::replication::FollowerReplicationHandler;

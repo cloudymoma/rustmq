@@ -1,0 +1,225 @@
+// Common types and shared data structures for RustMQ
+// This file contains all shared types used across different services
+// Field numbers 1-99 are reserved for core types
+// Field numbers 100-199 are reserved for metadata types
+// Field numbers 200-299 are reserved for configuration types
+
+syntax = "proto3";
+
+package rustmq.common;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/common";
+
+// Basic identifier types
+message TopicPartition {
+  string topic = 1;          // Topic name
+  uint32 partition = 2;      // Partition ID
+}
+
+// Core message data structure
+message Record {
+  bytes key = 1;                              // Optional message key
+  bytes value = 2;                            // Message payload
+  repeated Header headers = 3;                // Message headers
+  google.protobuf.Timestamp timestamp = 4;   // Message timestamp
+}
+
+// Message header key-value pair
+message Header {
+  string key = 1;    // Header key
+  bytes value = 2;   // Header value
+}
+
+// Write-ahead log record with metadata
+message WalRecord {
+  TopicPartition topic_partition = 1;   // Target topic and partition
+  uint64 offset = 2;                    // Record offset
+  Record record = 3;                    // Actual message record
+  uint32 crc32 = 4;                     // Checksum for integrity
+  uint32 version = 5;                   // WAL record format version
+}
+
+// Broker information and metadata
+message BrokerInfo {
+  string id = 1;           // Unique broker ID
+  string host = 2;         // Broker hostname/IP
+  uint32 port_quic = 3;    // QUIC server port
+  uint32 port_rpc = 4;     // gRPC server port
+  string rack_id = 5;      // Rack ID for rack awareness
+  BrokerStatus status = 6; // Current broker status
+  uint32 version = 7;      // Broker version for compatibility
+}
+
+// Broker status enumeration
+enum BrokerStatus {
+  BROKER_STATUS_UNKNOWN = 0;
+  BROKER_STATUS_ONLINE = 1;
+  BROKER_STATUS_OFFLINE = 2;
+  BROKER_STATUS_MAINTENANCE = 3;
+  BROKER_STATUS_DECOMMISSIONING = 4;
+}
+
+// Topic configuration and metadata
+message TopicConfig {
+  string name = 1;                      // Topic name
+  uint32 partition_count = 2;           // Number of partitions
+  uint32 replication_factor = 3;        // Replication factor
+  RetentionPolicy retention_policy = 4; // Retention settings
+  CompressionType compression = 5;      // Compression algorithm
+  repeated string etl_modules = 6;      // ETL processing modules
+  uint32 version = 7;                   // Configuration version
+  
+  // Reserved for future configuration options
+  reserved 8 to 20;
+}
+
+// Data retention policy configuration
+message RetentionPolicy {
+  oneof policy {
+    int64 retention_ms = 1;    // Time-based retention (milliseconds)
+    uint64 retention_bytes = 2; // Size-based retention (bytes)
+    bool infinite = 3;         // Infinite retention
+  }
+}
+
+// Compression algorithm enumeration
+enum CompressionType {
+  COMPRESSION_TYPE_NONE = 0;
+  COMPRESSION_TYPE_LZ4 = 1;
+  COMPRESSION_TYPE_ZSTD = 2;
+}
+
+// Partition metadata and state
+message PartitionInfo {
+  uint32 id = 1;                        // Partition ID
+  string topic = 2;                     // Topic name
+  string leader = 3;                    // Current leader broker ID
+  repeated string replicas = 4;         // All replica broker IDs
+  repeated string in_sync_replicas = 5; // In-sync replica broker IDs
+  uint64 leader_epoch = 6;              // Current leader epoch
+  PartitionStatus status = 7;           // Partition status
+  uint64 high_watermark = 8;            // High watermark offset
+  uint64 log_start_offset = 9;          // Log start offset
+}
+
+// Partition status enumeration
+enum PartitionStatus {
+  PARTITION_STATUS_UNKNOWN = 0;
+  PARTITION_STATUS_ONLINE = 1;
+  PARTITION_STATUS_OFFLINE = 2;
+  PARTITION_STATUS_UNDER_REPLICATED = 3;
+  PARTITION_STATUS_LEADER_RECOVERY = 4;
+}
+
+// Message acknowledgment level
+enum AcknowledgmentLevel {
+  ACKNOWLEDGMENT_LEVEL_NONE = 0;       // Fire and forget
+  ACKNOWLEDGMENT_LEVEL_LEADER = 1;     // Leader acknowledgment only
+  ACKNOWLEDGMENT_LEVEL_MAJORITY = 2;   // Majority of ISR
+  ACKNOWLEDGMENT_LEVEL_ALL = 3;        // All ISR members
+  ACKNOWLEDGMENT_LEVEL_CUSTOM = 4;     // Custom acknowledgment count
+}
+
+// Durability level for writes
+enum DurabilityLevel {
+  DURABILITY_LEVEL_LOCAL_ONLY = 0;     // Local WAL only
+  DURABILITY_LEVEL_DURABLE = 1;        // Durable to object storage
+}
+
+// Replication result information
+message ReplicationResult {
+  uint64 offset = 1;                   // Final offset
+  DurabilityLevel durability = 2;      // Achieved durability level
+  repeated string acked_brokers = 3;   // Brokers that acknowledged
+  uint32 ack_count = 4;                // Number of acknowledgments
+}
+
+// Follower state tracking
+message FollowerState {
+  string broker_id = 1;                           // Follower broker ID
+  uint64 last_known_offset = 2;                   // Last replicated offset
+  google.protobuf.Timestamp last_heartbeat = 3;  // Last heartbeat time
+  uint64 lag = 4;                                 // Replication lag in messages
+  uint64 lag_time_ms = 5;                         // Replication lag in time
+  bool in_sync = 6;                               // Whether follower is in sync
+}
+
+// Client request metadata
+message RequestMetadata {
+  string client_id = 1;                          // Client identifier
+  string correlation_id = 2;                     // Request correlation ID
+  google.protobuf.Timestamp timestamp = 3;      // Request timestamp
+  uint32 api_version = 4;                        // API version
+  uint32 timeout_ms = 5;                         // Request timeout
+}
+
+// Response metadata and status
+message ResponseMetadata {
+  string correlation_id = 1;                     // Matching correlation ID
+  google.protobuf.Timestamp timestamp = 2;      // Response timestamp
+  uint32 error_code = 3;                         // Error code (0 = success)
+  string error_message = 4;                      // Human-readable error message
+  uint32 throttle_time_ms = 5;                   // Client throttle time
+}
+
+// Request type enumeration for QUIC protocol
+enum RequestType {
+  REQUEST_TYPE_UNKNOWN = 0;
+  REQUEST_TYPE_PRODUCE = 1;
+  REQUEST_TYPE_FETCH = 2;
+  REQUEST_TYPE_METADATA = 3;
+  REQUEST_TYPE_ADMIN = 4;
+}
+
+// Cluster metadata information
+message ClusterMetadata {
+  string cluster_id = 1;                         // Unique cluster identifier
+  string controller_id = 2;                      // Current controller broker ID
+  repeated BrokerInfo brokers = 3;               // All cluster brokers
+  repeated TopicMetadata topics = 4;             // All cluster topics
+  uint32 version = 5;                            // Metadata version
+  google.protobuf.Timestamp last_updated = 6;   // Last update timestamp
+}
+
+// Topic metadata with partition information
+message TopicMetadata {
+  string name = 1;                    // Topic name
+  repeated PartitionInfo partitions = 2; // Partition information
+  TopicConfig config = 3;             // Topic configuration
+  uint32 error_code = 4;              // Error code for this topic
+  string error_message = 5;           // Error message for this topic
+}
+
+// Generic error information
+message ErrorInfo {
+  uint32 code = 1;           // Numeric error code
+  string message = 2;        // Human-readable error message
+  string details = 3;        // Additional error details
+  bool retryable = 4;        // Whether the error is retryable
+}
+
+// Common error codes (import from errors.proto for full enum)
+// This is a simplified set for basic usage
+enum BasicErrorCode {
+  BASIC_ERROR_CODE_NONE = 0;              // No error - success
+  BASIC_ERROR_CODE_UNKNOWN = 1;           // Unknown error
+  BASIC_ERROR_CODE_INVALID_REQUEST = 2;   // Invalid request
+  BASIC_ERROR_CODE_NOT_FOUND = 3;         // Resource not found
+  BASIC_ERROR_CODE_TIMEOUT = 4;           // Operation timeout
+  BASIC_ERROR_CODE_INTERNAL = 5;          // Internal error
+}
+
+// Performance metrics information
+message PerformanceMetrics {
+  uint64 messages_per_second = 1;         // Message throughput
+  uint64 bytes_per_second = 2;            // Byte throughput
+  double avg_latency_ms = 3;              // Average latency
+  double p99_latency_ms = 4;              // 99th percentile latency
+  uint64 total_messages = 5;              // Total messages processed
+  uint64 total_bytes = 6;                 // Total bytes processed
+  uint64 error_count = 7;                 // Total error count
+  google.protobuf.Timestamp start_time = 8; // Metrics start time
+  google.protobuf.Timestamp last_updated = 9; // Last update time
+}

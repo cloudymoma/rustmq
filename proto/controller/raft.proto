@@ -1,0 +1,478 @@
+// Raft consensus protocol implementation for RustMQ controller cluster
+// This file defines the Raft consensus protocol for controller coordination
+// Field numbers 1-99 are reserved for core Raft protocol messages
+// Field numbers 100-199 are reserved for RustMQ-specific extensions
+
+syntax = "proto3";
+
+package rustmq.controller;
+
+import "google/protobuf/timestamp.proto";
+import "common/types.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/controller";
+
+// Raft consensus service for controller cluster coordination
+// Implements the standard Raft consensus algorithm with RustMQ-specific extensions
+service ControllerRaftService {
+  // Request votes for leader election (Raft standard)
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+
+  // Append log entries for replication (Raft standard)
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+  // Install snapshot for lagging followers (Raft standard)
+  rpc InstallSnapshot(InstallSnapshotRequest) returns (InstallSnapshotResponse);
+
+  // Pre-vote request for leader election optimization
+  rpc PreVote(PreVoteRequest) returns (PreVoteResponse);
+
+  // Transfer leadership to another node
+  rpc TransferLeadership(TransferLeadershipRequest) returns (TransferLeadershipResponse);
+
+  // Get cluster membership information
+  rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse);
+
+  // Add new node to cluster
+  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+
+  // Remove node from cluster
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+}
+
+// Raft node state enumeration
+enum NodeState {
+  NODE_STATE_FOLLOWER = 0;      // Follower state
+  NODE_STATE_CANDIDATE = 1;     // Candidate state (during election)
+  NODE_STATE_LEADER = 2;        // Leader state
+  NODE_STATE_PRE_CANDIDATE = 3; // Pre-candidate state (for pre-vote optimization)
+  NODE_STATE_OBSERVER = 4;      // Observer state (non-voting member)
+  NODE_STATE_SHUTDOWN = 5;      // Shutting down
+}
+
+// Raft log entry types
+enum LogEntryType {
+  LOG_ENTRY_TYPE_UNKNOWN = 0;
+  LOG_ENTRY_TYPE_NO_OP = 1;           // No-operation entry (used by new leaders)
+  LOG_ENTRY_TYPE_CONFIGURATION = 2;   // Cluster configuration change
+  LOG_ENTRY_TYPE_BROKER_METADATA = 3; // Broker metadata update
+  LOG_ENTRY_TYPE_TOPIC_METADATA = 4;  // Topic metadata update
+  LOG_ENTRY_TYPE_PARTITION_ASSIGNMENT = 5; // Partition assignment change
+  LOG_ENTRY_TYPE_LEADERSHIP_CHANGE = 6; // Partition leadership change
+  LOG_ENTRY_TYPE_SCALING_OPERATION = 7; // Broker scaling operation
+  LOG_ENTRY_TYPE_UPGRADE_OPERATION = 8; // Rolling upgrade operation
+  LOG_ENTRY_TYPE_ADMIN_OPERATION = 9;  // Administrative operation
+  LOG_ENTRY_TYPE_HEARTBEAT = 10;       // Heartbeat/keepalive entry
+}
+
+// Request vote message for leader election
+message RequestVoteRequest {
+  uint64 term = 1;                      // Candidate's current term
+  string candidate_id = 2;              // Candidate node ID
+  uint64 last_log_index = 3;            // Index of candidate's last log entry
+  uint64 last_log_term = 4;             // Term of candidate's last log entry
+  bool pre_vote = 5;                    // Whether this is a pre-vote request
+  rustmq.common.RequestMetadata metadata = 6; // Request metadata
+  
+  // RustMQ-specific extensions
+  uint64 candidate_priority = 7;        // Candidate priority for leader preference
+  string candidate_version = 8;         // Candidate software version
+  repeated string candidate_capabilities = 9; // Candidate capabilities
+  
+  // Election context information
+  string election_reason = 10;          // Reason for starting election
+  uint64 election_timeout_ms = 11;      // Election timeout used
+  
+  // Reserved for future vote request fields
+  reserved 12 to 20;
+}
+
+// Response to vote request
+message RequestVoteResponse {
+  uint64 term = 1;                      // Responder's current term
+  bool vote_granted = 2;                // Whether vote was granted
+  string voter_id = 3;                  // Voting node ID
+  rustmq.common.ResponseMetadata metadata = 4; // Response metadata
+  
+  // Additional context for vote decision
+  string vote_reason = 5;               // Reason for vote decision
+  uint64 voter_last_log_index = 6;      // Voter's last log index
+  uint64 voter_last_log_term = 7;       // Voter's last log term
+  
+  // Voter capabilities and preferences
+  string voter_version = 8;             // Voter software version
+  repeated string voter_capabilities = 9; // Voter capabilities
+  
+  // Performance and health information
+  double voter_cpu_usage = 10;          // Voter CPU usage
+  double voter_memory_usage = 11;       // Voter memory usage
+  
+  // Reserved for future vote response fields
+  reserved 12 to 20;
+}
+
+// Append entries request for log replication
+message AppendEntriesRequest {
+  uint64 term = 1;                      // Leader's current term
+  string leader_id = 2;                 // Leader node ID
+  uint64 prev_log_index = 3;            // Index of log entry immediately preceding new ones
+  uint64 prev_log_term = 4;             // Term of prev_log_index entry
+  repeated LogEntry entries = 5;        // Log entries to store (empty for heartbeat)
+  uint64 leader_commit = 6;             // Leader's commit index
+  rustmq.common.RequestMetadata metadata = 7; // Request metadata
+  
+  // Performance optimization fields
+  bool is_heartbeat = 8;                // Whether this is a heartbeat
+  uint32 batch_size = 9;                // Number of entries in batch
+  uint64 total_batch_size_bytes = 10;   // Total size of batch in bytes
+  
+  // Leader state information
+  uint64 leader_log_size = 11;          // Leader's total log size
+  uint64 leader_snapshot_index = 12;    // Leader's last snapshot index
+  
+  // Flow control information
+  uint32 max_entries_per_request = 13;  // Max entries follower can handle
+  uint32 max_bytes_per_request = 14;    // Max bytes follower can handle
+  
+  // Reserved for future append entries fields
+  reserved 15 to 25;
+}
+
+// Response to append entries request
+message AppendEntriesResponse {
+  uint64 term = 1;                      // Follower's current term
+  bool success = 2;                     // Whether entries were successfully appended
+  string follower_id = 3;               // Follower node ID
+  uint64 match_index = 4;               // Highest index known to be replicated
+  rustmq.common.ResponseMetadata metadata = 5; // Response metadata
+  
+  // Conflict resolution information (when success = false)
+  uint64 conflict_index = 6;            // Index where conflict was detected
+  uint64 conflict_term = 7;             // Term of conflicting entry
+  uint64 first_index_of_term = 8;       // First index of conflict term
+  
+  // Follower state information
+  uint64 follower_log_size = 9;         // Follower's total log size
+  uint64 follower_commit_index = 10;    // Follower's commit index
+  uint64 follower_applied_index = 11;   // Follower's applied index
+  
+  // Performance information
+  uint64 append_time_ms = 12;           // Time taken to append entries
+  uint64 bytes_appended = 13;           // Bytes successfully appended
+  
+  // Flow control feedback
+  uint32 preferred_max_entries = 14;    // Preferred max entries per request
+  uint32 preferred_max_bytes = 15;      // Preferred max bytes per request
+  
+  // Reserved for future append response fields
+  reserved 16 to 25;
+}
+
+// Individual log entry in the Raft log
+message LogEntry {
+  uint64 index = 1;                     // Log entry index
+  uint64 term = 2;                      // Term when entry was created
+  LogEntryType type = 3;                // Type of log entry
+  bytes data = 4;                       // Entry payload data
+  google.protobuf.Timestamp timestamp = 5; // Entry creation timestamp
+  string node_id = 6;                   // Node that created the entry
+  
+  // Entry metadata
+  uint32 checksum = 7;                  // Entry checksum for integrity
+  uint32 data_size = 8;                 // Size of data payload
+  string correlation_id = 9;            // Correlation ID for tracking
+  
+  // Entry-specific context
+  uint32 priority = 10;                 // Entry priority for processing
+  repeated string tags = 11;            // Tags for categorization
+  
+  // Reserved for future log entry fields
+  reserved 12 to 20;
+}
+
+// Install snapshot request for fast follower catch-up
+message InstallSnapshotRequest {
+  uint64 term = 1;                      // Leader's current term
+  string leader_id = 2;                 // Leader node ID
+  uint64 last_included_index = 3;       // Last log index covered by snapshot
+  uint64 last_included_term = 4;        // Term of last_included_index
+  uint64 offset = 5;                    // Byte offset of chunk in snapshot
+  bytes data = 6;                       // Chunk of snapshot data
+  bool done = 7;                        // Whether this is the last chunk
+  rustmq.common.RequestMetadata metadata = 8; // Request metadata
+  
+  // Snapshot metadata
+  uint64 snapshot_size_bytes = 9;       // Total snapshot size
+  uint32 chunk_size_bytes = 10;         // Size of this chunk
+  uint32 chunk_index = 11;              // Index of this chunk
+  uint32 total_chunks = 12;             // Total number of chunks
+  string snapshot_id = 13;              // Unique snapshot identifier
+  uint32 snapshot_checksum = 14;        // Snapshot checksum
+  google.protobuf.Timestamp snapshot_timestamp = 15; // Snapshot creation time
+  
+  // Compression information
+  rustmq.common.CompressionType compression = 16; // Compression used
+  uint64 uncompressed_size = 17;        // Uncompressed chunk size
+  
+  // Reserved for future snapshot fields
+  reserved 18 to 25;
+}
+
+// Response to install snapshot request
+message InstallSnapshotResponse {
+  uint64 term = 1;                      // Follower's current term
+  bool success = 2;                     // Whether chunk was successfully installed
+  string follower_id = 3;               // Follower node ID
+  uint64 bytes_received = 4;            // Total bytes received so far
+  rustmq.common.ResponseMetadata metadata = 5; // Response metadata
+  
+  // Installation progress information
+  uint32 chunks_received = 6;           // Number of chunks received
+  double installation_progress = 7;     // Installation progress (0-1)
+  uint64 installation_time_ms = 8;      // Time spent on installation
+  
+  // Flow control and performance feedback
+  uint32 preferred_chunk_size = 9;      // Preferred chunk size for future requests
+  uint64 available_disk_space = 10;     // Available disk space
+  double cpu_usage = 11;                // Current CPU usage
+  double memory_usage = 12;             // Current memory usage
+  
+  // Error information (when success = false)
+  string error_details = 13;            // Detailed error information
+  bool retry_chunk = 14;                // Whether to retry this chunk
+  
+  // Reserved for future snapshot response fields
+  reserved 15 to 25;
+}
+
+// Pre-vote request for election optimization
+message PreVoteRequest {
+  uint64 term = 1;                      // Candidate's current term + 1
+  string candidate_id = 2;              // Candidate node ID
+  uint64 last_log_index = 3;            // Index of candidate's last log entry
+  uint64 last_log_term = 4;             // Term of candidate's last log entry
+  rustmq.common.RequestMetadata metadata = 5; // Request metadata
+  
+  // Pre-vote context
+  string election_reason = 6;           // Reason for pre-vote
+  uint64 leader_lease_timeout_ms = 7;   // Leader lease timeout
+  google.protobuf.Timestamp last_leader_contact = 8; // Last contact with leader
+  
+  // Candidate capabilities
+  repeated string candidate_capabilities = 9; // Candidate capabilities
+  uint32 candidate_priority = 10;       // Candidate priority
+  
+  // Reserved for future pre-vote fields
+  reserved 11 to 20;
+}
+
+// Response to pre-vote request
+message PreVoteResponse {
+  uint64 term = 1;                      // Responder's current term
+  bool vote_granted = 2;                // Whether pre-vote was granted
+  string voter_id = 3;                  // Voting node ID
+  rustmq.common.ResponseMetadata metadata = 4; // Response metadata
+  
+  // Vote decision context
+  string vote_reason = 5;               // Reason for vote decision
+  bool has_leader = 6;                  // Whether voter believes there's a leader
+  string current_leader_id = 7;         // Current leader (if known)
+  
+  // Reserved for future pre-vote response fields
+  reserved 8 to 15;
+}
+
+// Transfer leadership request
+message TransferLeadershipRequest {
+  string current_leader_id = 1;         // Current leader node ID
+  string target_leader_id = 2;          // Desired new leader node ID
+  uint64 timeout_ms = 3;                // Transfer timeout
+  rustmq.common.RequestMetadata metadata = 4; // Request metadata
+  
+  // Transfer context
+  string transfer_reason = 5;           // Reason for leadership transfer
+  bool force_transfer = 6;              // Force transfer even if risky
+  
+  // Reserved for future transfer fields
+  reserved 7 to 15;
+}
+
+// Response to leadership transfer request
+message TransferLeadershipResponse {
+  bool success = 1;                     // Whether transfer succeeded
+  uint32 error_code = 2;                // Error code (0 = success)
+  string error_message = 3;             // Human-readable error message
+  string new_leader_id = 4;             // Actual new leader ID
+  uint64 new_term = 5;                  // New term after transfer
+  rustmq.common.ResponseMetadata metadata = 6; // Response metadata
+  
+  // Transfer result information
+  uint64 transfer_time_ms = 7;          // Time taken for transfer
+  uint64 final_log_index = 8;           // Final log index after transfer
+  
+  // Reserved for future transfer response fields
+  reserved 9 to 15;
+}
+
+// Get cluster information request
+message GetClusterInfoRequest {
+  rustmq.common.RequestMetadata metadata = 1; // Request metadata
+  
+  // Information scope options
+  bool include_node_details = 2;        // Include detailed node information
+  bool include_log_info = 3;            // Include log information
+  bool include_performance_metrics = 4; // Include performance data
+  
+  // Reserved for future cluster info fields
+  reserved 5 to 10;
+}
+
+// Response with cluster information
+message GetClusterInfoResponse {
+  bool success = 1;                     // Whether request succeeded
+  uint32 error_code = 2;                // Error code (0 = success)
+  string error_message = 3;             // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4; // Response metadata
+  
+  // Cluster state information
+  string cluster_id = 5;                // Cluster identifier
+  string current_leader_id = 6;         // Current leader node ID
+  uint64 current_term = 7;              // Current term
+  repeated NodeInfo nodes = 8;          // Information about all nodes
+  
+  // Log state information
+  uint64 commit_index = 9;              // Current commit index
+  uint64 applied_index = 10;            // Current applied index
+  uint64 log_size = 11;                 // Total log size
+  uint64 snapshot_index = 12;           // Last snapshot index
+  
+  // Cluster health and performance
+  ClusterHealth health = 13;            // Overall cluster health
+  rustmq.common.PerformanceMetrics performance = 14; // Cluster performance metrics
+  
+  // Reserved for future cluster info response fields
+  reserved 15 to 25;
+}
+
+// Information about a single node in the cluster
+message NodeInfo {
+  string node_id = 1;                   // Node identifier
+  string address = 2;                   // Node network address
+  NodeState state = 3;                  // Current node state
+  uint64 term = 4;                      // Node's current term
+  uint64 last_log_index = 5;            // Node's last log index
+  uint64 last_log_term = 6;             // Node's last log term
+  uint64 commit_index = 7;              // Node's commit index
+  uint64 applied_index = 8;             // Node's applied index
+  google.protobuf.Timestamp last_contact = 9; // Last contact with this node
+  
+  // Node health and performance
+  NodeHealth health = 10;               // Node health status
+  rustmq.common.PerformanceMetrics performance = 11; // Node performance metrics
+  
+  // Node capabilities and metadata
+  string version = 12;                  // Node software version
+  repeated string capabilities = 13;    // Node capabilities
+  uint32 priority = 14;                 // Node priority for leader election
+  
+  // Reserved for future node info fields
+  reserved 15 to 25;
+}
+
+// Cluster health status
+message ClusterHealth {
+  HealthStatus status = 1;              // Overall health status
+  uint32 healthy_nodes = 2;             // Number of healthy nodes
+  uint32 total_nodes = 3;               // Total number of nodes
+  double consensus_availability = 4;    // Consensus availability percentage
+  repeated string issues = 5;           // List of current issues
+  
+  // Performance indicators
+  double average_latency_ms = 6;        // Average consensus latency
+  double throughput_ops_per_second = 7; // Operations per second
+  
+  // Reserved for future health fields
+  reserved 8 to 15;
+}
+
+// Node health status
+message NodeHealth {
+  HealthStatus status = 1;              // Node health status
+  double cpu_usage = 2;                 // CPU usage percentage
+  double memory_usage = 3;              // Memory usage percentage
+  uint64 disk_usage_bytes = 4;          // Disk usage in bytes
+  uint64 network_in_bytes_per_sec = 5;  // Network input rate
+  uint64 network_out_bytes_per_sec = 6; // Network output rate
+  repeated string warnings = 7;         // Current warnings
+  
+  // Reserved for future node health fields
+  reserved 8 to 15;
+}
+
+// Health status enumeration
+enum HealthStatus {
+  HEALTH_STATUS_UNKNOWN = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_WARNING = 2;
+  HEALTH_STATUS_CRITICAL = 3;
+  HEALTH_STATUS_OFFLINE = 4;
+}
+
+// Add node to cluster request
+message AddNodeRequest {
+  string node_id = 1;                   // New node identifier
+  string node_address = 2;              // New node network address
+  bool voting_member = 3;               // Whether node can vote
+  rustmq.common.RequestMetadata metadata = 4; // Request metadata
+  
+  // Node configuration
+  repeated string capabilities = 5;     // Node capabilities
+  uint32 priority = 6;                  // Node priority
+  string version = 7;                   // Node software version
+  
+  // Reserved for future add node fields
+  reserved 8 to 15;
+}
+
+// Response to add node request
+message AddNodeResponse {
+  bool success = 1;                     // Whether node was added
+  uint32 error_code = 2;                // Error code (0 = success)
+  string error_message = 3;             // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4; // Response metadata
+  
+  // Addition result information
+  uint64 configuration_index = 5;       // Log index of configuration change
+  uint64 configuration_term = 6;        // Term of configuration change
+  
+  // Reserved for future add node response fields
+  reserved 7 to 15;
+}
+
+// Remove node from cluster request
+message RemoveNodeRequest {
+  string node_id = 1;                   // Node to remove
+  bool force_removal = 2;               // Force removal even if unsafe
+  rustmq.common.RequestMetadata metadata = 3; // Request metadata
+  
+  // Removal context
+  string removal_reason = 4;            // Reason for removal
+  
+  // Reserved for future remove node fields
+  reserved 5 to 10;
+}
+
+// Response to remove node request
+message RemoveNodeResponse {
+  bool success = 1;                     // Whether node was removed
+  uint32 error_code = 2;                // Error code (0 = success)
+  string error_message = 3;             // Human-readable error message
+  rustmq.common.ResponseMetadata metadata = 4; // Response metadata
+  
+  // Removal result information
+  uint64 configuration_index = 5;       // Log index of configuration change
+  uint64 configuration_term = 6;        // Term of configuration change
+  
+  // Reserved for future remove node response fields
+  reserved 7 to 15;
+}

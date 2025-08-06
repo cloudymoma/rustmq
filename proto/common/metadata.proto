@@ -1,0 +1,674 @@
+// Cluster metadata and coordination types for RustMQ
+// This file contains metadata structures for cluster coordination and management
+// Field numbers 1-99 are reserved for cluster metadata
+// Field numbers 100-199 are reserved for operational metadata
+
+syntax = "proto3";
+
+package rustmq.common;
+
+import "google/protobuf/timestamp.proto";
+import "common/types.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/common";
+
+// Extended cluster metadata with operational information
+message ExtendedClusterMetadata {
+  string cluster_id = 1;                         // Unique cluster identifier
+  uint64 metadata_version = 2;                   // Metadata version for consistency
+  google.protobuf.Timestamp last_updated = 3;   // Last metadata update time
+  string controller_id = 4;                      // Current controller broker ID
+  uint64 controller_epoch = 5;                  // Controller epoch
+  
+  // Cluster members and topology
+  repeated BrokerMetadata brokers = 6;           // All cluster brokers
+  repeated ExtendedTopicMetadata topics = 7;     // All cluster topics
+  ClusterConfiguration configuration = 8;        // Cluster configuration
+  
+  // Operational state
+  ClusterHealth health = 9;                      // Cluster health status
+  repeated OngoingOperation ongoing_operations = 10; // Active operations
+  
+  // Performance and capacity information
+  ClusterCapacity capacity = 11;                 // Cluster capacity metrics
+  ClusterPerformance performance = 12;           // Cluster performance metrics
+  
+  // Reserved for future cluster metadata fields
+  reserved 13 to 20;
+}
+
+// Extended broker metadata with operational information
+message BrokerMetadata {
+  string id = 1;                                 // Broker ID
+  string host = 2;                               // Broker hostname/IP
+  uint32 port_quic = 3;                          // QUIC server port
+  uint32 port_rpc = 4;                           // gRPC server port
+  string rack_id = 5;                            // Rack ID for rack awareness
+  string zone_id = 6;                            // Availability zone ID
+  string region_id = 7;                          // Region ID
+  
+  // Broker state and health
+  BrokerStatus status = 8;                       // Current broker status
+  BrokerHealth health = 9;                       // Broker health information
+  google.protobuf.Timestamp last_heartbeat = 10; // Last heartbeat timestamp
+  google.protobuf.Timestamp startup_time = 11;  // Broker startup time
+  
+  // Capabilities and configuration
+  string version = 12;                           // Broker software version
+  repeated string capabilities = 13;             // Supported capabilities
+  BrokerConfiguration configuration = 14;        // Broker configuration
+  
+  // Resource and performance information
+  BrokerResources resources = 15;                // Resource allocation
+  BrokerPerformance performance = 16;            // Performance metrics
+  repeated string assigned_partitions = 17;     // Assigned topic:partition IDs
+  repeated string leadership_partitions = 18;   // Partitions where this broker is leader
+  
+  // Network and connectivity
+  repeated NetworkEndpoint endpoints = 19;       // All network endpoints
+  NetworkHealth network_health = 20;            // Network health status
+  
+  // Reserved for future broker metadata fields
+  reserved 21 to 30;
+}
+
+// Extended topic metadata with operational information
+message ExtendedTopicMetadata {
+  string name = 1;                               // Topic name
+  TopicConfiguration configuration = 2;          // Topic configuration
+  TopicStatus status = 3;                        // Current topic status
+  google.protobuf.Timestamp created_at = 4;     // Topic creation time
+  google.protobuf.Timestamp last_modified = 5;  // Last modification time
+  
+  // Partition information
+  repeated PartitionMetadata partitions = 6;     // Detailed partition metadata
+  PartitionDistribution distribution = 7;        // Partition distribution strategy
+  
+  // Performance and usage metrics
+  TopicPerformance performance = 8;              // Topic performance metrics
+  TopicUsage usage = 9;                          // Topic usage statistics
+  
+  // Data management
+  DataRetention retention = 10;                  // Data retention information
+  DataCompaction compaction = 11;                // Data compaction status
+  
+  // Access control and security
+  repeated AccessControl access_controls = 12;   // Access control rules
+  EncryptionStatus encryption = 13;              // Encryption status
+  
+  // Reserved for future topic metadata fields
+  reserved 14 to 25;
+}
+
+// Detailed partition metadata with operational state
+message PartitionMetadata {
+  uint32 id = 1;                                 // Partition ID
+  string topic = 2;                              // Topic name
+  string leader = 3;                             // Current leader broker ID
+  repeated string replicas = 4;                  // All replica broker IDs
+  repeated string in_sync_replicas = 5;          // In-sync replica broker IDs
+  uint64 leader_epoch = 6;                       // Current leader epoch
+  
+  // Operational state
+  PartitionStatus status = 7;                    // Partition status
+  PartitionHealth health = 8;                    // Partition health
+  google.protobuf.Timestamp last_leader_change = 9; // Last leadership change
+  
+  // Data state
+  uint64 high_watermark = 10;                    // High watermark offset
+  uint64 log_start_offset = 11;                  // Log start offset
+  uint64 log_end_offset = 12;                    // Log end offset
+  uint64 size_bytes = 13;                        // Partition size in bytes
+  uint32 segment_count = 14;                     // Number of log segments
+  
+  // Performance metrics
+  PartitionPerformance performance = 15;         // Partition performance
+  repeated ReplicaMetadata replica_metadata = 16; // Per-replica metadata
+  
+  // Replication state
+  ReplicationState replication = 17;             // Replication state
+  
+  // Reserved for future partition metadata fields
+  reserved 18 to 25;
+}
+
+// Per-replica metadata and state
+message ReplicaMetadata {
+  string broker_id = 1;                          // Replica broker ID
+  ReplicaRole role = 2;                          // Replica role
+  ReplicaStatus status = 3;                      // Replica status
+  uint64 log_end_offset = 4;                     // Replica log end offset
+  uint64 high_watermark = 5;                     // Replica high watermark
+  uint64 lag_messages = 6;                       // Lag in messages
+  uint64 lag_time_ms = 7;                        // Lag in milliseconds
+  google.protobuf.Timestamp last_fetch = 8;     // Last fetch timestamp
+  double fetch_rate_mbs = 9;                     // Fetch rate MB/s
+  uint32 error_count = 10;                       // Recent error count
+  
+  // Reserved for future replica metadata fields
+  reserved 11 to 15;
+}
+
+// Replica role enumeration
+enum ReplicaRole {
+  REPLICA_ROLE_UNKNOWN = 0;
+  REPLICA_ROLE_LEADER = 1;                       // Leader replica
+  REPLICA_ROLE_FOLLOWER = 2;                     // Follower replica
+  REPLICA_ROLE_OBSERVER = 3;                     // Observer replica (non-voting)
+}
+
+// Replica status enumeration
+enum ReplicaStatus {
+  REPLICA_STATUS_UNKNOWN = 0;
+  REPLICA_STATUS_IN_SYNC = 1;                    // Replica is in sync
+  REPLICA_STATUS_OUT_OF_SYNC = 2;                // Replica is out of sync
+  REPLICA_STATUS_CATCHING_UP = 3;                // Replica is catching up
+  REPLICA_STATUS_OFFLINE = 4;                    // Replica is offline
+  REPLICA_STATUS_FAILED = 5;                     // Replica has failed
+}
+
+// Replication state information
+message ReplicationState {
+  uint64 isr_version = 1;                        // ISR version number
+  uint64 max_lag_messages = 2;                   // Maximum lag in messages
+  uint64 max_lag_time_ms = 3;                    // Maximum lag in time
+  double average_replication_latency_ms = 4;     // Average replication latency
+  uint32 under_replicated_count = 5;             // Number of under-replicated partitions
+  google.protobuf.Timestamp last_isr_change = 6; // Last ISR change timestamp
+  
+  // Performance metrics
+  double replication_throughput_mbs = 7;         // Replication throughput
+  uint64 total_replicated_bytes = 8;             // Total bytes replicated
+  uint64 total_replicated_messages = 9;          // Total messages replicated
+  
+  // Reserved for future replication state fields
+  reserved 10 to 15;
+}
+
+// Cluster configuration settings
+message ClusterConfiguration {
+  string name = 1;                               // Cluster name
+  string description = 2;                        // Cluster description
+  uint32 min_broker_count = 3;                   // Minimum broker count
+  uint32 max_broker_count = 4;                   // Maximum broker count
+  uint32 default_replication_factor = 5;        // Default replication factor
+  uint32 min_in_sync_replicas = 6;               // Minimum ISR count
+  
+  // Timing configurations
+  uint32 controller_election_timeout_ms = 7;     // Controller election timeout
+  uint32 broker_heartbeat_interval_ms = 8;       // Broker heartbeat interval
+  uint32 session_timeout_ms = 9;                 // Session timeout
+  uint32 request_timeout_ms = 10;                // Request timeout
+  
+  // Data retention defaults
+  uint64 default_retention_ms = 11;              // Default retention time
+  uint64 default_retention_bytes = 12;           // Default retention size
+  uint32 default_segment_size_mb = 13;           // Default segment size
+  
+  // Performance configurations
+  uint32 max_batch_size_bytes = 14;              // Maximum batch size
+  uint32 max_request_size_bytes = 15;            // Maximum request size
+  uint32 producer_buffer_memory_bytes = 16;      // Producer buffer memory
+  uint32 consumer_fetch_max_bytes = 17;          // Consumer fetch max bytes
+  
+  // Security configurations
+  bool authentication_enabled = 18;              // Authentication enabled
+  bool authorization_enabled = 19;               // Authorization enabled
+  bool encryption_in_transit = 20;               // Encryption in transit
+  bool encryption_at_rest = 21;                  // Encryption at rest
+  
+  // Operational configurations
+  bool auto_create_topics = 22;                  // Auto create topics
+  bool auto_leader_rebalance = 23;               // Auto leader rebalance
+  uint32 leader_imbalance_threshold = 24;        // Leader imbalance threshold
+  uint32 replica_lag_time_max_ms = 25;           // Max replica lag time
+  
+  // Reserved for future cluster configuration fields
+  reserved 26 to 40;
+}
+
+// Broker-specific configuration
+message BrokerConfiguration {
+  uint32 num_network_threads = 1;                // Number of network threads
+  uint32 num_io_threads = 2;                     // Number of I/O threads
+  uint32 socket_send_buffer_bytes = 3;           // Socket send buffer size
+  uint32 socket_receive_buffer_bytes = 4;        // Socket receive buffer size
+  uint32 socket_request_max_bytes = 5;           // Max socket request size
+  
+  // Storage configurations
+  repeated string log_dirs = 6;                  // Log directories
+  uint32 log_segment_bytes = 7;                  // Log segment size
+  uint32 log_roll_time_hours = 8;                // Log roll time
+  uint32 log_retention_hours = 9;                // Log retention time
+  uint64 log_retention_bytes = 10;               // Log retention size
+  uint32 log_cleanup_interval_ms = 11;           // Log cleanup interval
+  
+  // Replication configurations
+  uint32 replica_fetch_max_bytes = 12;           // Replica fetch max bytes
+  uint32 replica_fetch_wait_max_ms = 13;         // Replica fetch wait max
+  uint32 replica_high_watermark_checkpoint_interval_ms = 14; // HWM checkpoint interval
+  uint32 num_replica_fetchers = 15;              // Number of replica fetchers
+  
+  // Reserved for future broker configuration fields
+  reserved 16 to 30;
+}
+
+// Topic-specific configuration
+message TopicConfiguration {
+  uint32 partition_count = 1;                    // Number of partitions
+  uint32 replication_factor = 2;                 // Replication factor
+  RetentionPolicy retention_policy = 3;          // Retention policy
+  CompressionType compression_type = 4;          // Compression type
+  bool cleanup_policy_compact = 5;               // Cleanup policy: compact
+  bool cleanup_policy_delete = 6;                // Cleanup policy: delete
+  
+  // Segment configurations
+  uint32 segment_bytes = 7;                      // Segment size in bytes
+  uint32 segment_ms = 8;                         // Segment time in ms
+  uint32 segment_jitter_ms = 9;                  // Segment jitter in ms
+  uint32 segment_index_bytes = 10;               // Segment index size
+  
+  // Performance configurations
+  uint32 flush_messages = 11;                    // Flush message count
+  uint32 flush_ms = 12;                          // Flush time interval
+  uint32 min_cleanable_dirty_ratio = 13;         // Min cleanable dirty ratio
+  uint32 delete_retention_ms = 14;               // Delete retention time
+  uint32 min_compaction_lag_ms = 15;             // Min compaction lag
+  uint32 max_compaction_lag_ms = 16;             // Max compaction lag
+  
+  // ETL and processing
+  repeated string etl_modules = 17;              // ETL processing modules
+  bool enable_etl_processing = 18;               // Enable ETL processing
+  
+  // Reserved for future topic configuration fields
+  reserved 19 to 30;
+}
+
+// Cluster health information
+message ClusterHealth {
+  HealthStatus overall_status = 1;               // Overall cluster health
+  uint32 healthy_brokers = 2;                    // Number of healthy brokers
+  uint32 total_brokers = 3;                      // Total number of brokers
+  uint32 healthy_partitions = 4;                 // Number of healthy partitions
+  uint32 total_partitions = 5;                   // Total number of partitions
+  uint32 under_replicated_partitions = 6;       // Under-replicated partitions
+  uint32 offline_partitions = 7;                // Offline partitions
+  
+  // Controller health
+  bool controller_available = 8;                 // Controller availability
+  uint64 controller_uptime_ms = 9;               // Controller uptime
+  uint32 controller_failover_count = 10;        // Controller failover count
+  
+  // Consensus health
+  double consensus_availability = 11;            // Consensus availability percentage
+  double average_consensus_latency_ms = 12;      // Average consensus latency
+  uint32 consensus_failures = 13;               // Recent consensus failures
+  
+  // Performance indicators
+  double cluster_cpu_usage = 14;                // Average cluster CPU usage
+  double cluster_memory_usage = 15;             // Average cluster memory usage
+  double cluster_disk_usage = 16;               // Average cluster disk usage
+  double cluster_network_usage = 17;            // Average cluster network usage
+  
+  // Active issues and alerts
+  repeated HealthIssue issues = 18;              // Current health issues
+  repeated HealthAlert alerts = 19;              // Active health alerts
+  
+  // Reserved for future cluster health fields
+  reserved 20 to 30;
+}
+
+// Individual health issue
+message HealthIssue {
+  string issue_id = 1;                           // Unique issue ID
+  HealthSeverity severity = 2;                   // Issue severity
+  string component = 3;                          // Affected component
+  string description = 4;                        // Issue description
+  google.protobuf.Timestamp detected_at = 5;    // Detection timestamp
+  repeated string affected_resources = 6;        // Affected resources
+  string recommended_action = 7;                 // Recommended action
+  bool auto_resolvable = 8;                      // Whether auto-resolvable
+  
+  // Reserved for future health issue fields
+  reserved 9 to 15;
+}
+
+// Health alert information
+message HealthAlert {
+  string alert_id = 1;                           // Unique alert ID
+  AlertType type = 2;                            // Alert type
+  HealthSeverity severity = 3;                   // Alert severity
+  string title = 4;                              // Alert title
+  string message = 5;                            // Alert message
+  google.protobuf.Timestamp triggered_at = 6;   // Alert trigger time
+  repeated string tags = 7;                      // Alert tags
+  AlertStatus status = 8;                        // Alert status
+  
+  // Reserved for future health alert fields
+  reserved 9 to 15;
+}
+
+// Health severity levels
+enum HealthSeverity {
+  HEALTH_SEVERITY_UNKNOWN = 0;
+  HEALTH_SEVERITY_INFO = 1;                      // Informational
+  HEALTH_SEVERITY_WARNING = 2;                   // Warning
+  HEALTH_SEVERITY_CRITICAL = 3;                  // Critical
+  HEALTH_SEVERITY_EMERGENCY = 4;                 // Emergency
+}
+
+// Alert types
+enum AlertType {
+  ALERT_TYPE_UNKNOWN = 0;
+  ALERT_TYPE_PERFORMANCE = 1;                    // Performance alert
+  ALERT_TYPE_CAPACITY = 2;                       // Capacity alert
+  ALERT_TYPE_AVAILABILITY = 3;                   // Availability alert
+  ALERT_TYPE_SECURITY = 4;                       // Security alert
+  ALERT_TYPE_CONFIGURATION = 5;                  // Configuration alert
+}
+
+// Alert status
+enum AlertStatus {
+  ALERT_STATUS_UNKNOWN = 0;
+  ALERT_STATUS_ACTIVE = 1;                       // Alert is active
+  ALERT_STATUS_ACKNOWLEDGED = 2;                 // Alert acknowledged
+  ALERT_STATUS_RESOLVED = 3;                     // Alert resolved
+  ALERT_STATUS_SUPPRESSED = 4;                   // Alert suppressed
+}
+
+// Ongoing operation tracking
+message OngoingOperation {
+  string operation_id = 1;                       // Unique operation ID
+  OperationType type = 2;                        // Operation type
+  OperationStatus status = 3;                    // Operation status
+  google.protobuf.Timestamp started_at = 4;     // Start timestamp
+  google.protobuf.Timestamp estimated_completion = 5; // Estimated completion
+  double progress_percentage = 6;                // Progress percentage
+  string description = 7;                        // Operation description
+  repeated string affected_resources = 8;        // Affected resources
+  string initiated_by = 9;                       // Who initiated the operation
+  
+  // Operation details
+  OperationDetails details = 10;                 // Operation-specific details
+  repeated OperationStep steps = 11;             // Operation steps
+  
+  // Reserved for future ongoing operation fields
+  reserved 12 to 20;
+}
+
+// Operation types
+enum OperationType {
+  OPERATION_TYPE_UNKNOWN = 0;
+  OPERATION_TYPE_SCALE_OUT = 1;                  // Scale out operation
+  OPERATION_TYPE_SCALE_IN = 2;                   // Scale in operation
+  OPERATION_TYPE_REBALANCE = 3;                  // Partition rebalance
+  OPERATION_TYPE_UPGRADE = 4;                    // Rolling upgrade
+  OPERATION_TYPE_MAINTENANCE = 5;                // Maintenance operation
+  OPERATION_TYPE_BACKUP = 6;                     // Backup operation
+  OPERATION_TYPE_RESTORE = 7;                    // Restore operation
+  OPERATION_TYPE_MIGRATION = 8;                  // Data migration
+  OPERATION_TYPE_COMPACTION = 9;                 // Log compaction
+  OPERATION_TYPE_CLEANUP = 10;                   // Cleanup operation
+}
+
+// Operation status
+enum OperationStatus {
+  OPERATION_STATUS_UNKNOWN = 0;
+  OPERATION_STATUS_PENDING = 1;                  // Operation pending
+  OPERATION_STATUS_IN_PROGRESS = 2;              // Operation in progress
+  OPERATION_STATUS_COMPLETED = 3;                // Operation completed
+  OPERATION_STATUS_FAILED = 4;                   // Operation failed
+  OPERATION_STATUS_CANCELLED = 5;                // Operation cancelled
+  OPERATION_STATUS_PAUSED = 6;                   // Operation paused
+}
+
+// Operation-specific details
+message OperationDetails {
+  // Scale operation details
+  ScaleOperationDetails scale_details = 1;
+  
+  // Rebalance operation details
+  RebalanceOperationDetails rebalance_details = 2;
+  
+  // Upgrade operation details
+  UpgradeOperationDetails upgrade_details = 3;
+  
+  // Maintenance operation details
+  MaintenanceOperationDetails maintenance_details = 4;
+  
+  // Reserved for future operation details
+  reserved 5 to 10;
+}
+
+// Scale operation details
+message ScaleOperationDetails {
+  uint32 target_broker_count = 1;               // Target broker count
+  uint32 current_broker_count = 2;              // Current broker count
+  repeated string new_brokers = 3;               // New broker IDs
+  repeated string removing_brokers = 4;          // Removing broker IDs
+  PartitionReassignment reassignment = 5;       // Partition reassignment plan
+  
+  // Reserved for future scale operation fields
+  reserved 6 to 10;
+}
+
+// Rebalance operation details
+message RebalanceOperationDetails {
+  uint32 partitions_to_move = 1;                // Partitions to move
+  uint32 partitions_moved = 2;                  // Partitions moved
+  uint64 data_to_transfer_bytes = 3;            // Data to transfer
+  uint64 data_transferred_bytes = 4;            // Data transferred
+  repeated PartitionMove partition_moves = 5;   // Individual partition moves
+  
+  // Reserved for future rebalance operation fields
+  reserved 6 to 10;
+}
+
+// Upgrade operation details
+message UpgradeOperationDetails {
+  string from_version = 1;                      // Source version
+  string to_version = 2;                        // Target version
+  uint32 brokers_upgraded = 3;                  // Brokers upgraded
+  uint32 total_brokers = 4;                     // Total brokers
+  repeated string pending_brokers = 5;          // Pending upgrade brokers
+  repeated string failed_brokers = 6;           // Failed upgrade brokers
+  
+  // Reserved for future upgrade operation fields
+  reserved 7 to 10;
+}
+
+// Maintenance operation details
+message MaintenanceOperationDetails {
+  MaintenanceType maintenance_type = 1;         // Type of maintenance
+  repeated string affected_brokers = 2;         // Affected brokers
+  string maintenance_window = 3;                // Maintenance window
+  bool allow_data_loss = 4;                     // Allow data loss flag
+  
+  // Reserved for future maintenance operation fields
+  reserved 5 to 10;
+}
+
+// Maintenance types
+enum MaintenanceType {
+  MAINTENANCE_TYPE_UNKNOWN = 0;
+  MAINTENANCE_TYPE_RESTART = 1;                 // Broker restart
+  MAINTENANCE_TYPE_REPAIR = 2;                  // Repair operation
+  MAINTENANCE_TYPE_UPDATE = 3;                  // Update operation
+  MAINTENANCE_TYPE_CLEANUP = 4;                 // Cleanup operation
+}
+
+// Individual operation step
+message OperationStep {
+  string step_id = 1;                           // Step ID
+  string name = 2;                              // Step name
+  OperationStatus status = 3;                   // Step status
+  google.protobuf.Timestamp started_at = 4;    // Step start time
+  google.protobuf.Timestamp completed_at = 5;  // Step completion time
+  string description = 6;                       // Step description
+  string error_message = 7;                     // Error message (if failed)
+  
+  // Reserved for future operation step fields
+  reserved 8 to 15;
+}
+
+// Partition move information
+message PartitionMove {
+  TopicPartition partition = 1;                 // Partition being moved
+  string from_broker = 2;                       // Source broker
+  string to_broker = 3;                         // Destination broker
+  OperationStatus status = 4;                   // Move status
+  uint64 bytes_transferred = 5;                 // Bytes transferred
+  uint64 total_bytes = 6;                       // Total bytes to transfer
+  google.protobuf.Timestamp started_at = 7;    // Move start time
+  
+  // Reserved for future partition move fields
+  reserved 8 to 15;
+}
+
+// Partition reassignment plan
+message PartitionReassignment {
+  repeated PartitionAssignment assignments = 1; // Individual assignments
+  uint64 total_data_bytes = 2;                  // Total data to move
+  uint32 estimated_time_minutes = 3;            // Estimated time
+  
+  // Reserved for future partition reassignment fields
+  reserved 4 to 10;
+}
+
+// Individual partition assignment
+message PartitionAssignment {
+  TopicPartition partition = 1;                 // Partition
+  repeated string current_replicas = 2;         // Current replicas
+  repeated string target_replicas = 3;          // Target replicas
+  AssignmentStatus status = 4;                  // Assignment status
+  
+  // Reserved for future partition assignment fields
+  reserved 5 to 10;
+}
+
+// Assignment status
+enum AssignmentStatus {
+  ASSIGNMENT_STATUS_UNKNOWN = 0;
+  ASSIGNMENT_STATUS_PENDING = 1;                // Assignment pending
+  ASSIGNMENT_STATUS_IN_PROGRESS = 2;            // Assignment in progress
+  ASSIGNMENT_STATUS_COMPLETED = 3;              // Assignment completed
+  ASSIGNMENT_STATUS_FAILED = 4;                 // Assignment failed
+}
+
+// Health status for components
+enum HealthStatus {
+  HEALTH_STATUS_UNKNOWN = 0;
+  HEALTH_STATUS_HEALTHY = 1;            // Component is healthy
+  HEALTH_STATUS_DEGRADED = 2;           // Component is degraded but functional
+  HEALTH_STATUS_UNHEALTHY = 3;          // Component is unhealthy
+  HEALTH_STATUS_OFFLINE = 4;            // Component is offline
+  HEALTH_STATUS_MAINTENANCE = 5;        // Component is in maintenance mode
+}
+
+// Topic status
+enum TopicStatus {
+  TOPIC_STATUS_UNKNOWN = 0;
+  TOPIC_STATUS_ACTIVE = 1;
+  TOPIC_STATUS_CREATING = 2;
+  TOPIC_STATUS_DELETING = 3;
+  TOPIC_STATUS_OFFLINE = 4;
+}
+
+// Placeholder messages for missing types
+message ClusterCapacity {
+  uint64 total_storage_bytes = 1;
+  uint64 available_storage_bytes = 2;
+  uint32 total_cpu_cores = 3;
+  uint64 total_memory_bytes = 4;
+}
+
+message ClusterPerformance {
+  uint64 messages_per_second = 1;
+  uint64 bytes_per_second = 2;
+  double average_latency_ms = 3;
+}
+
+message BrokerHealth {
+  HealthStatus status = 1;
+  double cpu_usage = 2;
+  double memory_usage = 3;
+  uint64 disk_usage_bytes = 4;
+}
+
+message BrokerResources {
+  uint32 cpu_cores = 1;
+  uint64 memory_bytes = 2;
+  uint64 disk_bytes = 3;
+}
+
+message BrokerPerformance {
+  uint64 messages_per_second = 1;
+  uint64 bytes_per_second = 2;
+  double cpu_usage = 3;
+}
+
+message NetworkEndpoint {
+  string protocol = 1;
+  string host = 2;
+  uint32 port = 3;
+}
+
+message NetworkHealth {
+  HealthStatus status = 1;
+  double latency_ms = 2;
+  uint64 bandwidth_bps = 3;
+}
+
+message PartitionDistribution {
+  string strategy = 1;
+  repeated string rack_ids = 2;
+}
+
+message TopicPerformance {
+  uint64 messages_per_second = 1;
+  uint64 bytes_per_second = 2;
+  double write_latency_ms = 3;
+}
+
+message TopicUsage {
+  uint64 total_messages = 1;
+  uint64 total_bytes = 2;
+  uint32 active_producers = 3;
+  uint32 active_consumers = 4;
+}
+
+message DataRetention {
+  uint64 retention_ms = 1;
+  uint64 retention_bytes = 2;
+  string policy = 3;
+}
+
+message DataCompaction {
+  bool enabled = 1;
+  uint64 last_compaction_time = 2;
+  string status = 3;
+}
+
+message AccessControl {
+  string principal = 1;
+  string operation = 2;
+  string permission = 3;
+}
+
+message EncryptionStatus {
+  bool enabled = 1;
+  string algorithm = 2;
+  string key_version = 3;
+}
+
+message PartitionHealth {
+  HealthStatus status = 1;
+  bool leader_available = 2;
+  uint32 in_sync_replica_count = 3;
+}
+
+message PartitionPerformance {
+  uint64 messages_per_second = 1;
+  uint64 bytes_per_second = 2;
+  double replication_lag_ms = 3;
+}
