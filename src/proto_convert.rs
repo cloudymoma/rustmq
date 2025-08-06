@@ -768,6 +768,8 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::NotLeader(_) => ErrorCode::NotLeader as u32,
         RustMqError::OffsetOutOfRange(_) => ErrorCode::OffsetOutOfRange as u32,
         RustMqError::ObjectNotFound(_) => ErrorCode::ObjectNotFound as u32,
+        RustMqError::Transport(_) => ErrorCode::InternalError as u32,
+        RustMqError::InvalidUri(_) => ErrorCode::InvalidParameter as u32,
     }
 }
 

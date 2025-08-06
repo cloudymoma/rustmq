@@ -124,4 +124,22 @@ pub enum RustMqError {
     #[error("Object not found: {0}")]
     ObjectNotFound(String),
 
+    #[error("Transport error: {0}")]
+    Transport(String),
+
+    #[error("Invalid URI: {0}")]
+    InvalidUri(String),
+}
+
+// Add missing From implementations for tonic transport errors
+impl From<tonic::transport::Error> for RustMqError {
+    fn from(e: tonic::transport::Error) -> Self {
+        RustMqError::Transport(e.to_string())
+    }
+}
+
+impl From<warp::http::uri::InvalidUri> for RustMqError {
+    fn from(e: warp::http::uri::InvalidUri) -> Self {
+        RustMqError::InvalidUri(e.to_string())
+    }
 }
