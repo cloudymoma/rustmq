@@ -1,0 +1,108 @@
+# Example rate limiting configuration for RustMQ Admin API
+# This demonstrates comprehensive rate limiting with production-ready defaults
+
+# Global configuration for rate limiting
+[rate_limiting]
+enabled = true
+
+# Global rate limits that apply across all clients and endpoints
+[rate_limiting.global]
+requests_per_second = 1000     # Maximum 1000 RPS globally
+burst_capacity = 2000          # Allow burst up to 2000 requests
+window_size_secs = 60          # 1-minute rate limit window
+
+# Per-IP rate limiting with burst allowance
+[rate_limiting.per_ip]
+enabled = true
+requests_per_second = 50       # 50 RPS per IP address
+burst_capacity = 100           # Allow burst up to 100 requests per IP
+window_size_secs = 60          # 1-minute window for per-IP calculations
+max_tracked_ips = 10000        # Track up to 10,000 IP addresses
+ip_expiry_secs = 3600          # Remove IP limiters after 1 hour of inactivity
+
+# Endpoint-specific rate limits categorized by operation type
+[rate_limiting.endpoints]
+
+# Health check endpoints (frequently called by monitoring systems)
+[rate_limiting.endpoints.health]
+enabled = true
+requests_per_second = 100      # Higher limits for health checks
+burst_capacity = 200
+window_size_secs = 60
+endpoint_patterns = [
+    "/health",
+    "/api/v1/health"
+]
+
+# Read operations (listing, describing resources)
+[rate_limiting.endpoints.read_operations]
+enabled = true
+requests_per_second = 30       # Moderate limits for read operations
+burst_capacity = 60
+window_size_secs = 60
+endpoint_patterns = [
+    "/api/v1/cluster",
+    "/api/v1/topics",
+    "/api/v1/topics/*",         # GET operations on topics
+    "/api/v1/brokers"
+]
+
+# Write operations (creating, deleting resources)
+[rate_limiting.endpoints.write_operations]
+enabled = true
+requests_per_second = 10       # Lower limits for write operations (more expensive)
+burst_capacity = 20
+window_size_secs = 60
+endpoint_patterns = [
+    "POST:/api/v1/topics",
+    "DELETE:/api/v1/topics/*"
+]
+
+# Cluster management operations (most expensive operations)
+[rate_limiting.endpoints.cluster_operations]
+enabled = true
+requests_per_second = 5        # Very restrictive for cluster operations
+burst_capacity = 10
+window_size_secs = 60
+endpoint_patterns = [
+    "/api/v1/cluster/rebalance",
+    "/api/v1/cluster/scale",
+    "/api/v1/brokers/*/decommission"
+]
+
+# Cleanup configuration for expired rate limiters
+[rate_limiting.cleanup]
+enabled = true
+cleanup_interval_secs = 300    # Clean up every 5 minutes
+max_age_secs = 3600           # Remove limiters after 1 hour of inactivity
+max_cleanup_per_run = 1000    # Clean up to 1000 limiters per run
+
+# Production environment example - more restrictive
+# [rate_limiting.global]
+# requests_per_second = 500
+# burst_capacity = 1000
+
+# [rate_limiting.per_ip]
+# requests_per_second = 25
+# burst_capacity = 50
+
+# [rate_limiting.endpoints.write_operations]
+# requests_per_second = 5
+# burst_capacity = 10
+
+# [rate_limiting.endpoints.cluster_operations]
+# requests_per_second = 2
+# burst_capacity = 5
+
+# Development environment example - more permissive
+# [rate_limiting.global]
+# requests_per_second = 2000
+# burst_capacity = 4000
+
+# [rate_limiting.per_ip]
+# requests_per_second = 100
+# burst_capacity = 200
+
+# Disable rate limiting entirely (for development/testing)
+# [rate_limiting]
+# enabled = false

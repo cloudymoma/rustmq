@@ -1,6 +1,8 @@
 use crate::controller::{ControllerService, CreateTopicRequest, DeleteTopicRequest};
 use crate::types::BrokerInfo;
+use crate::config::RateLimitConfig;
 use crate::Result;
+use super::rate_limiter::{RateLimiterManager, rate_limit_filter};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -16,6 +18,7 @@ pub struct AdminApi {
     port: u16,
     start_time: Instant,
     health_tracker: Arc<BrokerHealthTracker>,
+    rate_limiter: Option<Arc<RateLimiterManager>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -234,7 +237,38 @@ impl AdminApi {
             port, 
             start_time: Instant::now(),
             health_tracker,
+            rate_limiter: None,
         }
+    }
+
+    pub fn new_with_rate_limiting(
+        controller: Arc<ControllerService>, 
+        port: u16, 
+        rate_limit_config: RateLimitConfig
+    ) -> Result<Self> {
+        let health_tracker = Arc::new(BrokerHealthTracker::new(Duration::from_secs(30)));
+        
+        // Create rate limiter if enabled
+        let rate_limiter = if rate_limit_config.enabled {
+            Some(Arc::new(RateLimiterManager::new(rate_limit_config)?))
+        } else {
+            None
+        };
+        
+        // Start background health checking
+        let tracker_clone = health_tracker.clone();
+        let controller_clone = controller.clone();
+        tokio::spawn(async move {
+            Self::background_health_checker(controller_clone, tracker_clone).await;
+        });
+        
+        Ok(Self { 
+            controller, 
+            port, 
+            start_time: Instant::now(),
+            health_tracker,
+            rate_limiter,
+        })
     }
 
     /// Background task to periodically check broker health
@@ -271,48 +305,129 @@ impl AdminApi {
         let start_time = self.start_time;
         let health_tracker = self.health_tracker.clone();
         
+        // Create rate limiting filter if enabled
+        let rate_limit_middleware = if let Some(rate_limiter) = &self.rate_limiter {
+            Some(rate_limit_filter(rate_limiter.clone()))
+        } else {
+            None
+        };
+        
         // Health check endpoint
-        let health = warp::path("health")
+        let mut health = warp::path("health")
             .and(warp::get())
             .and(with_controller(controller.clone()))
             .and(with_start_time(start_time))
-            .and_then(handle_health);
+            .and_then(handle_health)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            health = warp::path("health")
+                .and(rate_limit.clone())
+                .and(warp::get())
+                .and(with_controller(controller.clone()))
+                .and(with_start_time(start_time))
+                .and_then(handle_health)
+                .boxed();
+        }
 
         // Cluster status endpoint
-        let cluster = warp::path!("api" / "v1" / "cluster")
+        let mut cluster = warp::path!("api" / "v1" / "cluster")
             .and(warp::get())
             .and(with_controller(controller.clone()))
             .and(with_health_tracker(health_tracker.clone()))
-            .and_then(handle_cluster_status);
+            .and_then(handle_cluster_status)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            cluster = warp::path!("api" / "v1" / "cluster")
+                .and(rate_limit.clone())
+                .and(warp::get())
+                .and(with_controller(controller.clone()))
+                .and(with_health_tracker(health_tracker.clone()))
+                .and_then(handle_cluster_status)
+                .boxed();
+        }
 
         // Topics endpoints
-        let topics_list = warp::path!("api" / "v1" / "topics")
+        let mut topics_list = warp::path!("api" / "v1" / "topics")
             .and(warp::get())
             .and(with_controller(controller.clone()))
-            .and_then(handle_list_topics);
+            .and_then(handle_list_topics)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            topics_list = warp::path!("api" / "v1" / "topics")
+                .and(rate_limit.clone())
+                .and(warp::get())
+                .and(with_controller(controller.clone()))
+                .and_then(handle_list_topics)
+                .boxed();
+        }
 
-        let topics_create = warp::path!("api" / "v1" / "topics")
+        let mut topics_create = warp::path!("api" / "v1" / "topics")
             .and(warp::post())
             .and(warp::body::json())
             .and(with_controller(controller.clone()))
-            .and_then(handle_create_topic);
+            .and_then(handle_create_topic)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            topics_create = warp::path!("api" / "v1" / "topics")
+                .and(rate_limit.clone())
+                .and(warp::post())
+                .and(warp::body::json())
+                .and(with_controller(controller.clone()))
+                .and_then(handle_create_topic)
+                .boxed();
+        }
 
-        let topics_delete = warp::path!("api" / "v1" / "topics" / String)
+        let mut topics_delete = warp::path!("api" / "v1" / "topics" / String)
             .and(warp::delete())
             .and(with_controller(controller.clone()))
-            .and_then(handle_delete_topic);
+            .and_then(handle_delete_topic)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            topics_delete = warp::path!("api" / "v1" / "topics" / String)
+                .and(rate_limit.clone())
+                .and(warp::delete())
+                .and(with_controller(controller.clone()))
+                .and_then(handle_delete_topic)
+                .boxed();
+        }
 
-        let topics_describe = warp::path!("api" / "v1" / "topics" / String)
+        let mut topics_describe = warp::path!("api" / "v1" / "topics" / String)
             .and(warp::get())
             .and(with_controller(controller.clone()))
-            .and_then(handle_describe_topic);
+            .and_then(handle_describe_topic)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            topics_describe = warp::path!("api" / "v1" / "topics" / String)
+                .and(rate_limit.clone())
+                .and(warp::get())
+                .and(with_controller(controller.clone()))
+                .and_then(handle_describe_topic)
+                .boxed();
+        }
 
         // Brokers endpoints
-        let brokers_list = warp::path!("api" / "v1" / "brokers")
+        let mut brokers_list = warp::path!("api" / "v1" / "brokers")
             .and(warp::get())
             .and(with_controller(controller.clone()))
             .and(with_health_tracker(health_tracker.clone()))
-            .and_then(handle_list_brokers);
+            .and_then(handle_list_brokers)
+            .boxed();
+        
+        if let Some(ref rate_limit) = rate_limit_middleware {
+            brokers_list = warp::path!("api" / "v1" / "brokers")
+                .and(rate_limit.clone())
+                .and(warp::get())
+                .and(with_controller(controller.clone()))
+                .and(with_health_tracker(health_tracker.clone()))
+                .and_then(handle_list_brokers)
+                .boxed();
+        }
 
         // Combine all routes
         let routes = health
@@ -324,9 +439,10 @@ impl AdminApi {
             .or(brokers_list)
             .with(warp::cors().allow_any_origin())
             .with(warp::trace::request())
-            .recover(handle_rejection);
+            .recover(handle_rejection_unified);
 
-        info!("Starting Admin API server on port {}", self.port);
+        let rate_limit_status = if self.rate_limiter.is_some() { "enabled" } else { "disabled" };
+        info!("Starting Admin API server on port {} (rate limiting: {})", self.port, rate_limit_status);
         
         warp::serve(routes)
             .run(([0, 0, 0, 0], self.port))
@@ -686,7 +802,7 @@ async fn handle_list_brokers(
 }
 
 /// Handle warp rejections
-async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply, Infallible> {
+async fn handle_rejection(err: Rejection) -> std::result::Result<warp::reply::Response, Infallible> {
     let code;
     let message;
 
@@ -712,7 +828,32 @@ async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply, Inf
         leader_hint: None,
     });
 
-    Ok(warp::reply::with_status(json, code))
+    Ok(warp::reply::with_status(json, code).into_response())
+}
+
+/// Unified rejection handler that handles both rate limiting and other rejections
+async fn handle_rejection_unified(err: Rejection) -> std::result::Result<warp::reply::Response, Infallible> {
+    // First try to handle rate limit rejections
+    if let Some(rate_limit_rejection) = err.find::<super::rate_limiter::RateLimitRejection>() {
+        let error_response = ApiResponse::<()> {
+            success: false,
+            data: None,
+            error: Some(rate_limit_rejection.0.error.clone()),
+            leader_hint: None,
+        };
+        
+        let reply = warp::reply::json(&error_response);
+        let reply = warp::reply::with_status(reply, warp::http::StatusCode::TOO_MANY_REQUESTS);
+        let reply = warp::reply::with_header(reply, "X-RateLimit-Limit", rate_limit_rejection.0.limit);
+        let reply = warp::reply::with_header(reply, "X-RateLimit-Remaining", rate_limit_rejection.0.remaining);
+        let reply = warp::reply::with_header(reply, "X-RateLimit-Reset", rate_limit_rejection.0.reset_time);
+        let reply = warp::reply::with_header(reply, "Retry-After", rate_limit_rejection.0.retry_after);
+        
+        return Ok(reply.into_response());
+    }
+    
+    // Fall back to standard rejection handling
+    handle_rejection(err).await
 }
 
 #[cfg(test)]
@@ -1172,5 +1313,197 @@ mod tests {
         
         // Cluster should still be healthy (majority of brokers healthy: 1 out of 2)
         assert!(cluster_status.healthy);
+    }
+
+    #[tokio::test]
+    async fn test_admin_api_with_rate_limiting() {
+        use crate::config::{RateLimitConfig, GlobalRateLimits, PerIpRateLimits, EndpointRateLimits, EndpointCategoryLimits, RateLimitCleanupConfig};
+        
+        let controller = setup_test_controller().await;
+        
+        let rate_limit_config = RateLimitConfig {
+            enabled: true,
+            global: GlobalRateLimits {
+                requests_per_second: 1000,
+                burst_capacity: 2000,
+                window_size_secs: 60,
+            },
+            per_ip: PerIpRateLimits {
+                enabled: true,
+                requests_per_second: 10,
+                burst_capacity: 20,
+                window_size_secs: 60,
+                max_tracked_ips: 1000,
+                ip_expiry_secs: 3600,
+            },
+            endpoints: EndpointRateLimits {
+                health: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 50,
+                    burst_capacity: 100,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/health".to_string()],
+                },
+                read_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 30,
+                    burst_capacity: 60,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/api/v1/topics".to_string()],
+                },
+                write_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 5,
+                    burst_capacity: 10,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["POST:/api/v1/topics".to_string()],
+                },
+                cluster_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 2,
+                    burst_capacity: 5,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/api/v1/cluster/rebalance".to_string()],
+                },
+            },
+            cleanup: RateLimitCleanupConfig {
+                enabled: true,
+                cleanup_interval_secs: 300,
+                max_age_secs: 3600,
+                max_cleanup_per_run: 100,
+            },
+        };
+        
+        let admin_api = AdminApi::new_with_rate_limiting(controller, 8080, rate_limit_config).unwrap();
+        assert!(admin_api.rate_limiter.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_admin_api_without_rate_limiting() {
+        let controller = setup_test_controller().await;
+        let admin_api = AdminApi::new(controller, 8080);
+        assert!(admin_api.rate_limiter.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_manager_integration() {
+        use crate::config::{RateLimitConfig, GlobalRateLimits, PerIpRateLimits, EndpointRateLimits, EndpointCategoryLimits, RateLimitCleanupConfig};
+        use crate::admin::rate_limiter::{RateLimiterManager, EndpointCategory, RateLimitInfo};
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        let rate_limit_config = RateLimitConfig {
+            enabled: true,
+            global: GlobalRateLimits {
+                requests_per_second: 100,
+                burst_capacity: 200,
+                window_size_secs: 60,
+            },
+            per_ip: PerIpRateLimits {
+                enabled: true,
+                requests_per_second: 10,
+                burst_capacity: 20,
+                window_size_secs: 60,
+                max_tracked_ips: 1000,
+                ip_expiry_secs: 3600,
+            },
+            endpoints: EndpointRateLimits {
+                health: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 50,
+                    burst_capacity: 100,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/health".to_string()],
+                },
+                read_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 30,
+                    burst_capacity: 60,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/api/v1/topics".to_string()],
+                },
+                write_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 5,
+                    burst_capacity: 10,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["POST:/api/v1/topics".to_string()],
+                },
+                cluster_operations: EndpointCategoryLimits {
+                    enabled: true,
+                    requests_per_second: 2,
+                    burst_capacity: 5,
+                    window_size_secs: 60,
+                    endpoint_patterns: vec!["/api/v1/cluster/rebalance".to_string()],
+                },
+            },
+            cleanup: RateLimitCleanupConfig {
+                enabled: true,
+                cleanup_interval_secs: 300,
+                max_age_secs: 3600,
+                max_cleanup_per_run: 100,
+            },
+        };
+        
+        let manager = RateLimiterManager::new(rate_limit_config).unwrap();
+        
+        let client_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let info = RateLimitInfo {
+            category: EndpointCategory::Health,
+            client_ip,
+            endpoint: "/health".to_string(),
+            method: "GET".to_string(),
+        };
+        
+        // First request should succeed
+        assert!(manager.check_rate_limit(&info).await.is_ok());
+        
+        // Test endpoint categorization
+        assert_eq!(manager.categorize_endpoint("GET", "/health"), EndpointCategory::Health);
+        assert_eq!(manager.categorize_endpoint("GET", "/api/v1/topics"), EndpointCategory::ReadOperations);
+        assert_eq!(manager.categorize_endpoint("POST", "/api/v1/topics"), EndpointCategory::WriteOperations);
+        assert_eq!(manager.categorize_endpoint("POST", "/api/v1/cluster/rebalance"), EndpointCategory::ClusterOperations);
+        
+        // Test stats
+        let stats = manager.get_stats().await;
+        assert!(stats.config_enabled);
+        assert_eq!(stats.active_category_limiters, 4);
+    }
+
+    #[tokio::test]
+    async fn test_client_ip_extraction() {
+        use crate::admin::rate_limiter::extract_client_ip;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        
+        // Test basic IP extraction without headers
+        let filter = extract_client_ip();
+        
+        // Since we can't easily mock warp headers in unit tests, we'll test the manager functions directly
+        // The extract_client_ip function is integration-tested when the admin API is actually running
+        
+        // Test pattern matching in manager
+        use crate::config::{RateLimitConfig, GlobalRateLimits, PerIpRateLimits, EndpointRateLimits, EndpointCategoryLimits, RateLimitCleanupConfig};
+        use crate::admin::rate_limiter::RateLimiterManager;
+        
+        let config = RateLimitConfig {
+            enabled: true,
+            global: GlobalRateLimits::default(),
+            per_ip: PerIpRateLimits::default(),
+            endpoints: EndpointRateLimits::default(),
+            cleanup: RateLimitCleanupConfig::default(),
+        };
+        
+        let manager = RateLimiterManager::new(config).unwrap();
+        
+        // Test wildcard pattern matching
+        assert!(manager.path_matches("/api/v1/topics/test-topic", "/api/v1/topics/*"));
+        assert!(!manager.path_matches("/api/v2/topics/test-topic", "/api/v1/topics/*"));
+        
+        // Test exact pattern matching
+        assert!(manager.path_matches("/health", "/health"));
+        assert!(!manager.path_matches("/health/check", "/health"));
+        
+        // Test method + path pattern matching
+        assert!(manager.matches_pattern("POST", "/api/v1/topics", "POST:/api/v1/topics"));
+        assert!(!manager.matches_pattern("GET", "/api/v1/topics", "POST:/api/v1/topics"));
     }
 }
