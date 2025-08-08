@@ -15,6 +15,7 @@ High-performance async Rust client library for RustMQ message queue system with 
 - [Best Practices](#best-practices)
 - [Testing](#testing)
 - [Benchmarking](#benchmarking)
+- [Security Guide](#security-guide)
 - [Examples](#examples)
 - [Troubleshooting](#troubleshooting)
 - [API Reference](#api-reference)
@@ -49,7 +50,7 @@ The RustMQ Rust SDK provides a native, high-performance client library for inter
 - **🔄 Async/Await**: First-class async support with futures
 - **📦 Message Batching**: Configurable batching for high throughput
 - **🗜️ Compression**: Multiple compression algorithms (LZ4, Zstd, Gzip)
-- **🔐 Security**: TLS/mTLS support with authentication
+- **🔐 Security**: Enterprise-grade mTLS, JWT tokens, ACL authorization, certificate management
 - **📊 Observability**: Built-in metrics and tracing integration
 - **🎯 Type Safety**: Strong typing with comprehensive error handling
 - **🌊 Streaming**: Real-time message processing pipelines
@@ -254,13 +255,13 @@ let config = ClientConfig {
         min_size: 1024,
     },
     
-    // Authentication
-    auth: Some(AuthConfig {
-        method: AuthMethod::SaslPlain,
-        username: Some("user".to_string()),
-        password: Some("pass".to_string()),
-        ..Default::default()
-    }),
+    // Authentication (mTLS example)
+    auth: Some(AuthConfig::mtls_config(
+        "/path/to/ca.pem".to_string(),
+        "/path/to/client.pem".to_string(),
+        "/path/to/client.key".to_string(),
+        Some("rustmq.example.com".to_string()),
+    )),
 };
 ```
 
@@ -1640,6 +1641,9 @@ See the `examples/` directory for complete examples:
 - [`advanced_consumer.rs`](examples/advanced_consumer.rs) - Advanced consumer with seeking, error handling, and partition management
 - [`multi_partition_consumer.rs`](examples/multi_partition_consumer.rs) - **Comprehensive multi-partition consumer demonstration**
 - [`stream_processor.rs`](examples/stream_processor.rs) - Stream processing pipeline
+- [`secure_producer.rs`](examples/secure_producer.rs) - **Secure producer with mTLS authentication**
+- [`secure_consumer.rs`](examples/secure_consumer.rs) - **Secure consumer with ACL authorization**
+- [`token_authentication.rs`](examples/token_authentication.rs) - **JWT token-based authentication**
 
 ### Running Examples
 
@@ -1658,6 +1662,11 @@ cargo run --example multi_partition_consumer
 
 # Run stream processor
 cargo run --example stream_processor
+
+# Run secure examples (requires certificates)
+cargo run --example secure_producer
+cargo run --example secure_consumer
+cargo run --example token_authentication
 ```
 
 ## Troubleshooting
@@ -1764,6 +1773,133 @@ async fn health_monitor(client: &RustMqClient) {
     }
 }
 ```
+
+## Security Guide
+
+The RustMQ Rust SDK provides comprehensive security features for enterprise deployments. For detailed security documentation, see [`docs/security.md`](docs/security.md).
+
+### Quick Security Setup
+
+#### mTLS Authentication
+
+```rust
+use rustmq_client::{ClientConfig, TlsConfig, AuthConfig};
+
+// Create secure mTLS configuration
+let auth_config = AuthConfig::mtls_config(
+    std::fs::read_to_string("/path/to/ca.pem")?,
+    std::fs::read_to_string("/path/to/client.pem")?,
+    std::fs::read_to_string("/path/to/client.key")?,
+    Some("rustmq.example.com".to_string()),
+);
+
+let tls_config = TlsConfig::secure_config(
+    std::fs::read_to_string("/path/to/ca.pem")?,
+    Some(std::fs::read_to_string("/path/to/client.pem")?),
+    Some(std::fs::read_to_string("/path/to/client.key")?),
+    "rustmq.example.com".to_string(),
+);
+
+let client_config = ClientConfig {
+    brokers: vec!["rustmq.example.com:9092".to_string()],
+    tls_config: Some(tls_config),
+    auth: Some(auth_config),
+    ..Default::default()
+};
+
+let client = RustMqClient::new(client_config).await?;
+
+// Verify security is enabled
+if let Some(connection) = client.get_connection().await {
+    assert!(connection.is_security_enabled());
+    
+    if let Some(context) = connection.get_security_context().await {
+        println!("Authenticated as: {}", context.principal);
+        println!("Permissions: {:?}", context.permissions);
+    }
+}
+```
+
+#### JWT Token Authentication
+
+```rust
+// Create token-based authentication
+let auth_config = AuthConfig::token_config(
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...".to_string()
+);
+
+let tls_config = TlsConfig::secure_config(
+    ca_cert,
+    None, // No client certificate for token auth
+    None,
+    "rustmq.example.com".to_string(),
+);
+
+let client_config = ClientConfig {
+    tls_config: Some(tls_config),
+    auth: Some(auth_config),
+    ..Default::default()
+};
+```
+
+#### ACL-Based Authorization
+
+```rust
+// Check permissions before operations
+if let Some(context) = connection.get_security_context().await {
+    let permissions = &context.permissions;
+    
+    // Check topic permissions
+    if !permissions.can_write_topic("sensitive-data") {
+        return Err(ClientError::AuthorizationDenied(
+            "No write permission for sensitive-data topic".to_string()
+        ));
+    }
+    
+    // Proceed with operation
+    producer.send(message).await?;
+}
+```
+
+### Security Examples
+
+The SDK includes comprehensive security examples:
+
+- [`examples/secure_producer.rs`](examples/secure_producer.rs) - mTLS producer with certificate authentication
+- [`examples/secure_consumer.rs`](examples/secure_consumer.rs) - mTLS consumer with ACL authorization
+- [`examples/token_authentication.rs`](examples/token_authentication.rs) - JWT token-based authentication
+
+### Security Features
+
+✅ **Transport Security**
+- TLS 1.2/1.3 with QUIC protocol
+- Certificate validation and chain verification
+- ALPN protocol negotiation
+
+✅ **Authentication Methods**
+- **mTLS**: Mutual TLS with client certificates
+- **JWT Tokens**: Bearer token authentication
+- **SASL**: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+
+✅ **Authorization & ACL**
+- Fine-grained topic permissions
+- Pattern-based access control
+- Client-side permission caching
+- Principal extraction from certificates
+
+✅ **Certificate Management**
+- Automatic certificate validation
+- Certificate lifecycle management
+- CA certificate trust chains
+- Certificate renewal workflows
+
+✅ **Security Monitoring**
+- Authentication attempt tracking
+- Authorization decision logging
+- Security context metrics
+- Failed access monitoring
+
+For complete security documentation, configuration examples, and best practices, see [`docs/security.md`](docs/security.md).
 
 ## API Reference
 

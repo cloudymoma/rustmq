@@ -113,6 +113,30 @@ pub enum ClientError {
     /// Invalid operation
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+
+    /// Security-related errors
+    #[error("Authorization denied: {0}")]
+    AuthorizationDenied(String),
+
+    /// Invalid certificate
+    #[error("Invalid certificate: {reason}")]
+    InvalidCertificate { reason: String },
+
+    /// Principal extraction error
+    #[error("Principal extraction failed: {0}")]
+    PrincipalExtraction(String),
+
+    /// Unsupported authentication method
+    #[error("Unsupported authentication method: {method}")]
+    UnsupportedAuthMethod { method: String },
+
+    /// ACL operation failed
+    #[error("ACL operation failed: {0}")]
+    AclOperation(String),
+
+    /// Certificate management error
+    #[error("Certificate management error: {0}")]
+    CertificateManagement(String),
 }
 
 impl From<std::io::Error> for ClientError {
@@ -191,6 +215,12 @@ impl ClientError {
             ClientError::BrokerNotAvailable { .. } => "broker_unavailable",
             ClientError::RateLimitExceeded(_) => "rate_limit",
             ClientError::InvalidOperation(_) => "invalid_operation",
+            ClientError::AuthorizationDenied(_) => "authorization",
+            ClientError::InvalidCertificate { .. } => "certificate",
+            ClientError::PrincipalExtraction(_) => "principal",
+            ClientError::UnsupportedAuthMethod { .. } => "auth_method",
+            ClientError::AclOperation(_) => "acl",
+            ClientError::CertificateManagement(_) => "cert_management",
         }
     }
 
@@ -210,7 +240,11 @@ impl ClientError {
             | ClientError::InvalidConfig(_)
             | ClientError::MessageTooLarge { .. }
             | ClientError::InvalidMessage(_)
-            | ClientError::InvalidOperation(_) => false,
+            | ClientError::InvalidOperation(_)
+            | ClientError::AuthorizationDenied(_)
+            | ClientError::InvalidCertificate { .. }
+            | ClientError::PrincipalExtraction(_)
+            | ClientError::UnsupportedAuthMethod { .. } => false,
             
             _ => false,
         }
