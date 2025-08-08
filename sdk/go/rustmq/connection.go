@@ -19,13 +19,15 @@ import (
 
 // Connection manages QUIC connections to RustMQ brokers
 type Connection struct {
-	config       *ClientConfig
-	connections  []quic.Connection
-	current      int64
-	mutex        sync.RWMutex
-	stats        *ConnectionStats
-	reconnecting map[int]bool
-	backoffState map[int]*BackoffState
+	config          *ClientConfig
+	connections     []quic.Connection
+	current         int64
+	mutex           sync.RWMutex
+	stats           *ConnectionStats
+	reconnecting    map[int]bool
+	backoffState    map[int]*BackoffState
+	securityManager *SecurityManager
+	tlsConfig       *tls.Config
 }
 
 // ConnectionStats holds connection statistics
@@ -78,10 +80,70 @@ func newConnection(config *ClientConfig) (*Connection, error) {
 	return conn, nil
 }
 
+// newConnectionWithSecurity creates a new connection with security manager support
+func newConnectionWithSecurity(config *ClientConfig, securityManager *SecurityManager) (*Connection, error) {
+	conn := &Connection{
+		config:          config,
+		connections:     make([]quic.Connection, 0, len(config.Brokers)),
+		reconnecting:    make(map[int]bool),
+		backoffState:    make(map[int]*BackoffState),
+		securityManager: securityManager,
+		stats: &ConnectionStats{
+			Brokers: config.Brokers,
+		},
+	}
+	
+	// Initialize backoff states for each broker
+	for i := range config.Brokers {
+		conn.backoffState[i] = &BackoffState{
+			backoff: config.RetryConfig.BaseDelay,
+		}
+	}
+	
+	// Create TLS config with security manager if available
+	if err := conn.initializeTLSConfig(); err != nil {
+		return nil, fmt.Errorf("failed to initialize TLS config: %w", err)
+	}
+	
+	// Establish connections to all brokers
+	if err := conn.establishConnections(); err != nil {
+		return nil, fmt.Errorf("failed to establish connections: %w", err)
+	}
+	
+	return conn, nil
+}
+
+// initializeTLSConfig initializes TLS configuration with security manager support
+func (c *Connection) initializeTLSConfig() error {
+	if !c.config.EnableTLS {
+		return nil
+	}
+	
+	// Use security manager if available
+	if c.securityManager != nil {
+		tlsConfig, err := c.securityManager.createTLSConfig()
+		if err != nil {
+			return fmt.Errorf("failed to create TLS config from security manager: %w", err)
+		}
+		c.tlsConfig = tlsConfig
+		return nil
+	}
+	
+	// Fallback to legacy TLS config
+	tlsConfig, err := c.buildTLSConfig()
+	if err != nil {
+		return fmt.Errorf("failed to build legacy TLS config: %w", err)
+	}
+	c.tlsConfig = tlsConfig
+	
+	return nil
+}
+
 // establishConnections connects to all configured brokers
 func (c *Connection) establishConnections() error {
-	var tlsConfig *tls.Config
-	if c.config.EnableTLS {
+	// Use the stored TLS config if available, otherwise use legacy method
+	tlsConfig := c.tlsConfig
+	if tlsConfig == nil && c.config.EnableTLS {
 		var err error
 		tlsConfig, err = c.buildTLSConfig()
 		if err != nil {

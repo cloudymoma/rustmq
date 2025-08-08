@@ -12,14 +12,16 @@ import (
 
 // Client represents the main RustMQ client for managing connections and creating producers/consumers
 type Client struct {
-	config      *ClientConfig
-	connection  *Connection
-	producers   map[string]*Producer
-	consumers   map[string]*Consumer
-	mutex       sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	healthCheck *HealthChecker
+	config          *ClientConfig
+	connection      *Connection
+	producers       map[string]*Producer
+	consumers       map[string]*Consumer
+	securityManager *SecurityManager
+	securityContext *SecurityContext
+	mutex           sync.RWMutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	healthCheck     *HealthChecker
 }
 
 // ClientConfig holds configuration for the RustMQ client
@@ -54,8 +56,11 @@ type ClientConfig struct {
 	// Compression settings
 	Compression *CompressionConfig `json:"compression"`
 	
-	// Authentication settings
+	// Authentication settings (deprecated - use Security.Auth instead)
 	Auth *AuthConfig `json:"auth,omitempty"`
+	
+	// Security configuration
+	Security *SecurityConfig `json:"security,omitempty"`
 }
 
 // TLSConfig holds TLS configuration
@@ -149,21 +154,30 @@ func NewClient(config *ClientConfig) (*Client, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create connection
-	connection, err := newConnection(config)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to create connection: %w", err)
+	client := &Client{
+		config:    config,
+		producers: make(map[string]*Producer),
+		consumers: make(map[string]*Consumer),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
-	client := &Client{
-		config:     config,
-		connection: connection,
-		producers:  make(map[string]*Producer),
-		consumers:  make(map[string]*Consumer),
-		ctx:        ctx,
-		cancel:     cancel,
+	// Initialize security manager if security is configured
+	if err := client.initializeSecurity(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize security: %w", err)
 	}
+
+	// Create connection with security context
+	connection, err := newConnectionWithSecurity(config, client.securityManager)
+	if err != nil {
+		cancel()
+		if client.securityManager != nil {
+			client.securityManager.Close()
+		}
+		return nil, fmt.Errorf("failed to create connection: %w", err)
+	}
+	client.connection = connection
 
 	// Start health checker
 	client.healthCheck = newHealthChecker(client)
@@ -295,6 +309,13 @@ func (c *Client) Close() error {
 	}
 	c.mutex.Unlock()
 
+	// Close security manager
+	if c.securityManager != nil {
+		if err := c.securityManager.Close(); err != nil {
+			fmt.Printf("Error closing security manager: %v\n", err)
+		}
+	}
+
 	// Close connection
 	return c.connection.Close()
 }
@@ -312,4 +333,139 @@ func (c *Client) GetConnection() *Connection {
 // Context returns the client context
 func (c *Client) Context() context.Context {
 	return c.ctx
+}
+
+// initializeSecurity initializes the security manager and performs authentication
+func (c *Client) initializeSecurity() error {
+	// Merge legacy auth config with new security config for backward compatibility
+	securityConfig := c.mergeSecurityConfig()
+	
+	if securityConfig == nil {
+		return nil // No security configured
+	}
+	
+	// Create security manager
+	securityManager, err := NewSecurityManager(securityConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create security manager: %w", err)
+	}
+	c.securityManager = securityManager
+	
+	// Perform authentication
+	securityContext, err := securityManager.Authenticate(c.ctx)
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+	c.securityContext = securityContext
+	
+	return nil
+}
+
+// mergeSecurityConfig merges legacy auth config with new security config
+func (c *Client) mergeSecurityConfig() *SecurityConfig {
+	var securityConfig *SecurityConfig
+	
+	// Start with new security config if provided
+	if c.config.Security != nil {
+		securityConfig = c.config.Security
+	} else if c.config.Auth != nil {
+		// Create security config from legacy auth config
+		securityConfig = &SecurityConfig{
+			Auth: &AuthenticationConfig{
+				Method:     AuthenticationMethod(c.config.Auth.Method),
+				Username:   c.config.Auth.Username,
+				Password:   c.config.Auth.Password,
+				Token:      c.config.Auth.Token,
+				Properties: c.config.Auth.Properties,
+			},
+		}
+	}
+	
+	// Configure TLS security if TLS is enabled
+	if c.config.EnableTLS && c.config.TLSConfig != nil {
+		if securityConfig == nil {
+			securityConfig = DefaultSecurityConfig()
+		}
+		
+		if securityConfig.TLS == nil {
+			securityConfig.TLS = &TLSSecurityConfig{}
+		}
+		
+		// Map legacy TLS config to security TLS config
+		securityConfig.TLS.Mode = TLSModeEnabled
+		securityConfig.TLS.CACert = c.config.TLSConfig.CACert
+		securityConfig.TLS.ClientCert = c.config.TLSConfig.ClientCert
+		securityConfig.TLS.ClientKey = c.config.TLSConfig.ClientKey
+		securityConfig.TLS.ServerName = c.config.TLSConfig.ServerName
+		securityConfig.TLS.InsecureSkipVerify = c.config.TLSConfig.InsecureSkipVerify
+		
+		// Enable mTLS if client certificate is provided
+		if securityConfig.TLS.ClientCert != "" && securityConfig.TLS.ClientKey != "" {
+			securityConfig.TLS.Mode = TLSModeMutualAuth
+			if securityConfig.Auth == nil {
+				securityConfig.Auth = &AuthenticationConfig{Method: AuthMethodMTLS}
+			}
+		}
+	}
+	
+	return securityConfig
+}
+
+// SecurityContext returns the current security context
+func (c *Client) SecurityContext() *SecurityContext {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.securityContext
+}
+
+// SecurityManager returns the security manager
+func (c *Client) SecurityManager() *SecurityManager {
+	return c.securityManager
+}
+
+// RefreshSecurityContext refreshes the security context
+func (c *Client) RefreshSecurityContext() error {
+	if c.securityManager == nil {
+		return fmt.Errorf("security manager not initialized")
+	}
+	
+	securityContext, err := c.securityManager.Authenticate(c.ctx)
+	if err != nil {
+		return fmt.Errorf("failed to refresh security context: %w", err)
+	}
+	
+	c.mutex.Lock()
+	c.securityContext = securityContext
+	c.mutex.Unlock()
+	
+	return nil
+}
+
+// IsSecured returns true if the client has security enabled
+func (c *Client) IsSecured() bool {
+	return c.securityManager != nil
+}
+
+// CanReadTopic checks if the client can read from a topic
+func (c *Client) CanReadTopic(topic string) bool {
+	if c.securityContext == nil || c.securityContext.Permissions == nil {
+		return true // Allow if no security context
+	}
+	return c.securityContext.Permissions.CanReadTopic(topic)
+}
+
+// CanWriteTopic checks if the client can write to a topic  
+func (c *Client) CanWriteTopic(topic string) bool {
+	if c.securityContext == nil || c.securityContext.Permissions == nil {
+		return true // Allow if no security context
+	}
+	return c.securityContext.Permissions.CanWriteTopic(topic)
+}
+
+// CanPerformAdminOperation checks if the client can perform admin operations
+func (c *Client) CanPerformAdminOperation(operation string) bool {
+	if c.securityContext == nil || c.securityContext.Permissions == nil {
+		return true // Allow if no security context
+	}
+	return c.securityContext.Permissions.CanPerformAdminOperation(operation)
 }
