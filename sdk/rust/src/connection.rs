@@ -1,5 +1,5 @@
 use crate::{
-    config::{ClientConfig, TlsConfig, TlsMode, AuthConfig, AuthMethod},
+    config::{ClientConfig, TlsConfig},
     error::{ClientError, Result},
     security::{SecurityManager, SecurityContext},
 };
@@ -7,8 +7,7 @@ use quinn::{
     Connection as QuicConnection, Endpoint, ClientConfig as QuinnClientConfig,
     TransportConfig, VarInt,
 };
-use rustls::pki_types::CertificateDer;
-use rustls_platform_verifier::BuilderVerifierExt;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{
     collections::HashMap,
     net::{SocketAddr, ToSocketAddrs},
@@ -19,7 +18,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     sync::{RwLock, Semaphore},
     time::{sleep, timeout},
 };
@@ -37,7 +35,6 @@ struct ConnectionEntry {
 }
 
 /// QUIC-based connection to RustMQ brokers with security support
-#[derive(Debug)]
 pub struct Connection {
     config: Arc<ClientConfig>,
     endpoint: Arc<Endpoint>,
@@ -65,7 +62,8 @@ impl Connection {
                 )?);
                 
                 // Perform initial authentication
-                let tls_config = config.tls_config.as_ref().unwrap_or(&TlsConfig::default());
+                let default_tls_config = TlsConfig::default();
+                let tls_config = config.tls_config.as_ref().unwrap_or(&default_tls_config);
                 let context = security_manager.authenticate(tls_config, auth_config).await?;
                 
                 (Some(security_manager), Arc::new(RwLock::new(Some(context))))
@@ -136,7 +134,8 @@ impl Connection {
     
     /// Create TLS client configuration with security support
     fn create_tls_client_config(config: &ClientConfig) -> Result<QuinnClientConfig> {
-        let tls_config = config.tls_config.as_ref().unwrap_or(&TlsConfig::default());
+        let default_tls_config = TlsConfig::default();
+        let tls_config = config.tls_config.as_ref().unwrap_or(&default_tls_config);
         
         if !tls_config.is_enabled() {
             return Self::create_insecure_client_config();
@@ -175,14 +174,15 @@ impl Connection {
         if let Some(ca_cert_pem) = &tls_config.ca_cert {
             // Load custom CA certificates
             let mut reader = std::io::BufReader::new(ca_cert_pem.as_bytes());
-            let certs = rustls_pemfile::certs(&mut reader).map_err(|e| {
+            let certs: std::result::Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
+            let certs = certs.map_err(|e| {
                 ClientError::InvalidCertificate {
                     reason: format!("Failed to parse CA certificate: {}", e),
                 }
             })?;
             
             for cert in certs {
-                root_store.add(&rustls::Certificate(cert)).map_err(|e| {
+                root_store.add(CertificateDer::from(cert)).map_err(|e| {
                     ClientError::InvalidCertificate {
                         reason: format!("Failed to add CA certificate: {}", e),
                     }
@@ -190,19 +190,12 @@ impl Connection {
             }
         } else if !tls_config.insecure_skip_verify {
             // Use system root certificates
-            root_store.add_server_trust_anchors(
-                webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-                    rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                        ta.subject,
-                        ta.spki,
-                        ta.name_constraints,
-                    )
-                }),
+            root_store.extend(
+                webpki_roots::TLS_SERVER_ROOTS.iter().cloned()
             );
         }
         
         let config_builder = rustls::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store);
         
         // Configure client authentication if mTLS is enabled
@@ -211,7 +204,7 @@ impl Connection {
             let client_key = Self::load_client_private_key(tls_config)?;
             
             config_builder
-                .with_single_cert(client_cert_chain, client_key)
+                .with_client_auth_cert(client_cert_chain, client_key)
                 .map_err(|e| ClientError::Tls(format!("Failed to configure client certificate: {}", e)))?
         } else {
             config_builder.with_no_client_auth()
@@ -221,23 +214,24 @@ impl Connection {
     }
     
     /// Load client certificate chain from TLS config
-    fn load_client_certificate_chain(tls_config: &TlsConfig) -> Result<Vec<rustls::Certificate>> {
+    fn load_client_certificate_chain(tls_config: &TlsConfig) -> Result<Vec<CertificateDer<'static>>> {
         let client_cert_pem = tls_config.client_cert.as_ref().ok_or_else(|| {
             ClientError::InvalidConfig("Client certificate required for mTLS".to_string())
         })?;
         
         let mut reader = std::io::BufReader::new(client_cert_pem.as_bytes());
-        let certs = rustls_pemfile::certs(&mut reader).map_err(|e| {
+        let certs: std::result::Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
+        let certs = certs.map_err(|e| {
             ClientError::InvalidCertificate {
                 reason: format!("Failed to parse client certificate: {}", e),
             }
         })?;
         
-        Ok(certs.into_iter().map(rustls::Certificate).collect())
+        Ok(certs.into_iter().map(CertificateDer::from).collect())
     }
     
     /// Load client private key from TLS config
-    fn load_client_private_key(tls_config: &TlsConfig) -> Result<rustls::PrivateKey> {
+    fn load_client_private_key(tls_config: &TlsConfig) -> Result<PrivateKeyDer<'static>> {
         let client_key_pem = tls_config.client_key.as_ref().ok_or_else(|| {
             ClientError::InvalidConfig("Client private key required for mTLS".to_string())
         })?;
@@ -245,17 +239,19 @@ impl Connection {
         let mut reader = std::io::BufReader::new(client_key_pem.as_bytes());
         
         // Try PKCS#8 format first
-        if let Ok(mut keys) = rustls_pemfile::pkcs8_private_keys(&mut reader) {
+        let keys: std::result::Result<Vec<_>, _> = rustls_pemfile::pkcs8_private_keys(&mut reader).collect();
+        if let Ok(mut keys) = keys {
             if !keys.is_empty() {
-                return Ok(rustls::PrivateKey(keys.remove(0)));
+                return Ok(PrivateKeyDer::from(keys.remove(0)));
             }
         }
         
         // Try RSA format
         let mut reader = std::io::BufReader::new(client_key_pem.as_bytes());
-        if let Ok(mut keys) = rustls_pemfile::rsa_private_keys(&mut reader) {
+        let keys: std::result::Result<Vec<_>, _> = rustls_pemfile::rsa_private_keys(&mut reader).collect();
+        if let Ok(mut keys) = keys {
             if !keys.is_empty() {
-                return Ok(rustls::PrivateKey(keys.remove(0)));
+                return Ok(PrivateKeyDer::from(keys.remove(0)));
             }
         }
         
@@ -460,7 +456,7 @@ impl Connection {
     #[instrument(skip(self, request))]
     pub async fn send_request(&self, request: Vec<u8>) -> Result<Vec<u8>> {
         // Check authorization if security is enabled
-        if let Some(security_manager) = &self.security_manager {
+        if let Some(_security_manager) = &self.security_manager {
             self.check_request_authorization(&request).await?;
         }
         
@@ -929,7 +925,7 @@ impl Connection {
         if let Some(context) = security_context.as_ref() {
             // TODO: Parse request to determine required permissions
             // For now, just check if we have a valid security context
-            if context.auth_time.elapsed() > Duration::from_hours(1) {
+            if context.auth_time.elapsed() > Duration::from_secs(3600) {
                 return Err(ClientError::AuthorizationDenied(
                     "Security context expired".to_string()
                 ));
@@ -954,7 +950,8 @@ impl Connection {
     /// Refresh security context (re-authenticate)
     pub async fn refresh_security_context(&self) -> Result<()> {
         if let (Some(security_manager), Some(auth_config)) = (&self.security_manager, &self.config.auth) {
-            let tls_config = self.config.tls_config.as_ref().unwrap_or(&TlsConfig::default());
+            let default_tls_config = TlsConfig::default();
+            let tls_config = self.config.tls_config.as_ref().unwrap_or(&default_tls_config);
             let new_context = security_manager.authenticate(tls_config, auth_config).await?;
             
             *self.security_context.write().await = Some(new_context);

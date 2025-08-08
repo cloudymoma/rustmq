@@ -14,6 +14,7 @@ use async_trait::async_trait;
 /// High-level streaming interface for real-time message processing
 pub struct MessageStream {
     config: StreamConfig,
+    #[allow(dead_code)]
     client: RustMqClient,
     consumers: Vec<Consumer>,
     producer: Option<Producer>,

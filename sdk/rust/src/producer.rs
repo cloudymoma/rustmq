@@ -2,17 +2,17 @@ use crate::{
     client::RustMqClient,
     config::{ProducerConfig, AckLevel},
     error::{ClientError, Result},
-    message::{Message, MessageBatch},
+    message::Message,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Semaphore, oneshot};
-use tokio::time::{Duration, Instant};
+use tokio::sync::{mpsc, RwLock, oneshot};
+use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 
 /// High-level producer for sending messages to RustMQ
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Producer {
     id: String,
     topic: String,
@@ -31,15 +31,19 @@ pub struct Producer {
 /// 
 /// # Example
 /// 
-/// ```rust
-/// use rustmq_sdk::{
-///     client::RustMqClient,
-///     producer::ProducerBuilder,
-///     config::{ProducerConfig, AckLevel},
-/// };
-/// use std::time::Duration;
-/// 
-/// let client = RustMqClient::new(client_config).await?;
+/// ```rust,no_run
+/// # use rustmq_client::{
+/// #     client::RustMqClient,
+/// #     producer::ProducerBuilder,
+/// #     config::{ProducerConfig, AckLevel, ClientConfig},
+/// # };
+/// # use std::time::Duration;
+/// # 
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # rustls::crypto::aws_lc_rs::default_provider().install_default().unwrap();
+/// # let client_config = ClientConfig::default();
+/// # let client = RustMqClient::new(client_config).await?;
 /// 
 /// let producer = ProducerBuilder::new()
 ///     .topic("events")
@@ -53,6 +57,8 @@ pub struct Producer {
 ///     .client(client)
 ///     .build()
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct ProducerBuilder {
     topic: Option<String>,
@@ -131,6 +137,16 @@ pub struct ProducerMetrics {
     pub batches_sent: Arc<std::sync::atomic::AtomicU64>,
     pub average_batch_size: Arc<RwLock<f64>>,
     pub last_send_time: Arc<RwLock<Option<Instant>>>,
+}
+
+impl std::fmt::Debug for Producer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Producer")
+            .field("id", &self.id)
+            .field("topic", &self.topic)
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl ProducerBuilder {
@@ -255,8 +271,23 @@ impl Producer {
     /// 
     /// # Example
     /// 
-    /// ```rust
-    /// use rustmq_sdk::message::MessageBuilder;
+    /// ```rust,no_run
+    /// # use rustmq_client::{
+    /// #     client::RustMqClient,
+    /// #     producer::{Producer, ProducerBuilder},
+    /// #     message::MessageBuilder,
+    /// #     config::{ProducerConfig, ClientConfig},
+    /// # };
+    /// # 
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client_config = ClientConfig::default();
+    /// # let client = RustMqClient::new(client_config).await?;
+    /// # let producer = ProducerBuilder::new()
+    /// #     .topic("my-topic")
+    /// #     .client(client)
+    /// #     .build()
+    /// #     .await?;
     /// 
     /// let message = MessageBuilder::new()
     ///     .topic("my-topic")
@@ -266,6 +297,8 @@ impl Producer {
     /// 
     /// let result = producer.send(message).await?;
     /// println!("Message sent to partition {} at offset {}", result.partition, result.offset);
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn send(&self, message: Message) -> Result<MessageResult> {
         let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
@@ -316,8 +349,28 @@ impl Producer {
     /// 
     /// # Example
     /// 
-    /// ```rust
-    /// use rustmq_sdk::message::MessageBuilder;
+    /// ```rust,no_run
+    /// # use rustmq_client::{
+    /// #     client::RustMqClient,
+    /// #     producer::{Producer, ProducerBuilder},
+    /// #     message::MessageBuilder,
+    /// #     config::{ProducerConfig, ClientConfig},
+    /// # };
+    /// # use serde::Serialize;
+    /// # 
+    /// # #[derive(Serialize)]
+    /// # struct EventData { id: u32, name: String }
+    /// # 
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client_config = ClientConfig::default();
+    /// # let client = RustMqClient::new(client_config).await?;
+    /// # let producer = ProducerBuilder::new()
+    /// #     .topic("events")
+    /// #     .client(client)
+    /// #     .build()
+    /// #     .await?;
+    /// # let event_data = EventData { id: 1, name: "test".to_string() };
     /// 
     /// let message = MessageBuilder::new()
     ///     .topic("events")
@@ -327,6 +380,8 @@ impl Producer {
     /// 
     /// // Fire and forget - returns immediately
     /// producer.send_async(message).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn send_async(&self, message: Message) -> Result<()> {
         let (result_sender, _) = tokio::sync::oneshot::channel();
@@ -373,8 +428,23 @@ impl Producer {
     /// 
     /// # Example
     /// 
-    /// ```rust
-    /// use rustmq_sdk::message::MessageBuilder;
+    /// ```rust,no_run
+    /// # use rustmq_client::{
+    /// #     client::RustMqClient,
+    /// #     producer::{Producer, ProducerBuilder},
+    /// #     message::MessageBuilder,
+    /// #     config::{ProducerConfig, ClientConfig},
+    /// # };
+    /// # 
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client_config = ClientConfig::default();
+    /// # let client = RustMqClient::new(client_config).await?;
+    /// # let producer = ProducerBuilder::new()
+    /// #     .topic("batch-topic")
+    /// #     .client(client)
+    /// #     .build()
+    /// #     .await?;
     /// 
     /// let messages: Vec<_> = (0..3).map(|i| {
     ///     MessageBuilder::new()
@@ -388,6 +458,8 @@ impl Producer {
     /// for result in results {
     ///     println!("Sent message {} to offset {}", result.message_id, result.offset);
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn send_batch(&self, messages: Vec<Message>) -> Result<Vec<MessageResult>> {
         let mut results = Vec::with_capacity(messages.len());
@@ -437,13 +509,40 @@ impl Producer {
     /// 
     /// # Example
     /// 
-    /// ```rust
+    /// ```rust,no_run
+    /// # use rustmq_client::{
+    /// #     client::RustMqClient,
+    /// #     producer::{Producer, ProducerBuilder},
+    /// #     message::MessageBuilder,
+    /// #     config::{ProducerConfig, ClientConfig},
+    /// # };
+    /// # 
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client_config = ClientConfig::default();
+    /// # let client = RustMqClient::new(client_config).await?;
+    /// # let producer = ProducerBuilder::new()
+    /// #     .topic("test-topic")
+    /// #     .client(client)
+    /// #     .build()
+    /// #     .await?;
+    /// # let message1 = MessageBuilder::new()
+    /// #     .topic("test-topic")
+    /// #     .payload("message 1")
+    /// #     .build()?;
+    /// # let message2 = MessageBuilder::new()
+    /// #     .topic("test-topic")
+    /// #     .payload("message 2")
+    /// #     .build()?;
+    /// 
     /// // Send some messages
     /// producer.send_async(message1).await?;
     /// producer.send_async(message2).await?;
     /// 
     /// // Close and flush all remaining messages
     /// producer.close().await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn close(&self) -> Result<()> {
         // Flush remaining messages before closing
@@ -473,10 +572,29 @@ impl Producer {
     /// 
     /// # Example
     /// 
-    /// ```rust
+    /// ```rust,no_run
+    /// # use rustmq_client::{
+    /// #     client::RustMqClient,
+    /// #     producer::{Producer, ProducerBuilder},
+    /// #     config::{ProducerConfig, ClientConfig},
+    /// # };
+    /// # use std::sync::atomic::Ordering;
+    /// # 
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client_config = ClientConfig::default();
+    /// # let client = RustMqClient::new(client_config).await?;
+    /// # let producer = ProducerBuilder::new()
+    /// #     .topic("test-topic")
+    /// #     .client(client)
+    /// #     .build()
+    /// #     .await?;
+    /// 
     /// let metrics = producer.metrics().await;
     /// println!("Messages sent: {}", metrics.messages_sent.load(Ordering::Relaxed));
     /// println!("Average batch size: {:.2}", *metrics.average_batch_size.read().await);
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn metrics(&self) -> ProducerMetrics {
         ProducerMetrics {

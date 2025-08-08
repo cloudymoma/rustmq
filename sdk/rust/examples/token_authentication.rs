@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     println!("Creating producer with token authentication...");
     
     // Create producer
-    let producer = client.create_producer("token-topic", producer_config).await?;
+    let producer = client.create_producer("token-topic").await?;
 
     println!("Sending messages with token authentication...");
     
@@ -94,10 +94,11 @@ async fn main() -> Result<()> {
     for i in 0..5 {
         let message = MessageBuilder::new()
             .key(format!("token-key-{}", i))
-            .value(format!("Message {} sent with JWT token authentication", i))
+            .payload(format!("Message {} sent with JWT token authentication", i))
             .header("auth-method", "jwt-token")
             .header("timestamp", &chrono::Utc::now().to_rfc3339())
-            .build();
+            .build()
+            .map_err(|e| rustmq_client::ClientError::InvalidConfig(e))?;
 
         match producer.send(message).await {
             Ok(metadata) => {
@@ -142,21 +143,3 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "integration-tests"))]
-fn main() {
-    println!("This example requires a valid JWT token and a running RustMQ broker with token authentication enabled.");
-    println!("To run this example:");
-    println!("1. Configure RustMQ broker with JWT token validation");
-    println!("2. Generate a valid JWT token with appropriate claims");
-    println!("3. Update the token in this example");
-    println!("4. Run with: cargo run --example token_authentication --features integration-tests");
-    
-    println!("\nExample JWT token payload:");
-    println!("{{");
-    println!("  \"sub\": \"user-id\",");
-    println!("  \"iat\": 1640995200,");
-    println!("  \"exp\": 1672531200,");
-    println!("  \"roles\": [\"producer\", \"consumer\"],");
-    println!("  \"topics\": [\"token-topic\", \"logs.*\"]");
-    println!("}}");
-}

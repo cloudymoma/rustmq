@@ -5,8 +5,9 @@
 
 use rustmq_client::{
     ClientConfig, TlsConfig, AuthConfig, ConsumerConfig, 
-    RustMqClient, StartPosition,
+    RustMqClient,
     Result,
+    config::StartPosition,
 };
 use std::time::Duration;
 use tokio;
@@ -100,7 +101,7 @@ async fn main() -> Result<()> {
     println!("Creating secure consumer...");
     
     // Create consumer
-    let consumer = client.create_consumer("secure-topic", consumer_config).await?;
+    let consumer = client.create_consumer("secure-topic", &consumer_config.consumer_group).await?;
 
     println!("Starting secure message consumption...");
     println!("Press Ctrl+C to stop consuming messages");
@@ -110,22 +111,22 @@ async fn main() -> Result<()> {
     
     loop {
         match consumer.receive().await {
-            Ok(message) => {
+            Ok(Some(message)) => {
                 message_count += 1;
                 
                 println!("✓ Received secure message {} from authenticated source:", message_count);
-                println!("  Key: {:?}", message.key);
-                println!("  Value: {}", String::from_utf8_lossy(&message.value));
-                println!("  Partition: {}", message.partition);
-                println!("  Offset: {}", message.offset);
+                println!("  Key: {:?}", message.message.key);
+                println!("  Value: {}", String::from_utf8_lossy(&message.message.payload));
+                println!("  Partition: {}", message.message.partition);
+                println!("  Offset: {}", message.message.offset);
                 
                 // Show message headers
-                for (key, value) in &message.headers {
+                for (key, value) in &message.message.headers {
                     println!("  Header {}: {}", key, value);
                 }
                 
                 // Acknowledge message processing
-                consumer.acknowledge(&message).await?;
+                message.ack().await?;
                 
                 // Demonstrate periodic security context refresh
                 if message_count % 10 == 0 {
@@ -135,6 +136,10 @@ async fn main() -> Result<()> {
                         println!("✓ Security context refreshed");
                     }
                 }
+            }
+            Ok(None) => {
+                // No message available, continue polling
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
             Err(e) => {
                 eprintln!("Error receiving message: {}", e);
@@ -166,13 +171,3 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "integration-tests"))]
-fn main() {
-    println!("This example requires certificate files and a running RustMQ broker with mTLS enabled.");
-    println!("To run this example:");
-    println!("1. Generate certificates (see docs/security/certificates.md)");
-    println!("2. Start RustMQ broker with mTLS configuration");
-    println!("3. Configure ACL rules for the consumer principal");
-    println!("4. Update certificate paths in this example");
-    println!("5. Run with: cargo run --example secure_consumer --features integration-tests");
-}

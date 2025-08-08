@@ -2898,6 +2898,29 @@ groups:
 
 ## 🔧 Development & Troubleshooting
 
+### 🔐 Development Certificates
+
+For testing and examples that use mTLS authentication, you'll need to generate development certificates:
+
+```bash
+# Generate development certificates (self-signed, valid for 10 years)
+./generate-certs.sh
+```
+
+This creates the following certificates in the `certs/` directory:
+- `ca.pem` - Certificate Authority certificate
+- `client.pem` + `client.key` - Client certificate and private key
+- `consumer.pem` + `consumer.key` - Consumer certificate and private key
+
+**⚠️ Security Notice**: These are development-only certificates. Do NOT use in production!
+
+The certificates enable you to run secure examples:
+```bash
+cargo run --example secure_producer
+cargo run --example secure_consumer  
+cargo run --example token_authentication
+```
+
 ### Current Development Issues
 
 **Note**: Since RustMQ is in early development, most "issues" are actually missing implementations.

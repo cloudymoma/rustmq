@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     println!("Creating secure producer...");
     
     // Create producer
-    let producer = client.create_producer("secure-topic", producer_config).await?;
+    let producer = client.create_producer("secure-topic").await?;
 
     println!("Sending secure messages...");
     
@@ -92,10 +92,11 @@ async fn main() -> Result<()> {
     for i in 0..10 {
         let message = MessageBuilder::new()
             .key(format!("key-{}", i))
-            .value(format!("Secure message {} from mTLS authenticated client", i))
+            .payload(format!("Secure message {} from mTLS authenticated client", i))
             .header("source", "secure-producer-example")
             .header("timestamp", &chrono::Utc::now().to_rfc3339())
-            .build();
+            .build()
+            .map_err(|e| rustmq_client::ClientError::InvalidConfig(e))?;
 
         match producer.send(message).await {
             Ok(metadata) => {
@@ -123,12 +124,3 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "integration-tests"))]
-fn main() {
-    println!("This example requires certificate files and a running RustMQ broker with mTLS enabled.");
-    println!("To run this example:");
-    println!("1. Generate certificates (see docs/security/certificates.md)");
-    println!("2. Start RustMQ broker with mTLS configuration");
-    println!("3. Update certificate paths in this example");
-    println!("4. Run with: cargo run --example secure_producer --features integration-tests");
-}

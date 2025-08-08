@@ -26,6 +26,7 @@ pub use producer::{Producer, ProducerBuilder};
 pub use consumer::{Consumer, ConsumerBuilder};
 pub use stream::{MessageStream, StreamConfig};
 pub use types::*;
+pub use connection::Connection;
 pub use security::{
     SecurityManager, SecurityContext, CertificateInfo, PermissionSet,
     Principal, PrincipalExtractor, CertificateValidator, AclCache,
@@ -36,10 +37,29 @@ pub use security::{
 mod tests {
     use super::*;
     
-    #[tokio::test]
-    async fn test_basic_client_creation() {
+    #[test]
+    fn test_basic_client_config_validation() {
+        // Test client configuration validation (no network calls)
         let config = ClientConfig::default();
-        let client = RustMqClient::new(config).await;
-        assert!(client.is_ok());
+        
+        // Verify default configuration values
+        assert_eq!(config.brokers, vec!["localhost:9092".to_string()]);
+        assert_eq!(config.client_id, None);
+        assert_eq!(config.enable_tls, false);
+        assert_eq!(config.max_connections, 10);
+        
+        // Test custom configuration creation
+        let custom_config = ClientConfig {
+            brokers: vec!["broker1:9092".to_string(), "broker2:9092".to_string()],
+            client_id: Some("test-client".to_string()),
+            enable_tls: true,
+            max_connections: 20,
+            ..Default::default()
+        };
+        
+        assert_eq!(custom_config.brokers.len(), 2);
+        assert_eq!(custom_config.client_id, Some("test-client".to_string()));
+        assert_eq!(custom_config.enable_tls, true);
+        assert_eq!(custom_config.max_connections, 20);
     }
 }

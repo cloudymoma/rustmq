@@ -7,7 +7,18 @@ use rustmq_client::{
     ClientError, Connection,
 };
 use std::collections::HashMap;
+use std::sync::Once;
 use tokio;
+
+static INIT: Once = Once::new();
+
+fn init_crypto() {
+    INIT.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install crypto provider");
+    });
+}
 
 #[tokio::test]
 async fn test_tls_config_validation() {
@@ -238,8 +249,7 @@ async fn test_error_categorization() {
 
 #[tokio::test]
 async fn test_connection_security_methods() {
-    // This test would require a running broker for full integration
-    // For now, we'll test the configuration and error handling
+    // Test connection security configuration validation without network connections
     
     let client_config = ClientConfig {
         brokers: vec!["localhost:9092".to_string()],
@@ -248,18 +258,49 @@ async fn test_connection_security_methods() {
         ..Default::default()
     };
     
-    // This would fail in practice without a running broker, but we can test config validation
-    match Connection::new(&client_config).await {
-        Ok(connection) => {
-            // If this succeeds (unlikely without a broker), test security methods
-            assert!(!connection.is_security_enabled()); // Default auth is None
-            assert!(connection.get_security_context().await.is_none());
-        }
-        Err(err) => {
-            // Expected to fail without a running broker
-            assert!(matches!(err, ClientError::Connection(_) | ClientError::NoConnectionsAvailable));
-        }
-    }
+    // Verify security configuration properties
+    assert!(client_config.tls_config.is_some());
+    assert!(client_config.auth.is_some());
+    
+    let tls_config = client_config.tls_config.as_ref().unwrap();
+    assert_eq!(tls_config.mode, TlsMode::Disabled); // Default TLS is disabled
+    assert!(!tls_config.is_enabled());
+    
+    let auth_config = client_config.auth.as_ref().unwrap();
+    assert_eq!(auth_config.method, AuthMethod::None); // Default auth is None
+    assert!(!auth_config.requires_tls());
+    assert!(!auth_config.supports_acl());
+    
+    // Test enabled security configuration
+    let secure_config = ClientConfig {
+        brokers: vec!["localhost:9092".to_string()],
+        tls_config: Some(TlsConfig::secure_config(
+            "ca-cert".to_string(),
+            Some("client-cert".to_string()),
+            Some("client-key".to_string()),
+            "localhost".to_string(),
+        )),
+        auth: Some(AuthConfig::mtls_config(
+            "ca-cert".to_string(),
+            "client-cert".to_string(),
+            "client-key".to_string(),
+            Some("localhost".to_string()),
+        )),
+        ..Default::default()
+    };
+    
+    // Verify enabled security configuration properties
+    let secure_tls = secure_config.tls_config.as_ref().unwrap();
+    assert!(secure_tls.is_enabled());
+    assert!(secure_tls.requires_client_cert());
+    
+    let secure_auth = secure_config.auth.as_ref().unwrap();
+    assert_eq!(secure_auth.method, AuthMethod::Mtls);
+    assert!(secure_auth.requires_tls());
+    assert!(secure_auth.supports_acl());
+    
+    // Note: Actual connection creation requires a running broker
+    // This test validates security configuration structure and validation logic
 }
 
 #[test]

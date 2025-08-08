@@ -17,7 +17,7 @@ use std::collections::{HashMap, VecDeque, BTreeSet};
 use std::sync::atomic::Ordering;
 
 /// High-level consumer for receiving messages from RustMQ
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Consumer {
     id: String,
     topic: String,
@@ -195,8 +195,10 @@ pub enum ConsumerResponse {
 struct FailedMessage {
     message: Message,
     retry_count: usize,
+    #[allow(dead_code)]
     last_error: String,
     next_retry_time: Instant,
+    #[allow(dead_code)]
     partition: u32,
 }
 
@@ -221,11 +223,15 @@ pub struct PartitionAssignment {
 /// Per-partition consumer state
 #[derive(Debug, Clone)]
 struct PartitionState {
+    #[allow(dead_code)]
     pub partition_id: u32,
+    #[allow(dead_code)]
     pub committed_offset: u64,
+    #[allow(dead_code)]
     pub pending_offsets: BTreeSet<u64>,
     pub last_fetch_time: Option<Instant>,
     pub is_paused: bool,
+    #[allow(dead_code)]
     pub failed_messages: VecDeque<FailedMessage>,
 }
 
@@ -941,7 +947,6 @@ impl Consumer {
 
     /// Update metrics when receiving a message
     async fn update_receive_metrics(&self, message: &Message) {
-        use std::sync::atomic::Ordering;
         
         self.metrics.messages_received.fetch_add(1, Ordering::Relaxed);
         self.metrics.bytes_received.fetch_add(message.size as u64, Ordering::Relaxed);

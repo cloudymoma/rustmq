@@ -1,17 +1,16 @@
 use crate::{
     config::ClientConfig,
     connection::Connection,
-    error::{ClientError, Result},
+    error::Result,
     producer::{Producer, ProducerBuilder},
     consumer::{Consumer, ConsumerBuilder},
     stream::{MessageStream, StreamConfig},
 };
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use dashmap::DashMap;
 
 /// Main RustMQ client for managing connections and creating producers/consumers
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RustMqClient {
     config: Arc<ClientConfig>,
     connection: Arc<Connection>,
@@ -118,5 +117,14 @@ impl RustMqClient {
     /// Get client health status
     pub async fn health_check(&self) -> Result<bool> {
         self.connection.health_check().await
+    }
+
+    /// Get a connection if available
+    pub async fn get_connection(&self) -> Option<&Connection> {
+        if self.connection.is_connected().await {
+            Some(&self.connection)
+        } else {
+            None
+        }
     }
 }

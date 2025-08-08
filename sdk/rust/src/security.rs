@@ -9,17 +9,18 @@
 use crate::{
     config::{
         TlsConfig, TlsMode, AuthConfig, AuthMethod, SecurityConfig,
-        PrincipalExtractionConfig, AclClientConfig, CertificateValidationConfig,
+        PrincipalExtractionConfig, AclClientConfig,
     },
     error::{ClientError, Result},
 };
-use rustls::{Certificate, PrivateKey, RootCertStore, ClientConfig as RustlsClientConfig};
+use rustls::{RootCertStore, ClientConfig as RustlsClientConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::{
     collections::HashMap,
     io::BufReader,
     sync::{Arc, RwLock},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tokio::sync::RwLock as AsyncRwLock;
 use x509_parser::prelude::*;
@@ -201,7 +202,8 @@ impl SecurityManager {
     /// Load certificate from PEM format
     fn load_certificate_from_pem(&self, pem_data: &str) -> Result<Vec<u8>> {
         let mut reader = BufReader::new(pem_data.as_bytes());
-        let certs = certs(&mut reader).map_err(|e| {
+        let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
+        let certs = certs.map_err(|e| {
             ClientError::InvalidCertificate {
                 reason: format!("Failed to parse certificate PEM: {}", e),
             }
@@ -293,19 +295,12 @@ impl SecurityManager {
             self.load_ca_certificates(&mut root_store, ca_cert_pem)?;
         } else if !tls_config.insecure_skip_verify {
             // Load system root certificates
-            root_store.add_server_trust_anchors(
-                webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-                    rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                        ta.subject,
-                        ta.spki,
-                        ta.name_constraints,
-                    )
-                }),
+            root_store.extend(
+                webpki_roots::TLS_SERVER_ROOTS.iter().cloned()
             );
         }
 
         let config_builder = RustlsClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store);
 
         // Configure client authentication if mTLS is enabled
@@ -314,7 +309,7 @@ impl SecurityManager {
             let client_key = self.load_client_private_key(tls_config)?;
             
             config_builder
-                .with_single_cert(client_cert_chain, client_key)
+                .with_client_auth_cert(client_cert_chain, client_key)
                 .map_err(|e| ClientError::Tls(format!("Failed to configure client certificate: {}", e)))?
         } else {
             config_builder
@@ -327,14 +322,15 @@ impl SecurityManager {
     /// Load CA certificates into root store
     fn load_ca_certificates(&self, root_store: &mut RootCertStore, ca_cert_pem: &str) -> Result<()> {
         let mut reader = BufReader::new(ca_cert_pem.as_bytes());
-        let certs = certs(&mut reader).map_err(|e| {
+        let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
+        let certs = certs.map_err(|e| {
             ClientError::InvalidCertificate {
                 reason: format!("Failed to parse CA certificate PEM: {}", e),
             }
         })?;
 
         for cert in certs {
-            root_store.add(&rustls::Certificate(cert)).map_err(|e| {
+            root_store.add(CertificateDer::from(cert)).map_err(|e| {
                 ClientError::InvalidCertificate {
                     reason: format!("Failed to add CA certificate: {}", e),
                 }
@@ -345,23 +341,24 @@ impl SecurityManager {
     }
 
     /// Load client certificate chain
-    fn load_client_certificate_chain(&self, tls_config: &TlsConfig) -> Result<Vec<Certificate>> {
+    fn load_client_certificate_chain(&self, tls_config: &TlsConfig) -> Result<Vec<CertificateDer<'static>>> {
         let client_cert_pem = tls_config.client_cert.as_ref().ok_or_else(|| {
             ClientError::InvalidConfig("Client certificate required".to_string())
         })?;
 
         let mut reader = BufReader::new(client_cert_pem.as_bytes());
-        let certs = certs(&mut reader).map_err(|e| {
+        let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
+        let certs = certs.map_err(|e| {
             ClientError::InvalidCertificate {
                 reason: format!("Failed to parse client certificate PEM: {}", e),
             }
         })?;
 
-        Ok(certs.into_iter().map(Certificate).collect())
+        Ok(certs.into_iter().map(CertificateDer::from).collect())
     }
 
     /// Load client private key
-    fn load_client_private_key(&self, tls_config: &TlsConfig) -> Result<PrivateKey> {
+    fn load_client_private_key(&self, tls_config: &TlsConfig) -> Result<PrivateKeyDer<'static>> {
         let client_key_pem = tls_config.client_key.as_ref().ok_or_else(|| {
             ClientError::InvalidConfig("Client private key required".to_string())
         })?;
@@ -369,17 +366,19 @@ impl SecurityManager {
         let mut reader = BufReader::new(client_key_pem.as_bytes());
         
         // Try PKCS#8 format first
-        if let Ok(mut keys) = pkcs8_private_keys(&mut reader) {
+        let keys: std::result::Result<Vec<_>, _> = pkcs8_private_keys(&mut reader).collect();
+        if let Ok(mut keys) = keys {
             if !keys.is_empty() {
-                return Ok(PrivateKey(keys.remove(0)));
+                return Ok(PrivateKeyDer::from(keys.remove(0)));
             }
         }
 
         // Try RSA format
         let mut reader = BufReader::new(client_key_pem.as_bytes());
-        if let Ok(mut keys) = rsa_private_keys(&mut reader) {
+        let keys: std::result::Result<Vec<_>, _> = rsa_private_keys(&mut reader).collect();
+        if let Ok(mut keys) = keys {
             if !keys.is_empty() {
-                return Ok(PrivateKey(keys.remove(0)));
+                return Ok(PrivateKeyDer::from(keys.remove(0)));
             }
         }
 
@@ -595,7 +594,7 @@ impl SecurityMetrics {
 }
 
 /// Helper function for pattern matching
-fn matches_pattern(text: &str, pattern: &str) -> bool {
+pub fn matches_pattern(text: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
     }

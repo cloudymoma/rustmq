@@ -533,10 +533,10 @@ impl Default for AuthConfig {
 impl AuthConfig {
     /// Create a new mTLS authentication configuration
     pub fn mtls_config(
-        ca_cert: String,
-        client_cert: String,
-        client_key: String,
-        server_name: Option<String>,
+        _ca_cert: String,
+        _client_cert: String,
+        _client_key: String,
+        _server_name: Option<String>,
     ) -> Self {
         Self {
             method: AuthMethod::Mtls,
