@@ -1,0 +1,92 @@
+# Root CA Configuration Example
+# This is a template - customize for your organization
+
+[root_ca]
+# Basic CA Information
+common_name = "{{COMPANY_NAME}} RustMQ Root CA"
+organization = "{{COMPANY_NAME}}"
+organizational_unit = "IT Security"
+country = "US"
+state = "California" 
+city = "San Francisco"
+
+# Security Parameters
+key_algorithm = "RSA"
+key_size = 4096
+signature_algorithm = "SHA256WithRSA"
+validity_years = 20
+
+# Certificate Policies
+[root_ca.policies]
+certificate_policy_oid = "1.3.6.1.4.1.99999.1.1"
+certificate_policy_name = "{{COMPANY_NAME}} Certificate Policy"
+cps_uri = "https://pki.{{DOMAIN}}/cps"
+user_notice = "This certificate is issued under the {{COMPANY_NAME}} Certificate Policy"
+
+# Key Usage Restrictions
+[root_ca.key_usage]
+digital_signature = false
+key_encipherment = false
+key_agreement = false
+key_cert_sign = true
+crl_sign = true
+data_encipherment = false
+content_commitment = false
+
+# Basic Constraints
+[root_ca.basic_constraints]
+ca = true
+path_length_constraint = 2  # Allow up to 2 levels of intermediate CAs
+
+# Security Features
+[root_ca.security]
+# Hardware Security Module (recommended for production)
+use_hsm = false  # Set to true for production
+hsm_type = "pkcs11"
+hsm_library = "/usr/lib/softhsm2/libsofthsm2.so"
+hsm_slot_id = 0
+hsm_pin_file = "/etc/rustmq/secrets/hsm-pin"
+
+# Key protection
+encrypt_private_key = true
+private_key_password_file = "/etc/rustmq/secrets/ca-password"
+
+# Backup and recovery
+enable_key_backup = true
+backup_encryption = true
+backup_location = "/secure/backup/ca"
+
+# Auditing
+audit_all_operations = true
+audit_log_file = "/var/log/rustmq/ca-audit.log"
+require_dual_control = true  # Require two operators for sensitive operations
+
+# Certificate Revocation List (CRL)
+[root_ca.crl]
+crl_distribution_points = ["http://crl.{{DOMAIN}}/rustmq-root-ca.crl"]
+crl_validity_hours = 24
+auto_generate_crl = true
+crl_generation_interval_hours = 6
+
+# Online Certificate Status Protocol (OCSP)
+[root_ca.ocsp]
+ocsp_responder_url = "http://ocsp.{{DOMAIN}}/rustmq-root-ca"
+enable_ocsp_signing = true
+ocsp_response_validity_hours = 24
+
+# Extensions
+[root_ca.extensions]
+# Authority Key Identifier
+authority_key_identifier = true
+
+# Subject Key Identifier  
+subject_key_identifier = true
+
+# Certificate Policies
+certificate_policies = true
+
+# Name Constraints (optional - restrict what can be issued)
+[root_ca.name_constraints]
+permitted_dns_domains = [".{{DOMAIN}}", ".internal.{{DOMAIN}}"]
+excluded_dns_domains = [".external.com", ".public.net"]
+permitted_ip_ranges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

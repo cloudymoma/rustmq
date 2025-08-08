@@ -75,7 +75,7 @@ impl BrokerReplicationServiceImpl {
             RustMqError::NotFound(_) => tonic::Code::NotFound,
             RustMqError::PermissionDenied(_) => tonic::Code::PermissionDenied,
             RustMqError::InvalidOperation(_) => tonic::Code::InvalidArgument,
-            RustMqError::Timeout => tonic::Code::DeadlineExceeded,
+            RustMqError::Timeout(_) => tonic::Code::DeadlineExceeded,
             RustMqError::ResourceExhausted(_) => tonic::Code::ResourceExhausted,
             RustMqError::StaleLeaderEpoch { .. } => tonic::Code::FailedPrecondition,
             RustMqError::NotLeader(_) => tonic::Code::FailedPrecondition,

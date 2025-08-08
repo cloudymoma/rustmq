@@ -247,7 +247,7 @@ impl RateLimiterManager {
     async fn check_category_rate_limit(
         &self, 
         category: &EndpointCategory, 
-        client_ip: IpAddr
+        _client_ip: IpAddr
     ) -> std::result::Result<(), RateLimitError> {
         let category_limiters = self.category_limiters.read().await;
         
@@ -509,7 +509,7 @@ pub fn with_rate_limiter(
 /// Rate limiting middleware filter
 pub fn rate_limit_filter(
     manager: Arc<RateLimiterManager>,
-) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+) -> warp::filters::BoxedFilter<()> {
     extract_client_ip()
         .and(warp::method())
         .and(warp::path::full())
@@ -535,6 +535,7 @@ pub fn rate_limit_filter(
             }
         })
         .untuple_one()
+        .boxed()
 }
 
 /// Custom rejection for rate limiting

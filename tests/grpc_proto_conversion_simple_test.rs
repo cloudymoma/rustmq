@@ -504,7 +504,7 @@ fn test_error_code_mapping_comprehensive() {
         RustMqError::TopicAlreadyExists("existing-topic".to_string()),
         RustMqError::ResourceExhausted("memory".to_string()),
         RustMqError::PermissionDenied("access denied".to_string()),
-        RustMqError::Timeout,
+        RustMqError::Timeout("operation timeout".to_string()),
         RustMqError::InvalidOperation("test operation".to_string()),
         RustMqError::ObjectNotFound("test-object".to_string()),
     ];
@@ -522,7 +522,7 @@ fn test_error_code_mapping_comprehensive() {
         
         // Verify retryable classification makes sense
         match error {
-            RustMqError::Timeout | RustMqError::ResourceExhausted(_) => {
+            RustMqError::Timeout(_) | RustMqError::ResourceExhausted(_) => {
                 assert!(is_retryable, "Should be retryable: {:?}", error);
             }
             RustMqError::TopicNotFound(_) | RustMqError::PermissionDenied(_) => {

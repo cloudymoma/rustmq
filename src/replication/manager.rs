@@ -133,7 +133,7 @@ impl ReplicationManager {
         };
 
         let response = timeout(self.ack_timeout, self.rpc_client.replicate_data(&broker_id, request)).await
-            .map_err(|_| crate::error::RustMqError::Timeout)??;
+            .map_err(|_| crate::error::RustMqError::Timeout("Replication timeout".to_string()))??;
 
         if !response.success {
             return Err(crate::error::RustMqError::ReplicationFailed {

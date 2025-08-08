@@ -1,0 +1,222 @@
+# Broker Certificate Template
+# Template for issuing certificates to RustMQ brokers
+
+[certificate_template]
+name = "{{ENVIRONMENT}}_broker"
+description = "Certificate template for RustMQ brokers in {{ENVIRONMENT}} environment"
+version = "1.0"
+
+# Template Metadata
+[certificate_template.metadata]
+created_by = "Security Team"
+created_date = "2024-01-15"
+last_modified = "2024-01-15"
+template_type = "server"
+environment = "{{ENVIRONMENT}}"
+
+# Subject Template
+[certificate_template.subject]
+# Template variables: {{hostname}}, {{environment}}, {{datacenter}}, {{pod_name}}
+template = "CN={{hostname}}.{{ENVIRONMENT}}.rustmq.{{DOMAIN}},O={{COMPANY_NAME}},OU={{ENVIRONMENT}} Brokers"
+
+# Alternative subject formats for different deployment types
+[certificate_template.subject.alternatives]
+kubernetes = "CN={{pod_name}}.{{namespace}}.svc.cluster.local,O={{COMPANY_NAME}},OU=Kubernetes Brokers"
+docker = "CN={{container_name}}.{{ENVIRONMENT}}.rustmq.{{DOMAIN}},O={{COMPANY_NAME}},OU=Docker Brokers"
+bare_metal = "CN={{hostname}}.{{ENVIRONMENT}}.rustmq.{{DOMAIN}},O={{COMPANY_NAME}},OU=Bare Metal Brokers"
+
+# Certificate Parameters
+[certificate_template.parameters]
+key_type = "RSA"
+key_size = 2048
+signature_algorithm = "SHA256WithRSA"
+validity_days = 365
+renewable = true
+auto_renewal_enabled = true
+renewal_before_expiry_days = 30
+
+# Key Usage
+[certificate_template.key_usage]
+digital_signature = true
+key_encipherment = true
+key_agreement = false
+key_cert_sign = false
+crl_sign = false
+data_encipherment = false
+content_commitment = false
+
+# Extended Key Usage
+[certificate_template.extended_key_usage]
+server_auth = true      # TLS Server Authentication
+client_auth = true      # TLS Client Authentication (for broker-to-broker)
+email_protection = false
+code_signing = false
+time_stamping = false
+
+# Subject Alternative Names
+[certificate_template.san]
+# DNS names (support template variables)
+dns_names = [
+    "{{hostname}}",
+    "{{hostname}}.{{ENVIRONMENT}}",
+    "{{hostname}}.{{ENVIRONMENT}}.rustmq.{{DOMAIN}}",
+    "{{hostname}}.internal.{{DOMAIN}}",
+    "{{hostname}}.k8s.local"
+]
+
+# IP addresses (support template variables)
+ip_addresses = [
+    "{{pod_ip}}",     # Kubernetes pod IP
+    "{{node_ip}}",    # Kubernetes node IP
+    "{{host_ip}}"     # Host IP address
+]
+
+# URI SANs (optional)
+uri_sans = [
+    "rustmq://{{hostname}}.{{ENVIRONMENT}}.rustmq.{{DOMAIN}}:9092"
+]
+
+# Certificate Extensions
+[certificate_template.extensions]
+# Basic Constraints
+basic_constraints = {
+    ca = false,
+    path_length = 0
+}
+
+# Authority Key Identifier
+authority_key_identifier = true
+
+# Subject Key Identifier
+subject_key_identifier = true
+
+# Certificate Policies
+certificate_policies = {
+    policy_oid = "1.3.6.1.4.1.99999.1.2.1",
+    policy_name = "{{COMPANY_NAME}} Broker Certificate Policy"
+}
+
+# CRL Distribution Points
+crl_distribution_points = [
+    "http://crl.{{DOMAIN}}/rustmq-{{ENVIRONMENT}}-ca.crl"
+]
+
+# Authority Information Access
+authority_info_access = {
+    ca_issuers = "http://certs.{{DOMAIN}}/rustmq-{{ENVIRONMENT}}-ca.crt",
+    ocsp = "http://ocsp.{{DOMAIN}}/rustmq-{{ENVIRONMENT}}-ca"
+}
+
+# Validation Rules
+[certificate_template.validation]
+# Subject validation
+require_cn = true
+cn_pattern = "^[a-zA-Z0-9-]+\\.{{ENVIRONMENT}}\\.rustmq\\.{{DOMAIN}}$"
+
+# SAN validation
+require_san = true
+min_san_entries = 2
+max_san_entries = 10
+
+# DNS name validation
+allowed_dns_patterns = [
+    "*.{{ENVIRONMENT}}.rustmq.{{DOMAIN}}",
+    "*.internal.{{DOMAIN}}",
+    "*.k8s.local"
+]
+
+forbidden_dns_patterns = [
+    "*.external.com",
+    "*.public.net"
+]
+
+# IP address validation
+allowed_ip_ranges = [
+    "{{IP_RANGE}}",           # Environment-specific range
+    "10.0.0.0/8",            # RFC 1918 private networks
+    "172.16.0.0/12",
+    "192.168.0.0/16"
+]
+
+# Security Requirements
+[certificate_template.security]
+# Minimum security requirements
+min_key_size = 2048
+allowed_signature_algorithms = ["SHA256WithRSA", "SHA384WithRSA", "SHA256WithECDSA"]
+forbidden_weak_algorithms = ["SHA1WithRSA", "MD5WithRSA"]
+
+# Certificate usage restrictions
+max_certificates_per_principal = 5
+require_key_escrow = false
+require_hardware_key = false
+
+# Approval Requirements
+[certificate_template.approval]
+require_approval = false
+auto_approval_enabled = true
+approval_required_for = []  # Can specify conditions that require approval
+
+# Monitoring and Compliance
+[certificate_template.monitoring]
+enable_usage_monitoring = true
+log_certificate_usage = true
+alert_on_unusual_usage = true
+
+# Compliance mapping
+compliance_frameworks = ["SOX", "ISO27001"]
+compliance_controls = [
+    "AC-2",   # Account Management
+    "IA-5",   # Authenticator Management  
+    "SC-17"   # Public Key Infrastructure Certificates
+]
+
+# Integration Settings
+[certificate_template.integration]
+# Kubernetes integration
+kubernetes = {
+    enabled = true,
+    secret_name_template = "{{hostname}}-tls",
+    namespace_template = "{{namespace}}",
+    create_secret = true,
+    secret_type = "kubernetes.io/tls"
+}
+
+# Docker integration
+docker = {
+    enabled = true,
+    volume_mount_path = "/etc/rustmq/certs",
+    file_permissions = "0600"
+}
+
+# Vault integration
+vault = {
+    enabled = false,
+    secret_path_template = "secret/rustmq/{{ENVIRONMENT}}/brokers/{{hostname}}",
+    lease_duration = "24h"
+}
+
+# Deployment Hooks
+[certificate_template.hooks]
+# Commands to run after certificate issuance
+post_issuance = [
+    "systemctl reload rustmq-broker",
+    "kubectl rollout restart deployment/rustmq-broker"
+]
+
+# Commands to run before certificate expiry
+pre_expiry = [
+    "echo 'Certificate {{certificate_id}} expiring in {{days_until_expiry}} days' | mail -s 'Certificate Expiry Warning' ops@{{DOMAIN}}"
+]
+
+# Commands to run after renewal
+post_renewal = [
+    "systemctl reload rustmq-broker",
+    "rustmq-admin audit log --event-type certificate_renewed --certificate-id {{certificate_id}}"
+]
+
+# Backup and Recovery
+[certificate_template.backup]
+enable_backup = true
+backup_location = "/backup/rustmq/certificates/{{ENVIRONMENT}}"
+backup_encryption = true
+backup_retention_days = 2555  # 7 years for compliance

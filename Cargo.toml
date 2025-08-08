@@ -32,7 +32,20 @@ tonic = { version = "0.11", features = ["transport", "tls"] }
 prost = "0.12"
 prost-types = "0.12"
 rustls = "0.21"
+rustls-pemfile = "1.0"
 rcgen = "0.11"
+
+# Security and Authentication
+x509-parser = "0.15"
+webpki = "0.22"
+ring = "0.17"
+lru = "0.12"
+regex = "1.11"
+hex = "0.4"
+
+# Bloom filter (updated to use bloomfilter instead of bloom)
+bloomfilter = "1.0"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Storage
 object_store = "0.8"
@@ -85,6 +98,10 @@ crc32fast = "1.4"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["serde", "macros"] }
+
+# Cryptography
+sha2 = "0.10"
 
 [dev-dependencies]
 criterion = "0.5"
@@ -115,7 +132,7 @@ path = "src/bin/controller.rs"
 
 [[bin]]
 name = "rustmq-admin"
-path = "src/bin/admin.rs"
+path = "src/bin/rustmq-admin.rs"
 
 [[bin]]
 name = "rustmq-bigquery-subscriber"
@@ -136,4 +153,20 @@ harness = false
 
 [[bench]]
 name = "wal_performance_bench"
+harness = false
+
+[[bench]]
+name = "security_performance"
+harness = false
+
+[[bench]]
+name = "authorization_benchmarks"
+harness = false
+
+[[bench]]
+name = "simple_security_benchmarks"
+harness = false
+
+[[bench]]
+name = "standalone_security_bench"
 harness = false

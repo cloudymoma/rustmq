@@ -62,7 +62,7 @@ pub enum RustMqError {
     BrokerNotFound(String),
 
     #[error("Operation timeout")]
-    Timeout,
+    OperationTimeout,
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
@@ -129,6 +129,101 @@ pub enum RustMqError {
 
     #[error("Invalid URI: {0}")]
     InvalidUri(String),
+
+    // Security-related errors
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+
+    #[error("Authorization denied: principal '{principal}' lacks '{permission}' on '{resource}'")]
+    AuthorizationDenied {
+        principal: String,
+        permission: String,
+        resource: String,
+    },
+
+    #[error("Authorization failed: {0}")]
+    AuthorizationFailed(String),
+
+    #[error("Certificate revoked: {subject}")]
+    CertificateRevoked { subject: String },
+
+    #[error("Certificate expired: {subject}")]
+    CertificateExpired { subject: String },
+
+    #[error("Invalid certificate: {reason}")]
+    InvalidCertificate { reason: String },
+
+    #[error("Certificate not found: {identifier}")]
+    CertificateNotFound { identifier: String },
+
+    #[error("Certificate generation failed: {reason}")]
+    CertificateGeneration { reason: String },
+
+    #[error("Certificate validation failed: {reason}")]
+    CertificateValidation { reason: String },
+
+    #[error("CA not available: {0}")]
+    CaNotAvailable(String),
+
+    #[error("Security configuration error: {0}")]
+    SecurityConfig(String),
+
+    #[error("Cache operation failed: {0}")]
+    CacheOperation(String),
+
+    #[error("Principal extraction failed: {0}")]
+    PrincipalExtraction(String),
+
+    #[error("ACL evaluation failed: {0}")]
+    AclEvaluation(String),
+
+    #[error("ACL rule not found: {rule_id}")]
+    AclRuleNotFound { rule_id: String },
+
+    #[error("ACL rule conflict: {reason}")]
+    AclRuleConflict { reason: String },
+
+    #[error("Invalid ACL pattern: {pattern}")]
+    InvalidAclPattern { pattern: String },
+
+    #[error("Security policy violation: {violation}")]
+    SecurityPolicyViolation { violation: String },
+
+    #[error("Rate limit exceeded for principal: {principal}")]
+    RateLimitExceeded { principal: String },
+
+    #[error("Session expired for principal: {principal}")]
+    SessionExpired { principal: String },
+
+    #[error("TLS handshake failed: {reason}")]
+    TlsHandshakeFailed { reason: String },
+
+    #[error("Signature verification failed: {reason}")]
+    SignatureVerificationFailed { reason: String },
+
+    #[error("Cryptographic operation failed: {operation}")]
+    CryptographicFailure { operation: String },
+
+    #[error("Revocation check failed: {reason}")]
+    RevocationCheckFailed { reason: String },
+
+    #[error("Certificate chain validation failed: {reason}")]
+    CertificateChainValidation { reason: String },
+
+    #[error("Security audit log error: {0}")]
+    SecurityAuditLog(String),
+
+    #[error("Insufficient privileges for operation: {operation}")]
+    InsufficientPrivileges { operation: String },
+
+    #[error("Timeout occurred: {0}")]
+    Timeout(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
 
 // Add missing From implementations for tonic transport errors
@@ -141,5 +236,72 @@ impl From<tonic::transport::Error> for RustMqError {
 impl From<warp::http::uri::InvalidUri> for RustMqError {
     fn from(e: warp::http::uri::InvalidUri) -> Self {
         RustMqError::InvalidUri(e.to_string())
+    }
+}
+
+// Add From implementations for security-related errors
+impl From<x509_parser::nom::Err<x509_parser::error::X509Error>> for RustMqError {
+    fn from(e: x509_parser::nom::Err<x509_parser::error::X509Error>) -> Self {
+        RustMqError::CertificateValidation {
+            reason: format!("X.509 parsing error: {}", e),
+        }
+    }
+}
+
+impl From<x509_parser::error::X509Error> for RustMqError {
+    fn from(e: x509_parser::error::X509Error) -> Self {
+        RustMqError::CertificateValidation {
+            reason: format!("X.509 error: {}", e),
+        }
+    }
+}
+
+impl From<webpki::Error> for RustMqError {
+    fn from(e: webpki::Error) -> Self {
+        RustMqError::CertificateValidation {
+            reason: format!("WebPKI error: {:?}", e),
+        }
+    }
+}
+
+impl From<ring::error::Unspecified> for RustMqError {
+    fn from(_e: ring::error::Unspecified) -> Self {
+        RustMqError::CryptographicFailure {
+            operation: "Ring cryptographic operation failed".to_string(),
+        }
+    }
+}
+
+impl From<ring::error::KeyRejected> for RustMqError {
+    fn from(e: ring::error::KeyRejected) -> Self {
+        RustMqError::CryptographicFailure {
+            operation: format!("Ring key rejected: {}", e),
+        }
+    }
+}
+
+// Note: rustls_pemfile::Error removed as it's not available in this version
+
+impl From<serde_json::Error> for RustMqError {
+    fn from(e: serde_json::Error) -> Self {
+        RustMqError::Config(format!("JSON serialization error: {}", e))
+    }
+}
+
+impl From<hyper::Error> for RustMqError {
+    fn from(e: hyper::Error) -> Self {
+        RustMqError::Network(format!("HTTP client error: {}", e))
+    }
+}
+
+impl From<hyper::http::Error> for RustMqError {
+    fn from(e: hyper::http::Error) -> Self {
+        RustMqError::Network(format!("HTTP request error: {}", e))
+    }
+}
+
+impl From<Box<dyn std::error::Error>> for RustMqError {
+    fn from(e: Box<dyn std::error::Error>) -> Self {
+        RustMqError::Internal(format!("Internal error: {}", e))
     }
 }

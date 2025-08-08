@@ -1,0 +1,510 @@
+# RustMQ Production Environment Security Configuration
+# This configuration provides maximum security for production deployments
+
+[security]
+enabled = true
+security_level = "strict"  # Maximum security for production
+environment = "production"
+
+# TLS Configuration
+[security.tls]
+enabled = true
+# Production certificates (must be from trusted CA)
+server_cert_path = "/etc/rustmq/certs/production/server.pem"
+server_key_path = "/etc/rustmq/certs/production/server.key"
+client_ca_cert_path = "/etc/rustmq/certs/production/ca-bundle.pem"
+
+# Strict TLS settings
+tls_version_min = "TLS1.3"  # Only TLS 1.3 in production
+tls_version_max = "TLS1.3"
+cipher_suites = "modern"
+verify_client_cert = true
+allow_self_signed = false
+
+# Certificate chain validation (strict)
+validate_certificate_chain = true
+check_certificate_expiry = true
+certificate_expiry_warning_days = 30  # Earlier warning for production
+certificate_expiry_critical_days = 7
+
+# Perfect Forward Secrecy
+require_perfect_forward_secrecy = true
+ecdh_curves = ["X25519", "prime256v1", "secp384r1"]
+
+# mTLS Configuration (mandatory in production)
+[security.mtls]
+enabled = true
+require_client_cert = true
+verify_client_cert = true
+client_cert_validation_level = "strict"
+
+# Strict certificate validation
+require_key_usage_validation = true
+require_extended_key_usage_validation = true
+check_certificate_transparency = true
+
+# Certificate Authority Configuration
+[security.ca]
+ca_cert_path = "/etc/rustmq/certs/production/ca-bundle.pem"
+ca_key_path = "/etc/rustmq/ca/production/private/ca.key"  # HSM-protected
+intermediate_cert_path = "/etc/rustmq/certs/production/intermediate-ca.pem"
+crl_check_enabled = true
+ocsp_check_enabled = true
+
+# Certificate Trust Store
+trust_store_path = "/etc/ssl/certs/ca-certificates.crt"
+custom_trust_anchors = ["/etc/rustmq/certs/production/company-root-ca.pem"]
+
+# CRL and OCSP settings (strict)
+crl_cache_duration_minutes = 30  # Frequent CRL updates
+crl_download_timeout_seconds = 5
+crl_fallback_enabled = true
+ocsp_cache_duration_minutes = 15  # Frequent OCSP updates
+ocsp_timeout_seconds = 3
+ocsp_must_staple = true
+
+# Hardware Security Module (HSM) Integration
+[security.hsm]
+enabled = true
+hsm_type = "pkcs11"
+hsm_library = "/usr/lib/libCryptoki2_64.so"  # Production HSM library
+hsm_slot_id = 0
+hsm_pin_file = "/etc/rustmq/secrets/hsm-pin.enc"  # Encrypted PIN file
+
+# Key protection
+private_keys_in_hsm = true
+ca_keys_in_hsm = true
+signing_keys_in_hsm = true
+
+# Authentication Configuration
+[security.auth]
+enabled = true
+default_mechanism = "certificate"
+require_authentication = true
+fail_open = false  # Always fail closed in production
+
+# Multi-factor authentication (enabled in production)
+mfa_enabled = true
+mfa_required_for_admin = true
+mfa_methods = ["totp", "u2f", "hardware_token"]
+mfa_backup_codes_enabled = true
+
+# Session management
+session_timeout_minutes = 30
+max_sessions_per_user = 3
+session_encryption_enabled = true
+
+# Token-based authentication (with encryption)
+[security.auth.token]
+enabled = true
+token_file = "/etc/rustmq/tokens/production-tokens.enc"  # Encrypted token file
+token_refresh_interval_minutes = 15  # Frequent refresh
+allow_bearer_tokens = false  # Disable bearer tokens in production
+token_encryption_enabled = true
+token_signing_algorithm = "ES256"  # ECDSA with SHA-256
+
+# Certificate-based authentication (strict)
+[security.auth.certificate]
+enabled = true
+require_valid_certificate = true
+extract_principal_from_cn = true
+principal_regex = "^(.+)@prod\\.(.+)$"  # Production-specific pattern
+allow_wildcard_principals = false
+
+# Certificate validation (comprehensive)
+check_certificate_revocation = true
+validate_certificate_usage = true
+require_san_validation = true
+check_certificate_transparency = true
+
+# Authorization Configuration
+[security.authz]
+enabled = true
+default_policy = "deny"  # Always deny by default
+acl_enabled = true
+fail_closed = true
+
+# Defense in depth
+require_explicit_allow = true
+deny_overrides_allow = true
+validate_resource_patterns = true
+
+# ACL Configuration (high performance)
+[security.acl]
+enabled = true
+cache_enabled = true
+cache_size = 100000      # Large cache for production load
+cache_ttl_seconds = 120  # Shorter TTL for security
+fetch_batch_size = 500   # Large batch size for efficiency
+
+# Production ACL storage (distributed)
+storage_type = "database"
+storage_config = {
+    connection_string = "postgresql://rustmq_user:${POSTGRES_PASSWORD}@db.prod.company.com:5432/rustmq_production?sslmode=require",
+    connection_pool_size = 50,
+    connection_timeout_seconds = 10,
+    query_timeout_seconds = 5,
+    max_retries = 3,
+    retry_delay_ms = 100
+}
+
+# Backup storage for high availability
+backup_storage_type = "consul"
+backup_storage_config = {
+    addresses = ["consul1.prod.company.com:8500", "consul2.prod.company.com:8500", "consul3.prod.company.com:8500"],
+    datacenter = "production",
+    tls_enabled = true,
+    tls_verify = true
+}
+
+# Strict validation
+validate_principals = true
+validate_resources = true
+allow_wildcard_rules = false
+require_explicit_permissions = true
+
+# Performance optimization
+enable_performance_monitoring = true
+enable_acl_rule_validation = true
+preload_common_rules = true
+enable_rule_compilation = true
+
+# Audit Configuration (comprehensive)
+[security.audit]
+enabled = true
+audit_level = "verbose"  # Maximum audit detail
+log_successful_auth = true
+log_failed_auth = true
+log_authorization_decisions = true
+log_certificate_events = true
+log_admin_operations = true
+log_configuration_changes = true
+log_security_violations = true
+
+# Advanced audit features
+log_performance_metrics = true
+log_security_events = true
+log_data_access = true
+log_privilege_escalation_attempts = true
+
+# Real-time security monitoring
+real_time_monitoring_enabled = true
+anomaly_detection_enabled = true
+threat_detection_enabled = true
+
+# Audit storage (highly available and encrypted)
+audit_log_path = "/var/log/rustmq/security-audit.log"
+centralized_logging_enabled = true
+syslog_enabled = true
+syslog_facility = "local0"
+syslog_tag = "rustmq-security-prod"
+
+# External SIEM integration
+siem_integration_enabled = true
+siem_endpoint = "https://siem.company.com/api/v1/events"
+siem_api_key_file = "/etc/rustmq/secrets/siem-api-key.enc"
+
+# Log retention and encryption
+encrypt_audit_logs = true
+audit_log_signing_enabled = true
+rotate_logs = true
+max_log_size_mb = 1000
+max_log_files = 100
+compress_old_logs = true
+archive_old_logs = true
+archive_location = "s3://company-security-logs/rustmq/production/"
+
+# Performance Configuration (optimized for production load)
+[security.performance]
+# High-performance caching
+auth_cache_size = 50000
+auth_cache_ttl_seconds = 120
+authz_cache_size = 200000
+authz_cache_ttl_seconds = 180
+
+# Connection limits (production scale)
+max_connections = 50000
+max_connections_per_ip = 20  # Strict per-IP limits
+connection_timeout_seconds = 10
+
+# Certificate validation (optimized)
+cert_validation_timeout_seconds = 2
+crl_fetch_timeout_seconds = 3
+ocsp_timeout_seconds = 2
+
+# Background processing (aggressive)
+background_cert_refresh_enabled = true
+background_acl_refresh_enabled = true
+background_cleanup_enabled = true
+health_check_interval_seconds = 15
+
+# Thread pool configuration
+auth_thread_pool_size = 20
+authz_thread_pool_size = 50
+io_thread_pool_size = 30
+
+# Monitoring and Alerting (comprehensive)
+[security.monitoring]
+enabled = true
+metrics_enabled = true
+alerts_enabled = true
+
+# Security metrics (detailed)
+track_authentication_metrics = true
+track_authorization_metrics = true
+track_certificate_metrics = true
+track_performance_metrics = true
+track_threat_metrics = true
+
+# Alert thresholds (strict)
+max_failed_auth_per_minute = 10
+max_failed_authz_per_minute = 20
+max_cert_validation_failures_per_minute = 5
+max_suspicious_activity_per_hour = 5
+
+# Real-time alerting
+immediate_alert_threats = ["brute_force", "privilege_escalation", "certificate_tampering"]
+critical_security_events = ["unauthorized_admin_access", "certificate_revocation", "acl_bypass_attempt"]
+
+# Alert destinations (multiple channels)
+alert_webhook_url = "https://alerts.company.com/security/rustmq"
+alert_email = "security-team@company.com"
+alert_slack_webhook = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+alert_pagerduty_key_file = "/etc/rustmq/secrets/pagerduty-key.enc"
+
+# Rate Limiting (strict)
+[security.rate_limiting]
+enabled = true
+global_rate_limit = 10000    # 10k requests per minute globally
+per_ip_rate_limit = 50       # 50 requests per minute per IP
+burst_capacity = 100         # Small burst capacity
+
+# Endpoint-specific limits (strict)
+health_endpoint_limit = 200
+metrics_endpoint_limit = 50
+admin_endpoint_limit = 10    # Very strict admin limits
+api_endpoint_limit = 2000
+
+# DDoS protection
+ddos_protection_enabled = true
+ddos_threshold_requests_per_second = 1000
+ddos_ban_duration_minutes = 60
+
+# Rate limiting storage (distributed)
+rate_limit_storage = "redis_cluster"
+redis_cluster_nodes = [
+    "redis1.prod.company.com:6379",
+    "redis2.prod.company.com:6379", 
+    "redis3.prod.company.com:6379"
+]
+redis_tls_enabled = true
+redis_auth_password_file = "/etc/rustmq/secrets/redis-password.enc"
+
+# Security Headers (maximum security)
+[security.headers]
+enabled = true
+include_security_headers = true
+cors_enabled = true
+cors_allowed_origins = ["https://admin.company.com", "https://dashboard.company.com"]
+cors_allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+cors_allowed_headers = ["Authorization", "Content-Type"]
+cors_max_age = 3600
+cors_credentials = false  # Disable credentials for security
+
+# Content Security Policy (strict)
+csp_enabled = true
+csp_policy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'"
+x_frame_options = "DENY"
+x_content_type_options = "nosniff"
+x_xss_protection = "1; mode=block"
+strict_transport_security = "max-age=63072000; includeSubDomains; preload"
+referrer_policy = "strict-origin-when-cross-origin"
+
+# Additional security headers
+expect_ct = "max-age=86400, enforce"
+feature_policy = "camera 'none'; microphone 'none'; geolocation 'none'"
+
+# High Availability Configuration
+[security.ha]
+enabled = true
+cluster_mode = true
+leader_election_enabled = true
+leader_election_ttl_seconds = 30
+
+# Multi-region deployment
+multi_region_enabled = true
+regions = ["us-east-1", "us-west-2", "eu-west-1"]
+cross_region_replication_enabled = true
+
+# Certificate sync (secure)
+certificate_sync_enabled = true
+certificate_sync_interval_minutes = 2
+certificate_sync_encryption_enabled = true
+
+# ACL sync (secure)
+acl_sync_enabled = true
+acl_sync_interval_minutes = 1
+acl_sync_encryption_enabled = true
+
+# Backup and Recovery (comprehensive)
+[security.backup]
+enabled = true
+backup_interval_hours = 1  # Frequent backups
+backup_retention_days = 2555  # 7 years for compliance
+backup_encryption_enabled = true
+backup_signing_enabled = true
+
+# Multiple backup locations
+primary_backup_location = "s3://company-backups/rustmq/production/primary/"
+secondary_backup_location = "gcs://company-backups-dr/rustmq/production/"
+offsite_backup_location = "/mnt/tape-backup/rustmq/production/"
+
+# Items to backup
+backup_certificates = true
+backup_private_keys = false  # Never backup private keys (HSM only)
+backup_acl_rules = true
+backup_audit_logs = true
+backup_configuration = true
+backup_secrets = false  # Secrets managed separately
+
+# Backup verification
+verify_backup_integrity = true
+test_restore_procedures = true
+backup_restore_testing_interval_days = 30
+
+# Disaster Recovery
+[security.disaster_recovery]
+enabled = true
+rpo_minutes = 15  # Recovery Point Objective
+rto_minutes = 60  # Recovery Time Objective
+
+# Failover configuration
+automatic_failover_enabled = true
+failover_regions = ["us-west-2", "eu-west-1"]
+cross_region_certificate_sync = true
+
+# Compliance Configuration (strict)
+[security.compliance]
+enabled = true
+frameworks = ["SOX", "PCI-DSS", "ISO27001", "NIST", "GDPR"]
+
+# Data retention policies (compliance-driven)
+certificate_retention_years = 10
+audit_log_retention_years = 10
+access_log_retention_years = 7
+configuration_change_retention_years = 7
+
+# Compliance monitoring
+continuous_compliance_monitoring = true
+automated_compliance_reporting = true
+compliance_violation_alerting = true
+
+# Regular compliance assessments
+compliance_report_interval_days = 7
+compliance_report_recipients = ["compliance@company.com", "security@company.com", "audit@company.com"]
+
+# Data Protection (GDPR, CCPA compliance)
+[security.data_protection]
+enabled = true
+data_classification_enabled = true
+pii_detection_enabled = true
+data_retention_enforcement = true
+
+# Encryption at rest
+encrypt_all_data_at_rest = true
+encryption_algorithm = "AES-256-GCM"
+key_rotation_enabled = true
+key_rotation_interval_days = 90
+
+# Data minimization
+data_anonymization_enabled = true
+data_pseudonymization_enabled = true
+
+# Environment Variables (production)
+[security.variables]
+DOMAIN = "company.com"
+ENVIRONMENT = "production"
+COMPANY_NAME = "YourCompany"
+IP_RANGE = "10.0.0.0/16"
+ADMIN_IP_RANGE = "10.0.100.0/24"
+BROKER_IP_RANGE = "10.0.10.0/24"
+APP_IP_RANGE = "10.0.20.0/24"
+MONITORING_IP_RANGE = "10.0.30.0/24"
+DATABASE_IP_RANGE = "10.0.50.0/24"
+LOADBALANCER_IP_RANGE = "10.0.60.0/24"
+
+# Security zones
+DMZ_IP_RANGE = "203.0.113.0/24"
+INTERNAL_IP_RANGE = "10.0.0.0/8"
+MGMT_IP_RANGE = "172.16.0.0/12"
+
+# Kubernetes Configuration (production-hardened)
+[security.kubernetes]
+enabled = true
+service_account_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+namespace_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+# Kubernetes security (maximum)
+use_incluster_config = true
+rbac_enabled = true
+network_policies_enabled = true
+pod_security_policies_enabled = true
+pod_security_standards = "restricted"
+
+# Secret management (external)
+secrets_encryption_enabled = true
+external_secrets_operator = true
+vault_integration_enabled = true
+vault_address = "https://vault.company.com"
+vault_namespace = "production/rustmq"
+
+# Security scanning
+image_scanning_enabled = true
+vulnerability_scanning_enabled = true
+admission_controller_enabled = true
+
+# Production Operational Security
+[security.operations]
+# Change management
+change_approval_required = true
+change_approval_threshold = "high"
+emergency_change_process_enabled = true
+
+# Access control
+privileged_access_management = true
+just_in_time_access = true
+access_request_approval_required = true
+
+# Incident response
+incident_response_plan_enabled = true
+security_incident_escalation = true
+automated_incident_containment = true
+
+# Production Notes
+[security.notes]
+security_statement = "This production configuration implements defense-in-depth security with zero-trust principles"
+
+critical_requirements = [
+    "ALL private keys MUST be stored in HSM",
+    "ALL certificates MUST be from trusted production CA",
+    "ALL access MUST be authenticated and authorized",
+    "ALL actions MUST be audited and logged",
+    "ALL data MUST be encrypted in transit and at rest",
+    "ALL security events MUST trigger alerts",
+    "ALL changes MUST be approved and tracked"
+]
+
+security_contacts = [
+    "Security Team: security@company.com",
+    "Security On-Call: security-oncall@company.com", 
+    "Incident Response: incident-response@company.com",
+    "Compliance Team: compliance@company.com"
+]
+
+emergency_procedures = [
+    "For security incidents: Contact security-oncall@company.com immediately",
+    "For certificate emergencies: Use emergency certificate issuance process",
+    "For compromise suspected: Activate incident response plan immediately",
+    "For compliance violations: Notify compliance team within 1 hour"
+]

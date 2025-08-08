@@ -1,0 +1,445 @@
+{
+  "acl_rules": [
+    {
+      "name": "default_deny_all",
+      "description": "Default deny-all policy - highest priority",
+      "principal": "*",
+      "resource": "*",
+      "permissions": ["all"],
+      "effect": "deny",
+      "priority": 9999,
+      "enabled": true,
+      "metadata": {
+        "category": "security_baseline",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "emergency_admin_access",
+      "description": "Emergency administrative access",
+      "principal": "emergency-admin@{{DOMAIN}}",
+      "resource": "*",
+      "permissions": ["all"],
+      "effect": "allow",
+      "priority": 10,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{EMERGENCY_ADMIN_IP}}"
+        },
+        {
+          "type": "require_mfa",
+          "value": "true"
+        }
+      ],
+      "metadata": {
+        "category": "emergency",
+        "environment": "production",
+        "requires_approval": true
+      }
+    },
+    {
+      "name": "admin_business_hours",
+      "description": "Administrative access during business hours",
+      "principal": "*@admin.{{DOMAIN}}",
+      "resource": "admin.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 100,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{ADMIN_IP_RANGE}}"
+        },
+        {
+          "type": "time_range",
+          "value": "06:00-20:00",
+          "timezone": "America/New_York",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        },
+        {
+          "type": "client_certificate_required",
+          "value": "true"
+        }
+      ],
+      "metadata": {
+        "category": "administrative",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "broker_cluster_communication",
+      "description": "Broker-to-broker cluster communication",
+      "principal": "*.broker.prod.{{DOMAIN}}",
+      "resource": "admin.cluster.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 200,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{BROKER_SUBNET}}"
+        },
+        {
+          "type": "mutual_tls_required",
+          "value": "true"
+        }
+      ],
+      "metadata": {
+        "category": "system",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "critical_service_tier1",
+      "description": "Critical services - Tier 1 (highest priority)",
+      "principal": "*@critical.{{DOMAIN}}",
+      "resource": "topic.critical.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 300,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{CRITICAL_SERVICE_SUBNET}}"
+        },
+        {
+          "type": "certificate_validation_level",
+          "value": "strict"
+        }
+      ],
+      "metadata": {
+        "category": "critical_services",
+        "environment": "production",
+        "sla": "99.99%"
+      }
+    },
+    {
+      "name": "payment_service_restricted",
+      "description": "Payment service - restricted access to payment topics",
+      "principal": "payment-service@{{DOMAIN}}",
+      "resource": "topic.payment.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 400,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{PAYMENT_SERVICE_IP}}"
+        },
+        {
+          "type": "time_range",
+          "value": "00:00-23:59"
+        },
+        {
+          "type": "encryption_required",
+          "value": "AES256"
+        },
+        {
+          "type": "audit_logging",
+          "value": "enhanced"
+        }
+      ],
+      "metadata": {
+        "category": "financial",
+        "environment": "production",
+        "compliance": ["PCI-DSS", "SOX"],
+        "data_classification": "restricted"
+      }
+    },
+    {
+      "name": "user_service_pii_access",
+      "description": "User service access to PII topics with strict controls",
+      "principal": "user-service@{{DOMAIN}}",
+      "resource": "topic.user.pii.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 500,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{USER_SERVICE_SUBNET}}"
+        },
+        {
+          "type": "data_retention_policy",
+          "value": "30_days"
+        },
+        {
+          "type": "encryption_at_rest",
+          "value": "required"
+        },
+        {
+          "type": "gdpr_compliant",
+          "value": "true"
+        }
+      ],
+      "metadata": {
+        "category": "pii",
+        "environment": "production",
+        "compliance": ["GDPR", "CCPA"],
+        "data_classification": "pii"
+      }
+    },
+    {
+      "name": "analytics_production_read",
+      "description": "Analytics service read-only access to production data",
+      "principal": "analytics@{{DOMAIN}}",
+      "resource": "topic.analytics.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 600,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{ANALYTICS_SUBNET}}"
+        },
+        {
+          "type": "time_range",
+          "value": "02:00-06:00",
+          "timezone": "UTC",
+          "description": "Off-peak hours only"
+        },
+        {
+          "type": "rate_limit",
+          "value": "1000_per_minute"
+        }
+      ],
+      "metadata": {
+        "category": "analytics",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "external_partner_limited",
+      "description": "External partner access - very restricted",
+      "principal": "*@partner.external.com",
+      "resource": "topic.partner.data.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 700,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{PARTNER_IP_WHITELIST}}"
+        },
+        {
+          "type": "time_range",
+          "value": "08:00-18:00",
+          "timezone": "America/New_York",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        },
+        {
+          "type": "rate_limit",
+          "value": "100_per_minute"
+        },
+        {
+          "type": "session_timeout",
+          "value": "30_minutes"
+        }
+      ],
+      "metadata": {
+        "category": "external_access",
+        "environment": "production",
+        "partner": "TrustedPartner Inc"
+      }
+    },
+    {
+      "name": "monitoring_metrics_collection",
+      "description": "Monitoring service metrics collection",
+      "principal": "monitoring@{{DOMAIN}}",
+      "resource": "topic.metrics.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 800,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{MONITORING_SUBNET}}"
+        }
+      ],
+      "metadata": {
+        "category": "monitoring",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "security_deny_external_internal",
+      "description": "Block external access to internal topics",
+      "principal": "*@external.*",
+      "resource": "topic.internal.*",
+      "permissions": ["all"],
+      "effect": "deny",
+      "priority": 1000,
+      "enabled": true,
+      "metadata": {
+        "category": "security_enforcement",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "security_deny_cross_environment",
+      "description": "Block cross-environment access",
+      "principal": "*@dev.{{DOMAIN}},*@staging.{{DOMAIN}}",
+      "resource": "topic.prod.*",
+      "permissions": ["all"],
+      "effect": "deny",
+      "priority": 1100,
+      "enabled": true,
+      "metadata": {
+        "category": "environment_isolation",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "security_protect_admin_topics",
+      "description": "Protect administrative topics from general access",
+      "principal": "!*@admin.{{DOMAIN}}",
+      "resource": "admin.*",
+      "permissions": ["all"],
+      "effect": "deny",
+      "priority": 1200,
+      "enabled": true,
+      "metadata": {
+        "category": "privilege_protection",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "consumer_group_ownership",
+      "description": "Services can only access their own consumer groups",
+      "principal": "*@{{DOMAIN}}",
+      "resource": "consumer-group.{{principal_prefix}}-*",
+      "permissions": ["read", "create", "delete"],
+      "effect": "allow",
+      "priority": 1300,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "principal_ownership",
+          "value": "consumer_group_prefix_match"
+        }
+      ],
+      "metadata": {
+        "category": "consumer_groups",
+        "environment": "production"
+      }
+    },
+    {
+      "name": "audit_service_write_only",
+      "description": "Audit service can only write to audit topics",
+      "principal": "audit@{{DOMAIN}}",
+      "resource": "topic.audit.*",
+      "permissions": ["write", "create"],
+      "effect": "allow",
+      "priority": 1400,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{AUDIT_SERVICE_IP}}"
+        },
+        {
+          "type": "write_only_mode",
+          "value": "true"
+        }
+      ],
+      "metadata": {
+        "category": "audit",
+        "environment": "production",
+        "compliance": ["SOX", "ISO27001"]
+      }
+    },
+    {
+      "name": "backup_service_read_all",
+      "description": "Backup service read access during maintenance window",
+      "principal": "backup@{{DOMAIN}}",
+      "resource": "topic.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 1500,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{BACKUP_SERVICE_IP}}"
+        },
+        {
+          "type": "time_range",
+          "value": "02:00-04:00",
+          "timezone": "UTC",
+          "description": "Maintenance window only"
+        },
+        {
+          "type": "backup_mode",
+          "value": "read_only_consistent_snapshot"
+        }
+      ],
+      "metadata": {
+        "category": "backup",
+        "environment": "production"
+      }
+    }
+  ],
+  "metadata": {
+    "name": "Production ACL Rules",
+    "description": "Advanced ACL patterns for production environment with security controls",
+    "version": "2.0",
+    "created_by": "Security Team",
+    "created_date": "2024-01-15",
+    "last_modified": "2024-01-15",
+    "environment": "production",
+    "security_level": "high",
+    "variables": {
+      "DOMAIN": "company.com",
+      "EMERGENCY_ADMIN_IP": "203.0.113.10/32",
+      "ADMIN_IP_RANGE": "10.0.100.0/24",
+      "BROKER_SUBNET": "10.0.10.0/24",
+      "CRITICAL_SERVICE_SUBNET": "10.0.20.0/24",
+      "PAYMENT_SERVICE_IP": "10.0.25.100/32",
+      "USER_SERVICE_SUBNET": "10.0.30.0/24",
+      "ANALYTICS_SUBNET": "10.0.40.0/24",
+      "PARTNER_IP_WHITELIST": "203.0.113.0/24,198.51.100.0/24",
+      "MONITORING_SUBNET": "10.0.50.0/24",
+      "AUDIT_SERVICE_IP": "10.0.60.100/32",
+      "BACKUP_SERVICE_IP": "10.0.70.100/32"
+    },
+    "compliance_frameworks": [
+      "SOX",
+      "PCI-DSS", 
+      "GDPR",
+      "ISO27001",
+      "NIST"
+    ],
+    "security_controls": [
+      "Defense in depth with multiple deny rules",
+      "Principle of least privilege",
+      "Time-based access controls",
+      "IP-based restrictions", 
+      "Enhanced logging for sensitive operations",
+      "Multi-factor authentication requirements",
+      "Certificate-based authentication",
+      "Rate limiting to prevent abuse",
+      "Environment isolation",
+      "Data classification enforcement"
+    ],
+    "notes": [
+      "These rules implement a zero-trust security model",
+      "All access is explicitly denied by default",
+      "Rules are ordered by priority (lower number = higher priority)",
+      "IP ranges must be customized for your network topology",
+      "Consider additional context-based conditions for your environment",
+      "Regular review and updates required for compliance",
+      "Test all rules in staging before production deployment",
+      "Monitor ACL performance impact on authorization latency"
+    ]
+  }
+}

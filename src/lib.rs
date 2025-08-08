@@ -12,6 +12,7 @@ pub mod types;
 pub mod subscribers;
 pub mod scaling;
 pub mod operations;
+pub mod security;
 pub mod proto;
 pub mod proto_convert;
 

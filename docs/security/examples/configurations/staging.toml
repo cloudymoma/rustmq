@@ -1,0 +1,335 @@
+# RustMQ Staging Environment Security Configuration
+# This configuration provides production-like security for testing
+
+[security]
+enabled = true
+security_level = "moderate"  # Balanced security for staging
+environment = "staging"
+
+# TLS Configuration
+[security.tls]
+enabled = true
+# Staging certificates (should mirror production setup)
+server_cert_path = "/etc/rustmq/certs/staging/server.pem"
+server_key_path = "/etc/rustmq/certs/staging/server.key"
+client_ca_cert_path = "/etc/rustmq/certs/staging/ca.pem"
+
+# Production-like TLS settings
+tls_version_min = "TLS1.2"
+tls_version_max = "TLS1.3"
+cipher_suites = "modern"
+verify_client_cert = true
+allow_self_signed = false  # Production-like behavior
+
+# Certificate chain validation
+validate_certificate_chain = true
+check_certificate_expiry = true
+certificate_expiry_warning_days = 14
+
+# mTLS Configuration
+[security.mtls]
+enabled = true
+require_client_cert = true
+verify_client_cert = true
+client_cert_validation_level = "moderate"  # Stricter than dev
+
+# Certificate Authority Configuration
+[security.ca]
+ca_cert_path = "/etc/rustmq/certs/staging/ca.pem"
+ca_key_path = "/etc/rustmq/ca/staging/private/ca.key"
+intermediate_cert_path = "/etc/rustmq/certs/staging/intermediate-ca.pem"
+crl_check_enabled = true    # Enable CRL checking in staging
+ocsp_check_enabled = true   # Enable OCSP checking in staging
+
+# CRL and OCSP settings
+crl_cache_duration_minutes = 60
+crl_download_timeout_seconds = 10
+ocsp_cache_duration_minutes = 30
+ocsp_timeout_seconds = 5
+
+# Authentication Configuration
+[security.auth]
+enabled = true
+default_mechanism = "certificate"
+require_authentication = true  # Enforce authentication in staging
+
+# Multi-factor authentication
+mfa_enabled = false  # Can be enabled for testing MFA flows
+mfa_methods = ["totp", "u2f"]
+
+# Token-based authentication
+[security.auth.token]
+enabled = true
+token_file = "/etc/rustmq/tokens/staging-tokens.json"
+token_refresh_interval_minutes = 30  # More frequent refresh
+allow_bearer_tokens = true
+token_encryption_enabled = true
+
+# Certificate-based authentication
+[security.auth.certificate]
+enabled = true
+require_valid_certificate = true
+extract_principal_from_cn = true
+principal_regex = "^(.+)@staging\\.(.+)$"  # Staging-specific pattern
+allow_wildcard_principals = false  # Stricter than dev
+
+# Certificate validation
+check_certificate_revocation = true
+validate_certificate_usage = true
+
+# Authorization Configuration
+[security.authz]
+enabled = true
+default_policy = "deny"  # Default deny for staging (production-like)
+acl_enabled = true
+fail_closed = true       # Fail securely if authz system is down
+
+# ACL Configuration
+[security.acl]
+enabled = true
+cache_enabled = true
+cache_size = 50000       # Larger cache for staging load
+cache_ttl_seconds = 180  # Shorter TTL for fresher data
+fetch_batch_size = 200   # Larger batch size
+
+# Staging ACL storage (database-backed)
+storage_type = "database"  # More production-like than file storage
+storage_config = {
+    connection_string = "postgresql://rustmq:password@db.staging.company.com:5432/rustmq_staging",
+    connection_pool_size = 10,
+    connection_timeout_seconds = 30,
+    query_timeout_seconds = 15
+}
+
+# Stricter validation than development
+validate_principals = true
+validate_resources = true
+allow_wildcard_rules = false  # Restrict wildcards
+
+# Performance and reliability
+enable_performance_monitoring = true
+enable_acl_rule_validation = true
+preload_common_rules = true
+
+# Audit Configuration (comprehensive for staging)
+[security.audit]
+enabled = true
+audit_level = "detailed"  # More detailed than development
+log_successful_auth = true
+log_failed_auth = true
+log_authorization_decisions = true
+log_certificate_events = true
+log_admin_operations = true
+
+# Advanced audit features
+log_performance_metrics = true
+log_security_events = true
+log_configuration_changes = true
+
+# Audit storage (centralized)
+audit_log_path = "/var/log/rustmq/security-audit.log"
+centralized_logging_enabled = true
+syslog_enabled = true
+syslog_facility = "local0"
+syslog_tag = "rustmq-security"
+
+# Log rotation
+rotate_logs = true
+max_log_size_mb = 500  # Larger logs for staging
+max_log_files = 20
+compress_old_logs = true
+
+# Performance Configuration (production-like)
+[security.performance]
+# Cache settings for staging load
+auth_cache_size = 10000
+auth_cache_ttl_seconds = 180
+authz_cache_size = 50000
+authz_cache_ttl_seconds = 300
+
+# Connection limits (production-like)
+max_connections = 5000
+max_connections_per_ip = 50  # More restrictive than dev
+connection_timeout_seconds = 20
+
+# Certificate validation timeouts
+cert_validation_timeout_seconds = 3
+crl_fetch_timeout_seconds = 8
+ocsp_timeout_seconds = 3
+
+# Background processing
+background_cert_refresh_enabled = true
+background_acl_refresh_enabled = true
+health_check_interval_seconds = 30
+
+# Monitoring and Alerting
+[security.monitoring]
+enabled = true
+metrics_enabled = true
+alerts_enabled = true
+
+# Security metrics
+track_authentication_metrics = true
+track_authorization_metrics = true
+track_certificate_metrics = true
+track_performance_metrics = true
+
+# Alert thresholds
+max_failed_auth_per_minute = 50
+max_failed_authz_per_minute = 100
+max_cert_validation_failures_per_minute = 20
+
+# Alert destinations
+alert_webhook_url = "https://alerts.staging.company.com/rustmq"
+alert_email = "security-alerts@company.com"
+
+# Rate Limiting (production-like)
+[security.rate_limiting]
+enabled = true
+global_rate_limit = 5000     # 5k requests per minute
+per_ip_rate_limit = 200      # 200 requests per minute per IP
+burst_capacity = 500         # Moderate burst capacity
+
+# Endpoint-specific limits
+health_endpoint_limit = 500
+metrics_endpoint_limit = 100
+admin_endpoint_limit = 50
+api_endpoint_limit = 1000
+
+# Rate limiting storage
+rate_limit_storage = "redis"  # Centralized storage for rate limits
+redis_url = "redis://redis.staging.company.com:6379/0"
+
+# Security Headers (strict)
+[security.headers]
+enabled = true
+include_security_headers = true
+cors_enabled = true
+cors_allowed_origins = ["https://staging.company.com", "https://admin.staging.company.com"]
+cors_allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+cors_allowed_headers = ["Authorization", "Content-Type", "X-Requested-With"]
+cors_max_age = 3600
+
+# Content Security Policy
+csp_enabled = true
+csp_policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+x_frame_options = "DENY"
+x_content_type_options = "nosniff"
+x_xss_protection = "1; mode=block"
+strict_transport_security = "max-age=31536000; includeSubDomains"
+
+# High Availability Configuration
+[security.ha]
+enabled = true
+cluster_mode = true
+leader_election_enabled = true
+
+# Certificate sync across cluster nodes
+certificate_sync_enabled = true
+certificate_sync_interval_minutes = 5
+
+# ACL sync across cluster nodes
+acl_sync_enabled = true
+acl_sync_interval_minutes = 2
+
+# Backup and Recovery
+[security.backup]
+enabled = true
+backup_interval_hours = 6
+backup_retention_days = 30
+backup_encryption_enabled = true
+backup_location = "/backup/rustmq/staging/security"
+
+# Items to backup
+backup_certificates = true
+backup_acl_rules = true
+backup_audit_logs = true
+backup_configuration = true
+
+# Compliance Configuration
+[security.compliance]
+enabled = true
+frameworks = ["SOX", "ISO27001"]  # Compliance frameworks to follow
+
+# Data retention policies
+certificate_retention_years = 7
+audit_log_retention_years = 7
+access_log_retention_days = 90
+
+# Compliance reporting
+generate_compliance_reports = true
+compliance_report_interval_days = 30
+compliance_report_email = "compliance@company.com"
+
+# Environment Variables
+[security.variables]
+DOMAIN = "company.com"
+ENVIRONMENT = "staging"
+COMPANY_NAME = "YourCompany"
+IP_RANGE = "10.20.0.0/16"
+ADMIN_IP_RANGE = "10.20.100.0/24"
+BROKER_IP_RANGE = "10.20.10.0/24"
+APP_IP_RANGE = "10.20.20.0/24"
+MONITORING_IP_RANGE = "10.20.30.0/24"
+DATABASE_IP_RANGE = "10.20.50.0/24"
+
+# Kubernetes Configuration (if deployed in k8s)
+[security.kubernetes]
+enabled = true
+service_account_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+namespace_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+# Kubernetes security
+use_incluster_config = true
+rbac_enabled = true
+network_policies_enabled = true
+pod_security_policies_enabled = true
+
+# Secret management
+secrets_encryption_enabled = true
+external_secrets_operator = true
+vault_integration_enabled = false  # Can be enabled for testing
+
+# Testing Configuration
+[security.testing]
+# Security testing settings
+enable_security_tests = true
+automated_security_scanning = true
+vulnerability_scanning_enabled = true
+
+# Penetration testing
+allow_pentest_traffic = true
+pentest_ip_whitelist = ["203.0.113.0/24"]  # Pentest team IPs
+
+# Load testing
+allow_load_testing = true
+load_test_rate_limit_exemption = true
+
+# Staging-specific Notes
+[security.notes]
+purpose = "This staging configuration mirrors production security settings for testing"
+
+testing_guidelines = [
+    "Test all security configurations before promoting to production",
+    "Verify certificate validation and revocation checking",
+    "Test rate limiting under load",
+    "Validate ACL rules with realistic data",
+    "Test failover and recovery scenarios"
+]
+
+production_readiness_checklist = [
+    "All certificates are production-grade (not self-signed)",
+    "CRL and OCSP checking is working correctly",
+    "Rate limiting thresholds are appropriate for production load",
+    "Audit logging is configured and working",
+    "Monitoring and alerting are functional",
+    "Backup and recovery procedures are tested"
+]
+
+known_limitations = [
+    "Some development-friendly settings may still be enabled",
+    "Certificate validity periods may be shorter than production",
+    "Rate limits may be more generous than production requirements",
+    "Some debugging features may be enabled"
+]

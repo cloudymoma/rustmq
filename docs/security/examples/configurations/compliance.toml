@@ -1,0 +1,559 @@
+# RustMQ Compliance Security Configuration
+# This configuration provides maximum compliance for regulated industries
+
+[security]
+enabled = true
+security_level = "compliance"  # Maximum compliance mode
+environment = "production"
+compliance_mode = true
+
+# Regulatory compliance frameworks
+compliance_frameworks = ["SOX", "PCI-DSS", "GDPR", "HIPAA", "ISO27001", "NIST", "FedRAMP", "FIPS-140-2"]
+
+# TLS Configuration (FIPS-compliant)
+[security.tls]
+enabled = true
+fips_mode = true  # FIPS 140-2 compliance
+# Production certificates from certified CA only
+server_cert_path = "/etc/rustmq/certs/compliance/server.pem"
+server_key_path = "/etc/rustmq/certs/compliance/server.key"
+client_ca_cert_path = "/etc/rustmq/certs/compliance/ca-bundle.pem"
+
+# FIPS-compliant TLS settings
+tls_version_min = "TLS1.3"
+tls_version_max = "TLS1.3"
+cipher_suites = "fips"  # FIPS-approved cipher suites only
+fips_approved_curves = ["prime256v1", "secp384r1", "secp521r1"]
+require_fips_approved_algorithms = true
+
+# Certificate validation (strict compliance)
+validate_certificate_chain = true
+check_certificate_expiry = true
+certificate_expiry_warning_days = 45
+certificate_expiry_critical_days = 14
+require_certificate_transparency = true
+check_certificate_pinning = true
+
+# mTLS Configuration (mandatory for compliance)
+[security.mtls]
+enabled = true
+require_client_cert = true
+verify_client_cert = true
+client_cert_validation_level = "compliance"
+
+# Compliance-specific certificate validation
+require_ecc_certificates = false  # RSA preferred for compliance
+min_rsa_key_size = 3072  # Larger key size for compliance
+require_certificate_extensions = true
+validate_certificate_policies = true
+
+# Certificate Authority Configuration (certified CA only)
+[security.ca]
+ca_cert_path = "/etc/rustmq/certs/compliance/ca-bundle.pem"
+ca_key_path = "/etc/rustmq/ca/compliance/private/ca.key"  # HSM-mandatory
+intermediate_cert_path = "/etc/rustmq/certs/compliance/intermediate-ca.pem"
+crl_check_enabled = true  # Mandatory
+ocsp_check_enabled = true  # Mandatory
+
+# Trust store (government/compliance approved only)
+trust_store_path = "/etc/ssl/certs/compliance-ca-certificates.crt"
+government_trust_anchors = ["/etc/ssl/certs/federal-bridge-ca.pem"]
+compliance_approved_cas_only = true
+
+# Certificate lifecycle compliance
+certificate_lifecycle_tracking = true
+certificate_expiry_notifications = ["45d", "30d", "14d", "7d", "1d"]
+certificate_renewal_automation = true
+certificate_change_approval_required = true
+
+# Hardware Security Module (mandatory for compliance)
+[security.hsm]
+enabled = true  # Mandatory for compliance
+hsm_type = "fips_140_2_level_3"  # FIPS 140-2 Level 3 minimum
+hsm_library = "/usr/lib/libCryptoki2_64_fips.so"
+hsm_slot_id = 0
+hsm_pin_file = "/etc/rustmq/secrets/hsm-pin.enc"
+hsm_backup_required = true
+
+# Key protection (compliance requirements)
+private_keys_in_hsm = true  # Mandatory
+ca_keys_in_hsm = true  # Mandatory
+signing_keys_in_hsm = true  # Mandatory
+encryption_keys_in_hsm = true  # Mandatory
+key_escrow_enabled = true  # Required for some compliance frameworks
+key_ceremony_logging = true
+
+# Authentication Configuration (compliance grade)
+[security.auth]
+enabled = true
+default_mechanism = "certificate"
+require_authentication = true
+fail_open = false
+compliance_mode = true
+
+# Multi-factor authentication (mandatory)
+mfa_enabled = true
+mfa_required_for_all_users = true  # No exceptions in compliance mode
+mfa_methods = ["fips_approved_totp", "piv_card", "hardware_token"]
+mfa_backup_codes_enabled = false  # Not compliant
+mfa_session_binding = true
+
+# Password policy (if applicable)
+password_policy_enabled = true
+min_password_length = 14
+require_uppercase = true
+require_lowercase = true
+require_numbers = true
+require_special_chars = true
+password_history_count = 24
+password_max_age_days = 60
+account_lockout_threshold = 3
+account_lockout_duration_minutes = 30
+
+# Session management (strict)
+session_timeout_minutes = 15  # Shorter for compliance
+max_sessions_per_user = 1     # Single session only
+session_encryption_enabled = true
+session_integrity_checking = true
+concurrent_session_prevention = true
+
+# Token-based authentication (compliance grade)
+[security.auth.token]
+enabled = true
+token_file = "/etc/rustmq/tokens/compliance-tokens.enc"
+token_refresh_interval_minutes = 5  # Very frequent refresh
+allow_bearer_tokens = false  # Not compliant
+token_encryption_enabled = true
+token_signing_algorithm = "ES384"  # ECDSA with SHA-384
+token_lifetime_minutes = 15
+token_rotation_enabled = true
+
+# Certificate-based authentication (strict)
+[security.auth.certificate]
+enabled = true
+require_valid_certificate = true
+extract_principal_from_cn = true
+principal_regex = "^(.+)@compliance\\.(.+)$"
+allow_wildcard_principals = false
+require_hardware_backed_keys = true
+
+# Certificate validation (comprehensive compliance)
+check_certificate_revocation = true  # Mandatory
+validate_certificate_usage = true
+require_san_validation = true
+check_certificate_transparency = true
+validate_certificate_policies = true
+require_path_validation = true
+
+# Authorization Configuration (zero-trust compliance)
+[security.authz]
+enabled = true
+default_policy = "deny"
+acl_enabled = true
+fail_closed = true
+compliance_mode = true
+
+# Compliance authorization requirements
+require_explicit_allow = true
+deny_overrides_allow = true
+validate_resource_patterns = true
+separation_of_duties_enabled = true
+least_privilege_enforcement = true
+
+# ACL Configuration (audit-compliant)
+[security.acl]
+enabled = true
+cache_enabled = true
+cache_size = 200000  # Large cache for compliance load
+cache_ttl_seconds = 60  # Short TTL for compliance
+fetch_batch_size = 1000
+
+# Compliance ACL storage (highly available and auditable)
+storage_type = "distributed_database"
+storage_config = {
+    primary_connection = "postgresql://rustmq_user:${POSTGRES_PASSWORD}@db1.compliance.company.com:5432/rustmq_compliance?sslmode=require",
+    replica_connections = [
+        "postgresql://rustmq_user:${POSTGRES_PASSWORD}@db2.compliance.company.com:5432/rustmq_compliance?sslmode=require",
+        "postgresql://rustmq_user:${POSTGRES_PASSWORD}@db3.compliance.company.com:5432/rustmq_compliance?sslmode=require"
+    ],
+    connection_pool_size = 100,
+    connection_timeout_seconds = 5,
+    query_timeout_seconds = 3,
+    max_retries = 5,
+    retry_delay_ms = 50,
+    read_write_splitting = true,
+    transaction_isolation = "repeatable_read"
+}
+
+# Compliance validation (strict)
+validate_principals = true
+validate_resources = true
+allow_wildcard_rules = false
+require_explicit_permissions = true
+change_approval_required = true
+change_audit_trail = true
+
+# Performance with compliance constraints
+enable_performance_monitoring = true
+enable_acl_rule_validation = true
+preload_common_rules = true
+enable_rule_compilation = true
+compliance_performance_metrics = true
+
+# Audit Configuration (comprehensive compliance)
+[security.audit]
+enabled = true
+audit_level = "compliance"  # Maximum detail for compliance
+compliance_audit_enabled = true
+tamper_evident_logging = true
+log_integrity_checking = true
+
+# Comprehensive audit logging
+log_successful_auth = true
+log_failed_auth = true
+log_authorization_decisions = true
+log_certificate_events = true
+log_admin_operations = true
+log_configuration_changes = true
+log_security_violations = true
+log_data_access = true
+log_privilege_escalation_attempts = true
+log_compliance_events = true
+
+# Real-time compliance monitoring
+real_time_compliance_monitoring = true
+compliance_violation_detection = true
+automated_compliance_reporting = true
+regulatory_reporting_enabled = true
+
+# Audit storage (compliance-grade)
+audit_log_path = "/var/log/rustmq/compliance-audit.log"
+centralized_logging_enabled = true
+immutable_logging_enabled = true  # Write-once, read-many
+log_signing_enabled = true
+log_encryption_enabled = true
+
+# Compliance-specific logging
+sox_compliance_logging = true
+pci_compliance_logging = true
+gdpr_compliance_logging = true
+hipaa_compliance_logging = true
+
+# External compliance systems
+compliance_siem_integration = true
+regulatory_reporting_endpoint = "https://compliance.company.com/api/v1/reports"
+audit_log_forwarding_enabled = true
+
+# Log retention (compliance-driven)
+encrypt_audit_logs = true
+audit_log_signing_enabled = true
+audit_log_timestamping = true
+rotate_logs = true
+max_log_size_mb = 2000  # Larger logs for compliance
+max_log_files = 365     # One year of daily logs
+compress_old_logs = true
+archive_old_logs = true
+archive_location = "s3://company-compliance-logs/rustmq/"
+archive_retention_years = 10  # Long-term compliance retention
+
+# Performance Configuration (compliance-optimized)
+[security.performance]
+# High-performance caching with compliance constraints
+auth_cache_size = 100000
+auth_cache_ttl_seconds = 60  # Shorter for compliance
+authz_cache_size = 500000
+authz_cache_ttl_seconds = 120
+
+# Connection limits (enterprise scale)
+max_connections = 100000
+max_connections_per_ip = 10  # Very strict for compliance
+connection_timeout_seconds = 5
+
+# Certificate validation (optimized for compliance)
+cert_validation_timeout_seconds = 1
+crl_fetch_timeout_seconds = 2
+ocsp_timeout_seconds = 1
+parallel_validation_enabled = true
+
+# Background processing (compliance-aware)
+background_cert_refresh_enabled = true
+background_acl_refresh_enabled = true
+background_compliance_checking = true
+health_check_interval_seconds = 10
+
+# Thread pool configuration (compliance workload)
+auth_thread_pool_size = 50
+authz_thread_pool_size = 100
+io_thread_pool_size = 50
+compliance_thread_pool_size = 20
+
+# Monitoring and Alerting (compliance-focused)
+[security.monitoring]
+enabled = true
+metrics_enabled = true
+alerts_enabled = true
+compliance_monitoring_enabled = true
+
+# Compliance metrics
+track_authentication_metrics = true
+track_authorization_metrics = true
+track_certificate_metrics = true
+track_performance_metrics = true
+track_compliance_metrics = true
+track_regulatory_metrics = true
+
+# Compliance alert thresholds (very strict)
+max_failed_auth_per_minute = 3
+max_failed_authz_per_minute = 5
+max_cert_validation_failures_per_minute = 2
+max_compliance_violations_per_hour = 0  # Zero tolerance
+
+# Regulatory alerting
+immediate_regulatory_alerts = ["gdpr_violation", "pci_violation", "sox_violation", "hipaa_violation"]
+compliance_escalation_enabled = true
+
+# Alert destinations (compliance team)
+alert_webhook_url = "https://compliance-alerts.company.com/rustmq"
+compliance_alert_email = "compliance-team@company.com"
+regulatory_alert_email = "regulatory-affairs@company.com"
+executive_alert_email = "executives@company.com"  # For critical violations
+
+# Rate Limiting (compliance-strict)
+[security.rate_limiting]
+enabled = true
+compliance_mode = true
+global_rate_limit = 20000    # 20k requests per minute
+per_ip_rate_limit = 20       # Very strict per-IP limits
+burst_capacity = 50          # Small burst for compliance
+
+# Endpoint-specific limits (very strict)
+health_endpoint_limit = 100
+metrics_endpoint_limit = 20
+admin_endpoint_limit = 5     # Extremely strict admin limits
+api_endpoint_limit = 5000
+compliance_endpoint_limit = 10
+
+# Anti-abuse (compliance-grade)
+ddos_protection_enabled = true
+rate_limiting_compliance_logging = true
+rate_limit_violation_alerts = true
+
+# Rate limiting storage (compliance-grade)
+rate_limit_storage = "encrypted_redis_cluster"
+redis_cluster_nodes = [
+    "redis1.compliance.company.com:6380",
+    "redis2.compliance.company.com:6380",
+    "redis3.compliance.company.com:6380"
+]
+redis_tls_enabled = true
+redis_fips_mode = true
+redis_auth_password_file = "/etc/rustmq/secrets/redis-password.enc"
+
+# Security Headers (maximum compliance)
+[security.headers]
+enabled = true
+include_security_headers = true
+compliance_headers_enabled = true
+
+# CORS (minimal for compliance)
+cors_enabled = true
+cors_allowed_origins = ["https://compliance-admin.company.com"]
+cors_allowed_methods = ["GET", "POST"]  # Minimal methods
+cors_allowed_headers = ["Authorization", "Content-Type"]
+cors_max_age = 1800  # Shorter cache
+cors_credentials = false
+
+# Content Security Policy (strict compliance)
+csp_enabled = true
+csp_policy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'"
+x_frame_options = "DENY"
+x_content_type_options = "nosniff"
+x_xss_protection = "1; mode=block"
+strict_transport_security = "max-age=63072000; includeSubDomains; preload"
+referrer_policy = "no-referrer"
+
+# Compliance-specific headers
+compliance_headers = {
+    "X-Compliance-Framework" = "SOX,PCI-DSS,GDPR,HIPAA,ISO27001",
+    "X-Audit-Required" = "true",
+    "X-Data-Classification" = "restricted"
+}
+
+# High Availability Configuration (compliance-grade)
+[security.ha]
+enabled = true
+cluster_mode = true
+leader_election_enabled = true
+leader_election_ttl_seconds = 15  # Faster failover
+
+# Multi-datacenter compliance
+multi_datacenter_enabled = true
+datacenters = ["primary-dc", "backup-dc", "disaster-recovery-dc"]
+cross_datacenter_replication_enabled = true
+data_sovereignty_compliance = true
+
+# Certificate sync (secure and audited)
+certificate_sync_enabled = true
+certificate_sync_interval_minutes = 1  # Very frequent
+certificate_sync_encryption_enabled = true
+certificate_sync_audit_enabled = true
+
+# ACL sync (secure and audited)
+acl_sync_enabled = true
+acl_sync_interval_minutes = 30  # Frequent but not overwhelming
+acl_sync_encryption_enabled = true
+acl_sync_audit_enabled = true
+
+# Backup and Recovery (compliance-grade)
+[security.backup]
+enabled = true
+backup_interval_hours = 1  # Hourly backups
+backup_retention_years = 10  # Compliance retention
+backup_encryption_enabled = true
+backup_signing_enabled = true
+backup_compliance_verification = true
+
+# Multiple backup locations (geographic distribution)
+primary_backup_location = "s3://company-compliance-backups/rustmq/primary/"
+secondary_backup_location = "gcs://company-compliance-backups-dr/rustmq/"
+tertiary_backup_location = "azure://compliancebackups/rustmq/"
+tape_backup_location = "/mnt/compliance-tape-backup/rustmq/"
+
+# Compliance backup requirements
+backup_certificates = true
+backup_private_keys = false  # Never backup (HSM only)
+backup_acl_rules = true
+backup_audit_logs = true
+backup_configuration = true
+backup_compliance_reports = true
+
+# Backup verification (comprehensive)
+verify_backup_integrity = true
+backup_restoration_testing = true
+restoration_test_interval_days = 7  # Weekly testing
+backup_compliance_auditing = true
+
+# Disaster Recovery (compliance RTO/RPO)
+[security.disaster_recovery]
+enabled = true
+rpo_minutes = 5   # Very low RPO for compliance
+rto_minutes = 30  # Very low RTO for compliance
+
+# Failover (automated and audited)
+automatic_failover_enabled = true
+failover_datacenters = ["backup-dc", "disaster-recovery-dc"]
+cross_datacenter_certificate_sync = true
+failover_compliance_validation = true
+
+# Data Protection (comprehensive compliance)
+[security.data_protection]
+enabled = true
+compliance_mode = true
+data_classification_enabled = true
+pii_detection_enabled = true
+phi_detection_enabled = true  # HIPAA compliance
+data_retention_enforcement = true
+
+# Encryption (compliance-grade)
+encrypt_all_data_at_rest = true
+encryption_algorithm = "AES-256-GCM"  # FIPS-approved
+key_rotation_enabled = true
+key_rotation_interval_days = 30  # Frequent rotation
+hardware_key_generation = true
+
+# Data minimization (GDPR compliance)
+data_anonymization_enabled = true
+data_pseudonymization_enabled = true
+data_purging_enabled = true
+right_to_be_forgotten_support = true
+
+# Compliance Reporting
+[security.compliance_reporting]
+enabled = true
+automated_reporting = true
+
+# Report generation
+sox_reports_enabled = true
+pci_reports_enabled = true
+gdpr_reports_enabled = true
+hipaa_reports_enabled = true
+iso27001_reports_enabled = true
+
+# Report scheduling
+daily_compliance_reports = true
+weekly_summary_reports = true
+monthly_executive_reports = true
+quarterly_audit_reports = true
+annual_compliance_assessment = true
+
+# Report distribution
+compliance_team_reports = "compliance-team@company.com"
+executive_reports = "executives@company.com"
+audit_committee_reports = "audit-committee@company.com"
+regulatory_reports = "regulatory-affairs@company.com"
+
+# External Integrations (compliance)
+[security.integrations]
+# GRC (Governance, Risk, Compliance) platforms
+grc_integration_enabled = true
+grc_platform_endpoint = "https://grc.company.com/api/v1/rustmq"
+
+# Legal hold management
+legal_hold_integration = true
+ediscovery_support = true
+
+# Regulatory submission systems
+regulatory_submission_enabled = true
+automated_regulatory_filing = false  # Manual approval required
+
+# Environment Variables (compliance)
+[security.variables]
+DOMAIN = "company.com"
+ENVIRONMENT = "compliance"
+COMPANY_NAME = "YourCompany"
+IP_RANGE = "10.10.0.0/16"
+ADMIN_IP_RANGE = "10.10.100.0/24"
+BROKER_IP_RANGE = "10.10.10.0/24"
+APP_IP_RANGE = "10.10.20.0/24"
+MONITORING_IP_RANGE = "10.10.30.0/24"
+DATABASE_IP_RANGE = "10.10.50.0/24"
+COMPLIANCE_IP_RANGE = "10.10.90.0/24"
+
+# Regulatory zones
+REGULATED_IP_RANGE = "10.10.0.0/8"
+PUBLIC_IP_RANGE = "203.0.113.0/24"
+GOVERNMENT_IP_RANGE = "198.51.100.0/24"
+
+# Compliance Notes
+[security.notes]
+compliance_statement = "This configuration implements maximum security for regulatory compliance across multiple frameworks"
+
+regulatory_requirements = [
+    "SOX: Financial data integrity and access controls",
+    "PCI-DSS: Payment card data protection",
+    "GDPR: EU data protection and privacy rights",
+    "HIPAA: Healthcare information privacy and security",
+    "ISO27001: Information security management systems",
+    "NIST: Cybersecurity framework compliance",
+    "FedRAMP: Federal cloud security requirements",
+    "FIPS-140-2: Cryptographic module security"
+]
+
+compliance_contacts = [
+    "Chief Compliance Officer: cco@company.com",
+    "Compliance Team: compliance-team@company.com",
+    "Regulatory Affairs: regulatory-affairs@company.com",
+    "Legal Team: legal@company.com",
+    "Audit Committee: audit-committee@company.com",
+    "Data Protection Officer: dpo@company.com"
+]
+
+critical_compliance_procedures = [
+    "All security events MUST be logged and retained for 10 years minimum",
+    "All access MUST be authenticated, authorized, and audited",
+    "All cryptographic operations MUST use FIPS-approved algorithms",
+    "All private keys MUST be stored in FIPS 140-2 Level 3+ HSMs",
+    "All compliance violations MUST be reported immediately",
+    "All changes MUST be approved through change control process",
+    "All incidents MUST follow regulatory notification requirements"
+]

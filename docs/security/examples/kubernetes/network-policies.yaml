@@ -1,0 +1,534 @@
+# RustMQ Kubernetes Network Policies
+# Comprehensive network security policies for RustMQ deployment
+
+---
+# Default Deny All Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Default deny all ingress and egress traffic"
+    security.company.com/compliance: "zero-trust-networking"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Allow DNS Resolution for All Pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-resolution
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Allow DNS resolution for all pods"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# RustMQ Broker Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-broker-network-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Network policy for RustMQ brokers"
+    security.company.com/ports: "9092,9093,8080"
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-broker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow QUIC client connections (port 9092)
+  - from:
+    # Only from authorized client namespaces
+    - namespaceSelector:
+        matchLabels:
+          security.company.com/rustmq-client: "allowed"
+    # Or from pods with client label in same namespace
+    - podSelector:
+        matchLabels:
+          security.company.com/rustmq-client: "allowed"
+    ports:
+    - protocol: TCP
+      port: 9092
+  
+  # Allow gRPC broker-to-broker communication (port 9093)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+  
+  # Allow health checks from monitoring systems (port 8080)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    - podSelector:
+        matchLabels:
+          app: grafana
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow admin CLI access (restricted)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-admin
+          security.company.com/admin-access: "allowed"
+    ports:
+    - protocol: TCP
+      port: 9092
+
+  egress:
+  # Allow broker-to-broker communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+
+  # Allow communication with controller
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9094
+
+  # Allow object storage access (AWS S3, GCS, Azure)
+  - to: []  # Any external destination
+    ports:
+    - protocol: TCP
+      port: 443  # HTTPS
+    - protocol: TCP
+      port: 80   # HTTP (for redirects only)
+
+  # Allow NTP synchronization
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 123
+
+---
+# RustMQ Controller Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-controller-network-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Network policy for RustMQ controllers"
+    security.company.com/ports: "9094,9095,9642"
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow broker connections to controller gRPC API (port 9094)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9094
+
+  # Allow controller-to-controller Raft communication (port 9095)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9095
+
+  # Allow admin API access (port 9642)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-admin
+          security.company.com/admin-access: "allowed"
+    # Allow from admin namespace
+    - namespaceSelector:
+        matchLabels:
+          name: rustmq-admin
+      podSelector:
+        matchLabels:
+          security.company.com/admin-access: "allowed"
+    ports:
+    - protocol: TCP
+      port: 9642
+
+  # Allow monitoring access
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9642
+
+  egress:
+  # Allow controller cluster communication (Raft)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9095
+
+  # Allow external database access (for ACL storage)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 3306  # MySQL
+
+  # Allow external key-value store access (Consul, etcd)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 8500  # Consul
+    - protocol: TCP
+      port: 2379  # etcd
+
+---
+# RustMQ Admin Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-admin-network-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Network policy for RustMQ admin tools"
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-admin
+  policyTypes:
+  - Egress
+  egress:
+  # Allow admin to connect to controller API
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9642
+
+  # Allow admin to connect to broker (for direct operations)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9092
+
+---
+# Client Application Network Policy Template
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-client-template
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Template for RustMQ client applications"
+    security.company.com/usage: "Apply this to client namespaces"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/rustmq-client: "allowed"
+  policyTypes:
+  - Egress
+  egress:
+  # Allow connection to RustMQ brokers
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: rustmq-production
+      podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9092
+
+---
+# Monitoring Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-rustmq-access
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Allow monitoring systems to access RustMQ metrics"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow Prometheus to scrape metrics
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Development Environment Network Policy (more permissive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-development-policy
+  namespace: rustmq-development
+  annotations:
+    security.company.com/description: "More permissive policy for development"
+    security.company.com/environment: "development"
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-broker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow broader access in development
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: development
+    ports:
+    - protocol: TCP
+      port: 9092
+    - protocol: TCP
+      port: 8080
+  
+  # Allow developer access
+  - from:
+    - podSelector:
+        matchLabels:
+          security.company.com/developer-access: "allowed"
+    ports:
+    - protocol: TCP
+      port: 9092
+    - protocol: TCP
+      port: 8080
+
+  egress:
+  # Allow broader egress in development
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# Security Zone Network Policies
+
+# DMZ Zone Policy (external-facing components)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dmz-zone-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/zone: "dmz"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/zone: "dmz"
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow external ingress to DMZ
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  egress:
+  # DMZ can only talk to internal zone
+  - to:
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "internal"
+
+---
+# Internal Zone Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-zone-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/zone: "internal"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/zone: "internal"
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from DMZ and other internal services
+  - from:
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "dmz"
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "internal"
+  egress:
+  # Internal can talk to database zone and external
+  - to:
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "database"
+  - to: []  # External access for APIs
+
+---
+# Database Zone Policy (most restrictive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-zone-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/zone: "database"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/zone: "database"
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only allow from internal zone
+  - from:
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "internal"
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 3306  # MySQL
+    - protocol: TCP
+      port: 6379  # Redis
+  egress:
+  # Database zone cannot initiate external connections
+  - to:
+    - podSelector:
+        matchLabels:
+          security.company.com/zone: "database"
+
+---
+# Emergency Access Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-access-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Emergency access for security incidents"
+    security.company.com/emergency: "true"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/emergency-access: "enabled"
+  policyTypes:
+  - Ingress
+  egress: []  # No egress restrictions during emergency
+  ingress:
+  # Allow emergency access from security team
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          security.company.com/emergency: "true"
+    - podSelector:
+        matchLabels:
+          security.company.com/security-team: "true"
+
+---
+# Compliance Network Policy (strict for regulated workloads)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: compliance-strict-policy
+  namespace: rustmq-production
+  annotations:
+    security.company.com/compliance: "sox,pci-dss,gdpr"
+    security.company.com/classification: "restricted"
+spec:
+  podSelector:
+    matchLabels:
+      security.company.com/compliance: "required"
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Very restricted ingress for compliance workloads
+  - from:
+    - podSelector:
+        matchLabels:
+          security.company.com/compliance-approved: "true"
+    ports:
+    - protocol: TCP
+      port: 9092
+  egress:
+  # Restricted egress with logging
+  - to:
+    - podSelector:
+        matchLabels:
+          security.company.com/compliance-approved: "true"
+  # Allow access to compliance monitoring
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: compliance-monitoring

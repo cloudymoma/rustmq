@@ -1,0 +1,230 @@
+# RustMQ Development Environment Security Configuration
+# This configuration prioritizes ease of development while maintaining basic security
+
+[security]
+enabled = true
+security_level = "relaxed"  # Options: strict, moderate, relaxed
+environment = "development"
+
+# TLS Configuration
+[security.tls]
+enabled = true
+# Development certificates (use generate-dev-certs.sh to create these)
+server_cert_path = "/etc/rustmq/certs/server.pem"
+server_key_path = "/etc/rustmq/certs/server.key"
+client_ca_cert_path = "/etc/rustmq/certs/ca.pem"
+
+# TLS settings optimized for development
+tls_version_min = "TLS1.2"
+tls_version_max = "TLS1.3"
+cipher_suites = "modern"  # Options: modern, intermediate, old
+verify_client_cert = false  # Relaxed for development
+allow_self_signed = true   # Allow self-signed certs in dev
+
+# mTLS Configuration (disabled by default in dev)
+[security.mtls]
+enabled = false
+require_client_cert = false
+verify_client_cert = false
+client_cert_validation_level = "basic"  # Options: strict, moderate, basic, none
+
+# Certificate Authority Configuration
+[security.ca]
+ca_cert_path = "/etc/rustmq/certs/ca.pem"
+ca_key_path = "/etc/rustmq/ca/private/ca.key"  # Only needed if acting as CA
+intermediate_cert_path = ""  # Not used in development
+crl_check_enabled = false   # Disabled for development
+ocsp_check_enabled = false  # Disabled for development
+
+# Authentication Configuration
+[security.auth]
+enabled = true
+default_mechanism = "certificate"  # Options: certificate, token, none
+require_authentication = false     # Relaxed for development
+
+# Token-based authentication (for testing)
+[security.auth.token]
+enabled = false
+token_file = "/etc/rustmq/tokens/dev-tokens.json"
+token_refresh_interval_minutes = 60
+allow_bearer_tokens = true
+
+# Certificate-based authentication
+[security.auth.certificate]
+enabled = true
+require_valid_certificate = false  # Relaxed for development
+extract_principal_from_cn = true
+principal_regex = "^(.+)@(.+)$"
+allow_wildcard_principals = true   # Allow * principals in dev
+
+# Authorization Configuration
+[security.authz]
+enabled = true
+default_policy = "allow"  # Development default: allow
+acl_enabled = true
+
+# ACL Configuration
+[security.acl]
+enabled = true
+cache_enabled = true
+cache_size = 10000
+cache_ttl_seconds = 300
+fetch_batch_size = 100
+
+# Development ACL storage (file-based for simplicity)
+storage_type = "file"  # Options: file, database, consul, etcd
+storage_config = { file_path = "/etc/rustmq/acl/development-acls.json" }
+
+# Relaxed validation for development
+validate_principals = false
+validate_resources = false
+allow_wildcard_rules = true
+
+# Audit Configuration (minimal for development)
+[security.audit]
+enabled = true
+audit_level = "basic"  # Options: none, basic, detailed, verbose
+log_successful_auth = false    # Don't log successful auth in dev
+log_failed_auth = true
+log_authorization_decisions = false
+log_certificate_events = true
+
+# Audit storage
+audit_log_path = "/var/log/rustmq/security-audit.log"
+rotate_logs = true
+max_log_size_mb = 100
+max_log_files = 5
+
+# Performance Configuration (optimized for development)
+[security.performance]
+# Cache settings for development
+auth_cache_size = 1000
+auth_cache_ttl_seconds = 300
+authz_cache_size = 5000
+authz_cache_ttl_seconds = 600
+
+# Connection limits (generous for development)
+max_connections = 1000
+max_connections_per_ip = 100
+connection_timeout_seconds = 30
+
+# Certificate validation (relaxed)
+cert_validation_timeout_seconds = 5
+crl_fetch_timeout_seconds = 10
+ocsp_timeout_seconds = 5
+
+# Development-specific settings
+[security.development]
+# Allow insecure operations for testing
+allow_insecure_connections = true
+skip_hostname_verification = true
+accept_invalid_certificates = true
+
+# Debug settings
+enable_security_debug_logs = true
+log_tls_handshake_details = true
+log_certificate_details = true
+
+# Development helpers
+auto_generate_test_certificates = true
+create_default_acl_rules = true
+enable_security_metrics = true
+
+# Test user accounts (for development only)
+[security.development.test_users]
+"admin@dev.company.com" = { roles = ["admin"], permissions = ["all"] }
+"developer@dev.company.com" = { roles = ["developer"], permissions = ["read", "write"] }
+"guest@dev.company.com" = { roles = ["guest"], permissions = ["read"] }
+
+# Default ACL rules for development
+[security.development.default_acls]
+enabled = true
+create_admin_rules = true
+create_developer_rules = true
+create_test_rules = true
+
+# Kubernetes Development Settings (if running in k8s)
+[security.kubernetes]
+enabled = false
+service_account_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+namespace_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+# Development-specific k8s settings
+use_incluster_config = false
+kubeconfig_path = "~/.kube/config"
+
+# Rate Limiting (generous for development)
+[security.rate_limiting]
+enabled = true
+global_rate_limit = 10000    # 10k requests per minute
+per_ip_rate_limit = 1000     # 1k requests per minute per IP
+burst_capacity = 2000        # Allow bursts during testing
+
+# Development endpoints (higher limits)
+health_endpoint_limit = 1000
+metrics_endpoint_limit = 500
+admin_endpoint_limit = 200
+
+# Security Headers
+[security.headers]
+enabled = true
+include_security_headers = true
+cors_enabled = true
+cors_allowed_origins = ["*"]  # Permissive for development
+cors_allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+cors_allowed_headers = ["*"]
+
+# Content Security Policy (relaxed)
+csp_enabled = false  # Disabled for development ease
+x_frame_options = "SAMEORIGIN"
+x_content_type_options = "nosniff"
+
+# Environment Variables (for configuration templating)
+[security.variables]
+DOMAIN = "company.com"
+ENVIRONMENT = "development"
+COMPANY_NAME = "YourCompany"
+IP_RANGE = "192.168.0.0/16"
+ADMIN_IP_RANGE = "192.168.100.0/24"
+BROKER_IP_RANGE = "10.0.10.0/24"
+APP_IP_RANGE = "10.0.20.0/24"
+MONITORING_IP_RANGE = "10.0.30.0/24"
+
+# Documentation and Help
+[security.documentation]
+# Links to security documentation
+security_guide_url = "https://docs.rustmq.io/security/"
+certificate_guide_url = "https://docs.rustmq.io/security/certificates/"
+acl_guide_url = "https://docs.rustmq.io/security/acl/"
+troubleshooting_url = "https://docs.rustmq.io/security/troubleshooting/"
+
+# Emergency contacts
+security_team_email = "security@company.com"
+on_call_contact = "oncall@company.com"
+
+# Development Notes
+[security.notes]
+warnings = [
+    "This is a DEVELOPMENT configuration - DO NOT use in production!",
+    "Many security features are relaxed or disabled for ease of development",
+    "Certificates may be self-signed and have long validity periods",
+    "Rate limiting is generous and may not reflect production requirements",
+    "Authentication and authorization may be bypassed in some scenarios"
+]
+
+best_practices = [
+    "Test security configurations in a staging environment before production",
+    "Use the generate-dev-certs.sh script to create development certificates", 
+    "Review ACL rules before deploying to production",
+    "Monitor security logs even in development",
+    "Regularly update certificates and refresh CRLs"
+]
+
+next_steps = [
+    "Copy this configuration to staging and tighten security settings",
+    "Replace development certificates with production certificates",
+    "Enable strict authentication and authorization",
+    "Configure proper audit logging and monitoring",
+    "Set up certificate rotation and renewal processes"
+]

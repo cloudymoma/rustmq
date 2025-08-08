@@ -1,0 +1,898 @@
+# RustMQ Kubernetes Security Manifests
+# This file contains comprehensive security configurations for RustMQ in Kubernetes
+
+---
+# Namespace with security labels
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rustmq-production
+  labels:
+    name: rustmq-production
+    security.company.com/classification: "restricted"
+    security.company.com/compliance: "sox,pci-dss,gdpr"
+    security.company.com/encryption: "required"
+  annotations:
+    security.company.com/description: "RustMQ production namespace with enhanced security"
+    security.company.com/contact: "security-team@company.com"
+
+---
+# Network Policy - Default Deny All
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: rustmq-production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Network Policy - RustMQ Broker Communications
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-broker-network-policy
+  namespace: rustmq-production
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-broker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow QUIC client connections
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: rustmq-clients
+    - podSelector:
+        matchLabels:
+          security.company.com/client-access: "allowed"
+    ports:
+    - protocol: TCP
+      port: 9092
+  # Allow gRPC broker-to-broker
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+  # Allow health checks from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow broker-to-broker communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+  # Allow controller communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9094
+  # Allow object storage access (S3/GCS)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Network Policy - RustMQ Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-controller-network-policy
+  namespace: rustmq-production
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow broker connections
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9094
+  # Allow controller-to-controller Raft
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9095
+  # Allow admin API access
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-admin
+    ports:
+    - protocol: TCP
+      port: 9642
+  egress:
+  # Allow controller cluster communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: TCP
+      port: 9095
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Pod Security Policy (deprecated in k8s 1.25+, use Pod Security Standards)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: rustmq-restricted-psp
+  namespace: rustmq-production
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+
+---
+# Service Account for RustMQ Broker
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rustmq-broker
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Service account for RustMQ brokers"
+automountServiceAccountToken: false  # Disable automatic token mounting
+
+---
+# Service Account for RustMQ Controller
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rustmq-controller
+  namespace: rustmq-production
+  annotations:
+    security.company.com/description: "Service account for RustMQ controllers"
+automountServiceAccountToken: false
+
+---
+# RBAC - Role for RustMQ Broker
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: rustmq-production
+  name: rustmq-broker-role
+rules:
+# Minimal permissions for broker operations
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["rustmq-broker-config"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+  resourceNames: ["rustmq-broker-certs", "rustmq-broker-keys"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+  resourceNames: ["self"]  # Only access to own pod
+
+---
+# RBAC - Role for RustMQ Controller
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: rustmq-production
+  name: rustmq-controller-role
+rules:
+# Controller needs broader permissions for cluster management
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch", "update"]
+  resourceNames: ["rustmq-broker"]
+
+---
+# RBAC - RoleBinding for Broker
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rustmq-broker-rolebinding
+  namespace: rustmq-production
+subjects:
+- kind: ServiceAccount
+  name: rustmq-broker
+  namespace: rustmq-production
+roleRef:
+  kind: Role
+  name: rustmq-broker-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RBAC - RoleBinding for Controller
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rustmq-controller-rolebinding
+  namespace: rustmq-production
+subjects:
+- kind: ServiceAccount
+  name: rustmq-controller
+  namespace: rustmq-production
+roleRef:
+  kind: Role
+  name: rustmq-controller-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Certificate Manager - ClusterIssuer for mTLS certificates
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: rustmq-ca-issuer
+spec:
+  ca:
+    secretName: rustmq-ca-secret  # Contains CA certificate and private key
+
+---
+# Certificate Manager - Certificate for Broker
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rustmq-broker-cert
+  namespace: rustmq-production
+spec:
+  secretName: rustmq-broker-tls
+  issuerRef:
+    name: rustmq-ca-issuer
+    kind: ClusterIssuer
+  commonName: "rustmq-broker.rustmq-production.svc.cluster.local"
+  dnsNames:
+  - "rustmq-broker"
+  - "rustmq-broker.rustmq-production"
+  - "rustmq-broker.rustmq-production.svc"
+  - "rustmq-broker.rustmq-production.svc.cluster.local"
+  - "*.rustmq-broker.rustmq-production.svc.cluster.local"
+  ipAddresses:
+  - "127.0.0.1"
+  duration: 8760h  # 1 year
+  renewBefore: 720h  # 30 days before expiry
+  keySize: 2048
+  keyAlgorithm: rsa
+  keyEncoding: pkcs1
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  - client auth
+
+---
+# Certificate Manager - Certificate for Controller
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rustmq-controller-cert
+  namespace: rustmq-production
+spec:
+  secretName: rustmq-controller-tls
+  issuerRef:
+    name: rustmq-ca-issuer
+    kind: ClusterIssuer
+  commonName: "rustmq-controller.rustmq-production.svc.cluster.local"
+  dnsNames:
+  - "rustmq-controller"
+  - "rustmq-controller.rustmq-production"
+  - "rustmq-controller.rustmq-production.svc"
+  - "rustmq-controller.rustmq-production.svc.cluster.local"
+  - "*.rustmq-controller.rustmq-production.svc.cluster.local"
+  duration: 8760h
+  renewBefore: 720h
+  keySize: 2048
+  keyAlgorithm: rsa
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  - client auth
+
+---
+# Secret for CA Certificate (manual creation required)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rustmq-ca-secret
+  namespace: rustmq-production
+type: kubernetes.io/tls
+data:
+  # These need to be base64 encoded CA certificate and private key
+  # tls.crt: <base64-encoded-ca-certificate>
+  # tls.key: <base64-encoded-ca-private-key>
+
+---
+# ConfigMap for Broker Security Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustmq-broker-security-config
+  namespace: rustmq-production
+data:
+  security.toml: |
+    [security]
+    enabled = true
+    security_level = "strict"
+    environment = "production"
+    
+    [security.tls]
+    enabled = true
+    server_cert_path = "/etc/rustmq/certs/tls.crt"
+    server_key_path = "/etc/rustmq/certs/tls.key"
+    client_ca_cert_path = "/etc/rustmq/certs/ca.crt"
+    tls_version_min = "TLS1.3"
+    verify_client_cert = true
+    
+    [security.mtls]
+    enabled = true
+    require_client_cert = true
+    verify_client_cert = true
+    
+    [security.auth]
+    enabled = true
+    require_authentication = true
+    default_mechanism = "certificate"
+    
+    [security.authz]
+    enabled = true
+    default_policy = "deny"
+    acl_enabled = true
+    
+    [security.audit]
+    enabled = true
+    audit_level = "detailed"
+    log_successful_auth = true
+    log_failed_auth = true
+
+---
+# ConfigMap for Controller Security Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustmq-controller-security-config
+  namespace: rustmq-production
+data:
+  security.toml: |
+    [security]
+    enabled = true
+    security_level = "strict"
+    environment = "production"
+    
+    [security.tls]
+    enabled = true
+    server_cert_path = "/etc/rustmq/certs/tls.crt"
+    server_key_path = "/etc/rustmq/certs/tls.key"
+    client_ca_cert_path = "/etc/rustmq/certs/ca.crt"
+    
+    [security.auth]
+    enabled = true
+    require_authentication = true
+    
+    [security.authz]
+    enabled = true
+    default_policy = "deny"
+
+---
+# StatefulSet for RustMQ Broker with Security
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-broker
+  namespace: rustmq-production
+  labels:
+    app: rustmq-broker
+    security.company.com/classification: "restricted"
+spec:
+  serviceName: rustmq-broker
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rustmq-broker
+  template:
+    metadata:
+      labels:
+        app: rustmq-broker
+        security.company.com/client-access: "allowed"
+        security.company.com/classification: "restricted"
+      annotations:
+        security.company.com/encrypted-storage: "true"
+        security.company.com/mtls-required: "true"
+    spec:
+      serviceAccountName: rustmq-broker
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - rustmq-broker
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: rustmq-broker
+        image: rustmq/broker:latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10001
+          runAsGroup: 10001
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - name: quic
+          containerPort: 9092
+          protocol: TCP
+        - name: grpc
+          containerPort: 9093
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: RUSTMQ_CONFIG_PATH
+          value: "/etc/rustmq/config/broker.toml"
+        - name: RUSTMQ_SECURITY_CONFIG_PATH
+          value: "/etc/rustmq/config/security.toml"
+        - name: RUSTMQ_LOG_LEVEL
+          value: "info"
+        - name: RUSTMQ_BROKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: config
+          mountPath: /etc/rustmq/config
+          readOnly: true
+        - name: security-config
+          mountPath: /etc/rustmq/config
+          readOnly: true
+        - name: certs
+          mountPath: /etc/rustmq/certs
+          readOnly: true
+        - name: wal-storage
+          mountPath: /var/lib/rustmq/wal
+        - name: cache-storage
+          mountPath: /var/lib/rustmq/cache
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: config
+        configMap:
+          name: rustmq-broker-config
+      - name: security-config
+        configMap:
+          name: rustmq-broker-security-config
+      - name: certs
+        secret:
+          secretName: rustmq-broker-tls
+          defaultMode: 0400
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 10Gi
+  volumeClaimTemplates:
+  - metadata:
+      name: wal-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd-encrypted
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# StatefulSet for RustMQ Controller with Security
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq-production
+  labels:
+    app: rustmq-controller
+    security.company.com/classification: "restricted"
+spec:
+  serviceName: rustmq-controller
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rustmq-controller
+  template:
+    metadata:
+      labels:
+        app: rustmq-controller
+        security.company.com/classification: "restricted"
+      annotations:
+        security.company.com/encrypted-storage: "true"
+        security.company.com/mtls-required: "true"
+    spec:
+      serviceAccountName: rustmq-controller
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        fsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - rustmq-controller
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: rustmq-controller
+        image: rustmq/controller:latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10002
+          runAsGroup: 10002
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - name: grpc
+          containerPort: 9094
+          protocol: TCP
+        - name: raft
+          containerPort: 9095
+          protocol: TCP
+        - name: http
+          containerPort: 9642
+          protocol: TCP
+        env:
+        - name: RUSTMQ_CONFIG_PATH
+          value: "/etc/rustmq/config/controller.toml"
+        - name: RUSTMQ_SECURITY_CONFIG_PATH
+          value: "/etc/rustmq/config/security.toml"
+        - name: RUSTMQ_CONTROLLER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: config
+          mountPath: /etc/rustmq/config
+          readOnly: true
+        - name: security-config
+          mountPath: /etc/rustmq/config
+          readOnly: true
+        - name: certs
+          mountPath: /etc/rustmq/certs
+          readOnly: true
+        - name: raft-storage
+          mountPath: /var/lib/rustmq/raft
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: rustmq-controller-config
+      - name: security-config
+        configMap:
+          name: rustmq-controller-security-config
+      - name: certs
+        secret:
+          secretName: rustmq-controller-tls
+          defaultMode: 0400
+      - name: tmp
+        emptyDir:
+          sizeLimit: 512Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: raft-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd-encrypted
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Service for RustMQ Broker
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustmq-broker
+  namespace: rustmq-production
+  labels:
+    app: rustmq-broker
+  annotations:
+    security.company.com/tls-required: "true"
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: rustmq-broker
+  ports:
+  - name: quic
+    port: 9092
+    targetPort: quic
+    protocol: TCP
+  - name: grpc
+    port: 9093
+    targetPort: grpc
+    protocol: TCP
+
+---
+# Service for RustMQ Controller
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustmq-controller
+  namespace: rustmq-production
+  labels:
+    app: rustmq-controller
+  annotations:
+    security.company.com/tls-required: "true"
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: rustmq-controller
+  ports:
+  - name: grpc
+    port: 9094
+    targetPort: grpc
+    protocol: TCP
+  - name: raft
+    port: 9095
+    targetPort: raft
+    protocol: TCP
+  - name: http
+    port: 9642
+    targetPort: http
+    protocol: TCP
+
+---
+# Pod Disruption Budget for Broker
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-broker-pdb
+  namespace: rustmq-production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rustmq-broker
+
+---
+# Pod Disruption Budget for Controller
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-controller-pdb
+  namespace: rustmq-production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rustmq-controller
+
+---
+# Security Monitoring - ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-security-metrics
+  namespace: rustmq-production
+  labels:
+    app: rustmq
+    monitoring: security
+spec:
+  selector:
+    matchLabels:
+      app: rustmq-broker
+  endpoints:
+  - port: health
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: false
+      caFile: /etc/prometheus/secrets/rustmq-ca/ca.crt
+    interval: 30s
+    honorLabels: true
+
+---
+# Admission Controller - Gatekeeper Constraint Template
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: rustmqsecuritypolicy
+spec:
+  crd:
+    spec:
+      names:
+        kind: RustMQSecurityPolicy
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            requiredLabels:
+              type: array
+              items:
+                type: string
+            allowedImages:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package rustmqsecuritypolicy
+        
+        violation[{"msg": msg}] {
+            required := input.parameters.requiredLabels
+            provided := input.review.object.metadata.labels
+            missing := required[_]
+            not provided[missing]
+            msg := sprintf("Missing required label: %v", [missing])
+        }
+        
+        violation[{"msg": msg}] {
+            allowed := input.parameters.allowedImages
+            image := input.review.object.spec.containers[_].image
+            not startswith(image, allowed[_])
+            msg := sprintf("Image not from allowed registry: %v", [image])
+        }
+
+---
+# Admission Controller - Gatekeeper Constraint
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RustMQSecurityPolicy
+metadata:
+  name: rustmq-security-policy
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["StatefulSet", "Deployment"]
+    namespaces: ["rustmq-production"]
+  parameters:
+    requiredLabels:
+      - "security.company.com/classification"
+    allowedImages:
+      - "rustmq/"
+      - "registry.company.com/rustmq/"

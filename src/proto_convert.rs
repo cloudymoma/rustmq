@@ -749,7 +749,7 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::TopicNotFound(_) => ErrorCode::TopicNotFound as u32,
         RustMqError::PartitionNotFound(_) => ErrorCode::PartitionNotFound as u32,
         RustMqError::BrokerNotFound(_) => ErrorCode::ResourceNotFound as u32,
-        RustMqError::Timeout => ErrorCode::InternalError as u32,
+        RustMqError::OperationTimeout => ErrorCode::InternalError as u32,
         RustMqError::InvalidConfig(_) => ErrorCode::InvalidParameter as u32,
         RustMqError::PermissionDenied(_) => ErrorCode::PermissionDenied as u32,
         RustMqError::Tls(_) => ErrorCode::InternalError as u32,
@@ -770,6 +770,40 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::ObjectNotFound(_) => ErrorCode::ObjectNotFound as u32,
         RustMqError::Transport(_) => ErrorCode::InternalError as u32,
         RustMqError::InvalidUri(_) => ErrorCode::InvalidParameter as u32,
+        
+        // Security-related errors
+        RustMqError::AuthenticationFailed(_) => ErrorCode::PermissionDenied as u32,
+        RustMqError::AuthorizationFailed(_) => ErrorCode::PermissionDenied as u32,
+        RustMqError::CertificateRevoked { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::CertificateExpired { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::InvalidCertificate { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::SecurityConfig(_) => ErrorCode::InvalidParameter as u32,
+        RustMqError::CacheOperation(_) => ErrorCode::InternalError as u32,
+        RustMqError::PrincipalExtraction(_) => ErrorCode::InvalidParameter as u32,
+        RustMqError::AclEvaluation(_) => ErrorCode::InternalError as u32,
+        RustMqError::Timeout(_) => ErrorCode::InternalError as u32,
+        RustMqError::Internal(_) => ErrorCode::InternalError as u32,
+        
+        // Missing security-related error patterns
+        RustMqError::AuthorizationDenied { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::CertificateNotFound { .. } => ErrorCode::ResourceNotFound as u32,
+        RustMqError::CertificateGeneration { .. } => ErrorCode::InternalError as u32,
+        RustMqError::CertificateValidation { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::CaNotAvailable(_) => ErrorCode::ResourceNotFound as u32,
+        RustMqError::AclRuleNotFound { .. } => ErrorCode::ResourceNotFound as u32,
+        RustMqError::AclRuleConflict { .. } => ErrorCode::InvalidRequest as u32,
+        RustMqError::InvalidAclPattern { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::SecurityPolicyViolation { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::RateLimitExceeded { .. } => ErrorCode::ResourceExhausted as u32,
+        RustMqError::SessionExpired { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::TlsHandshakeFailed { .. } => ErrorCode::InternalError as u32,
+        RustMqError::SignatureVerificationFailed { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::CryptographicFailure { .. } => ErrorCode::InternalError as u32,
+        RustMqError::RevocationCheckFailed { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::CertificateChainValidation { .. } => ErrorCode::InvalidParameter as u32,
+        RustMqError::SecurityAuditLog(_) => ErrorCode::InternalError as u32,
+        RustMqError::InsufficientPrivileges { .. } => ErrorCode::PermissionDenied as u32,
+        RustMqError::ValidationError(_) => ErrorCode::InvalidParameter as u32,
     }
 }
 
@@ -781,7 +815,7 @@ pub fn error_to_message(error: &RustMqError) -> String {
 /// Determine if an error is retryable
 pub fn error_is_retryable(error: &RustMqError) -> bool {
     match error {
-        RustMqError::Timeout 
+        RustMqError::Timeout(_) 
         | RustMqError::Network(_)
         | RustMqError::QuicConnection(_)
         | RustMqError::ResourceExhausted(_)
@@ -891,7 +925,7 @@ mod tests {
             common::ErrorCode::StaleLeaderEpoch as u32
         );
         
-        assert!(error_is_retryable(&RustMqError::Timeout));
+        assert!(error_is_retryable(&RustMqError::Timeout("test timeout".to_string())));
         assert!(!error_is_retryable(&RustMqError::TopicNotFound("test".to_string())));
     }
 

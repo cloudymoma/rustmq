@@ -1,9 +1,116 @@
 use rustmq::Result;
 use rustmq::controller::{ControllerService, CreateTopicRequest, DeleteTopicRequest, TopicConfig};
 use rustmq::config::ScalingConfig;
-use std::env;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, error, debug};
+use clap::{Parser, Subcommand, Args};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+mod admin;
+
+use admin::{
+    AdminApiClient, OutputFormat, 
+    CaCommands, CertCommands, AclCommands, AuditCommands, SecurityCommands,
+    execute_ca_command, execute_cert_command, execute_acl_command, 
+    execute_audit_command, execute_security_command
+};
+
+#[derive(Parser)]
+#[command(name = "rustmq-admin")]
+#[command(about = "RustMQ Admin Tool - Comprehensive cluster and security management")]
+#[command(version = "0.9.1")]
+pub struct Cli {
+    /// Admin API base URL
+    #[arg(long, default_value = "http://127.0.0.1:8080")]
+    pub api_url: String,
+    
+    /// Output format
+    #[arg(long, default_value = "table")]
+    pub format: OutputFormat,
+    
+    /// Disable colored output
+    #[arg(long)]
+    pub no_color: bool,
+    
+    /// Verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
+    
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Topic management commands
+    #[command(subcommand)]
+    Topic(TopicCommands),
+    
+    /// Certificate Authority management commands
+    #[command(subcommand)]
+    Ca(CaCommands),
+    
+    /// Certificate lifecycle management commands
+    #[command(subcommand)]
+    Certs(CertCommands),
+    
+    /// ACL management commands
+    #[command(subcommand)]
+    Acl(AclCommands),
+    
+    /// Security audit commands
+    #[command(subcommand)]
+    Audit(AuditCommands),
+    
+    /// General security commands
+    #[command(subcommand)]
+    Security(SecurityCommands),
+    
+    /// Check cluster health
+    ClusterHealth,
+    
+    /// Start REST API server
+    ServeApi {
+        /// Port to listen on
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TopicCommands {
+    /// Create a new topic
+    Create {
+        /// Topic name
+        name: String,
+        /// Number of partitions
+        partitions: u32,
+        /// Replication factor
+        replication_factor: u32,
+        /// Retention time in milliseconds
+        #[arg(long)]
+        retention_ms: Option<u64>,
+        /// Segment size in bytes
+        #[arg(long)]
+        segment_bytes: Option<u64>,
+        /// Compression type
+        #[arg(long)]
+        compression: Option<String>,
+    },
+    /// List all topics
+    List,
+    /// Describe a specific topic
+    Describe {
+        /// Topic name
+        name: String,
+    },
+    /// Delete a topic
+    Delete {
+        /// Topic name
+        name: String,
+    },
+}
 
 /// Create a controller service for admin operations
 async fn create_admin_controller() -> Result<Arc<ControllerService>> {
@@ -32,43 +139,36 @@ async fn create_admin_controller() -> Result<Arc<ControllerService>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
-    
     // Parse command line arguments
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
     
-    if args.len() < 2 {
-        println!("RustMQ Admin Tool");
-        println!("Usage: {} <command> [args...]", args[0]);
-        println!();
-        println!("Commands:");
-        println!("  create-topic <name> <partitions> <replication_factor>");
-        println!("  list-topics");
-        println!("  describe-topic <name>");
-        println!("  delete-topic <name>");
-        println!("  cluster-health");
-        println!("  serve-api [port]  - Start REST API server (default port: 8080)");
-        std::process::exit(1);
+    // Initialize logging based on verbosity
+    if cli.verbose {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .init();
     }
     
-    let command = &args[1];
+    // Create API client for security commands
+    let api_client = AdminApiClient::new(&cli.api_url)?;
     
-    match command.as_str() {
-        "create-topic" => {
-            if args.len() != 5 {
-                error!("Usage: create-topic <name> <partitions> <replication_factor>");
-                std::process::exit(1);
-            }
-            let topic_name = &args[2];
-            let partitions: u32 = args[3].parse().unwrap_or_else(|_| {
-                error!("Invalid partition count: {}", args[3]);
-                std::process::exit(1);
-            });
-            let replication_factor: u32 = args[4].parse().unwrap_or_else(|_| {
-                error!("Invalid replication factor: {}", args[4]);
-                std::process::exit(1);
-            });
+    // Execute the appropriate command
+    match &cli.command {
+        Commands::Topic(TopicCommands::Create { 
+            name, 
+            partitions, 
+            replication_factor, 
+            retention_ms, 
+            segment_bytes, 
+            compression 
+        }) => {
+            let topic_name = name;
+            let partitions = *partitions;
+            let replication_factor = *replication_factor;
             
             info!("Creating topic: {} with {} partitions and replication factor {}", 
                   topic_name, partitions, replication_factor);
@@ -80,9 +180,9 @@ async fn main() -> Result<()> {
                         partitions,
                         replication_factor,
                         config: Some(TopicConfig {
-                            retention_ms: Some(86400000), // 24 hours default
-                            segment_bytes: Some(1073741824), // 1GB default  
-                            compression_type: Some("lz4".to_string()),
+                            retention_ms: retention_ms.or(Some(86400000)), // 24 hours default
+                            segment_bytes: segment_bytes.or(Some(1073741824)), // 1GB default  
+                            compression_type: compression.clone().or(Some("lz4".to_string())),
                         }),
                     };
                     
@@ -115,7 +215,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        "list-topics" => {
+        Commands::Topic(TopicCommands::List) => {
             info!("Listing topics");
             
             match create_admin_controller().await {
@@ -152,12 +252,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        "describe-topic" => {
-            if args.len() != 3 {
-                error!("Usage: describe-topic <name>");
-                std::process::exit(1);
-            }
-            let topic_name = &args[2];
+        Commands::Topic(TopicCommands::Describe { name }) => {
+            let topic_name = name;
             info!("Describing topic: {}", topic_name);
             
             match create_admin_controller().await {
@@ -227,12 +323,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        "delete-topic" => {
-            if args.len() != 3 {
-                error!("Usage: delete-topic <name>");
-                std::process::exit(1);
-            }
-            let topic_name = &args[2];
+        Commands::Topic(TopicCommands::Delete { name }) => {
+            let topic_name = name;
             info!("Deleting topic: {}", topic_name);
             
             match create_admin_controller().await {
@@ -270,7 +362,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        "cluster-health" => {
+        Commands::ClusterHealth => {
             info!("Checking cluster health");
             
             match create_admin_controller().await {
@@ -372,12 +464,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        "serve-api" => {
-            let port = if args.len() > 2 {
-                args[2].parse().unwrap_or(8080)
-            } else {
-                8080
-            };
+        Commands::ServeApi { port } => {
             
             info!("Starting RustMQ Admin API Server on port {}", port);
             
@@ -432,12 +519,24 @@ async fn main() -> Result<()> {
             info!("Registered sample brokers");
             
             // Start the admin API server
-            let admin_api = rustmq::admin::api::AdminApi::new(controller, port);
+            let admin_api = rustmq::admin::api::AdminApi::new(controller, *port);
             admin_api.start().await?;
         }
-        _ => {
-            error!("Unknown command: {}", command);
-            std::process::exit(1);
+        // Security commands
+        Commands::Ca(ca_cmd) => {
+            execute_ca_command(ca_cmd, &api_client, &cli).await?
+        }
+        Commands::Certs(cert_cmd) => {
+            execute_cert_command(cert_cmd, &api_client, &cli).await?
+        }
+        Commands::Acl(acl_cmd) => {
+            execute_acl_command(acl_cmd, &api_client, &cli).await?
+        }
+        Commands::Audit(audit_cmd) => {
+            execute_audit_command(audit_cmd, &api_client, &cli).await?
+        }
+        Commands::Security(security_cmd) => {
+            execute_security_command(security_cmd, &api_client, &cli).await?
         }
     }
     

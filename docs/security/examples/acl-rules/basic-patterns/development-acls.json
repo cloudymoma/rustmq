@@ -1,0 +1,228 @@
+{
+  "acl_rules": [
+    {
+      "name": "default_deny_all",
+      "description": "Default deny-all policy for security",
+      "principal": "*",
+      "resource": "*",
+      "permissions": ["all"],
+      "effect": "deny",
+      "priority": 9999,
+      "enabled": true,
+      "metadata": {
+        "category": "security_baseline",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "admin_full_access",
+      "description": "Full administrative access for admin users",
+      "principal": "*@admin.{{DOMAIN}}",
+      "resource": "*",
+      "permissions": ["all"],
+      "effect": "allow",
+      "priority": 100,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{ADMIN_IP_RANGE}}"
+        },
+        {
+          "type": "time_range",
+          "value": "06:00-20:00",
+          "timezone": "UTC"
+        }
+      ],
+      "metadata": {
+        "category": "administrative",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "broker_internal_communication",
+      "description": "Allow broker-to-broker communication",
+      "principal": "*.broker.dev.{{DOMAIN}}",
+      "resource": "admin.cluster.*",
+      "permissions": ["read", "write"],
+      "effect": "allow",
+      "priority": 200,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{BROKER_IP_RANGE}}"
+        }
+      ],
+      "metadata": {
+        "category": "system",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "app_service_data_access",
+      "description": "Application services data access",
+      "principal": "*@app.{{DOMAIN}}",
+      "resource": "topic.app.*",
+      "permissions": ["read", "write", "create"],
+      "effect": "allow",
+      "priority": 300,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{APP_IP_RANGE}}"
+        }
+      ],
+      "metadata": {
+        "category": "application",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "test_service_access",
+      "description": "Test services full access to test topics",
+      "principal": "*@test.{{DOMAIN}}",
+      "resource": "topic.test.*",
+      "permissions": ["read", "write", "create", "delete"],
+      "effect": "allow",
+      "priority": 400,
+      "enabled": true,
+      "metadata": {
+        "category": "testing",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "analytics_read_access",
+      "description": "Analytics service read-only access",
+      "principal": "analytics@{{DOMAIN}}",
+      "resource": "topic.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 500,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "time_range",
+          "value": "00:00-23:59"
+        }
+      ],
+      "metadata": {
+        "category": "analytics",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "logging_service_write",
+      "description": "Logging service write access to log topics",
+      "principal": "logger@{{DOMAIN}}",
+      "resource": "topic.logs.*",
+      "permissions": ["write", "create"],
+      "effect": "allow",
+      "priority": 600,
+      "enabled": true,
+      "metadata": {
+        "category": "logging",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "monitoring_read_access",
+      "description": "Monitoring service read access to metrics",
+      "principal": "monitoring@{{DOMAIN}}",
+      "resource": "topic.metrics.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 700,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "source_ip",
+          "value": "{{MONITORING_IP_RANGE}}"
+        }
+      ],
+      "metadata": {
+        "category": "monitoring",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "developer_sandbox_access",
+      "description": "Developer access to sandbox topics",
+      "principal": "*@dev.{{DOMAIN}}",
+      "resource": "topic.sandbox.*",
+      "permissions": ["read", "write", "create", "delete"],
+      "effect": "allow",
+      "priority": 800,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "time_range",
+          "value": "07:00-19:00",
+          "timezone": "UTC",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        }
+      ],
+      "metadata": {
+        "category": "development",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "guest_read_public",
+      "description": "Guest users read access to public topics only",
+      "principal": "guest@{{DOMAIN}}",
+      "resource": "topic.public.*",
+      "permissions": ["read"],
+      "effect": "allow",
+      "priority": 900,
+      "enabled": true,
+      "conditions": [
+        {
+          "type": "rate_limit",
+          "value": "100_per_minute"
+        }
+      ],
+      "metadata": {
+        "category": "guest",
+        "environment": "development"
+      }
+    },
+    {
+      "name": "consumer_group_management",
+      "description": "Allow services to manage their own consumer groups",
+      "principal": "*@app.{{DOMAIN}}",
+      "resource": "consumer-group.app-*",
+      "permissions": ["read", "create", "delete"],
+      "effect": "allow",
+      "priority": 1000,
+      "enabled": true,
+      "metadata": {
+        "category": "consumer_groups",
+        "environment": "development"
+      }
+    }
+  ],
+  "metadata": {
+    "name": "Development ACL Rules",
+    "description": "Basic ACL patterns for development environment",
+    "version": "1.0",
+    "created_by": "Security Team",
+    "created_date": "2024-01-15",
+    "environment": "development",
+    "variables": {
+      "DOMAIN": "company.com",
+      "ADMIN_IP_RANGE": "192.168.100.0/24",
+      "BROKER_IP_RANGE": "10.0.10.0/24", 
+      "APP_IP_RANGE": "10.0.20.0/24",
+      "MONITORING_IP_RANGE": "10.0.30.0/24"
+    },
+    "notes": [
+      "These rules are designed for development environments",
+      "Replace IP ranges and domain with your actual values",
+      "Review and customize permissions for your use case",
+      "Consider more restrictive rules for production"
+    ]
+  }
+}
