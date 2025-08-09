@@ -27,8 +27,8 @@ services:
   # RustMQ Controller nodes (3-node cluster for HA)
   rustmq-controller-1:
     build:
-      context: .
-      dockerfile: Dockerfile.controller
+      context: ..
+      dockerfile: docker/Dockerfile.controller
     container_name: rustmq-controller-1
     environment:
       - CONTROLLER_NODE_ID=controller-1
@@ -55,8 +55,8 @@ services:
 
   rustmq-controller-2:
     build:
-      context: .
-      dockerfile: Dockerfile.controller
+      context: ..
+      dockerfile: docker/Dockerfile.controller
     container_name: rustmq-controller-2
     environment:
       - CONTROLLER_NODE_ID=controller-2
@@ -83,8 +83,8 @@ services:
 
   rustmq-controller-3:
     build:
-      context: .
-      dockerfile: Dockerfile.controller
+      context: ..
+      dockerfile: docker/Dockerfile.controller
     container_name: rustmq-controller-3
     environment:
       - CONTROLLER_NODE_ID=controller-3
@@ -112,8 +112,8 @@ services:
   # RustMQ Broker nodes (3-node cluster)
   rustmq-broker-1:
     build:
-      context: .
-      dockerfile: Dockerfile.broker
+      context: ..
+      dockerfile: docker/Dockerfile.broker
     container_name: rustmq-broker-1
     environment:
       - BROKER_ID=broker-1
@@ -152,8 +152,8 @@ services:
 
   rustmq-broker-2:
     build:
-      context: .
-      dockerfile: Dockerfile.broker
+      context: ..
+      dockerfile: docker/Dockerfile.broker
     container_name: rustmq-broker-2
     environment:
       - BROKER_ID=broker-2
@@ -192,8 +192,8 @@ services:
 
   rustmq-broker-3:
     build:
-      context: .
-      dockerfile: Dockerfile.broker
+      context: ..
+      dockerfile: docker/Dockerfile.broker
     container_name: rustmq-broker-3
     environment:
       - BROKER_ID=broker-3
@@ -233,8 +233,8 @@ services:
   # RustMQ Admin CLI (optional)
   rustmq-admin:
     build:
-      context: .
-      dockerfile: Dockerfile.admin
+      context: ..
+      dockerfile: docker/Dockerfile.admin
     container_name: rustmq-admin
     environment:
       - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
@@ -250,8 +250,8 @@ services:
   # RustMQ Admin Server (REST API)
   rustmq-admin-server:
     build:
-      context: .
-      dockerfile: Dockerfile.admin-server
+      context: ..
+      dockerfile: docker/Dockerfile.admin-server
     container_name: rustmq-admin-server
     environment:
       - CONTROLLER_ENDPOINTS=rustmq-controller-1:9094,rustmq-controller-2:9094,rustmq-controller-3:9094
@@ -274,8 +274,8 @@ services:
   # BigQuery Subscriber (optional)
   rustmq-bigquery-subscriber:
     build:
-      context: .
-      dockerfile: Dockerfile.bigquery-subscriber
+      context: ..
+      dockerfile: docker/Dockerfile.bigquery-subscriber
     container_name: rustmq-bigquery-subscriber
     environment:
       # Required BigQuery configuration

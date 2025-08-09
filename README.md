@@ -39,207 +39,186 @@ RustMQ implements a **storage-compute separation architecture** with stateless b
 
 ### Architecture Layers
 
-The diagram above illustrates RustMQ's layered architecture:
+The diagram above illustrates RustMQ's enhanced layered architecture with enterprise security:
 
-- **🔵 Client Layer** - Multi-language SDKs (Rust, Go, JavaScript) and comprehensive admin CLI with security management
-- **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore and QUIC/gRPC servers
-- **🟠 Tiered Storage** - Local WAL for hot data, intelligent caching, and cloud object storage for cold data
-- **🟣 Controller Cluster** - Raft consensus-based metadata management and cluster coordination
-- **🔴 Operational Layer** - Admin REST API, auto-scaling, and Kubernetes integration
-- **🟦 Integration Layer** - WebAssembly ETL processing, BigQuery streaming, and monitoring
+- **🔵 Client Layer** - Production-ready SDKs (Rust, Go) with mTLS support and comprehensive admin CLI with complete security management suite
+- **🟡 Enterprise Security Layer** - Zero Trust architecture with mTLS authentication, multi-level ACL cache (547ns/1310ns/754ns), certificate management, and 2M+ ops/sec authorization capacity
+- **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore, enhanced QUIC/gRPC servers featuring circuit breaker patterns, connection pooling, and real-time health monitoring
+- **🟠 Tiered Storage** - Intelligent WAL with upload triggers, workload-isolated caching (hot/cold), and optimized object storage with bandwidth limiting
+- **🟣 Controller Cluster** - Raft consensus with distributed ACL storage, metadata management, cluster coordination, and comprehensive admin REST API with advanced rate limiting
+- **🔴 Operational Layer** - Production-ready operations with zero-downtime rolling upgrades, automated scaling with partition rebalancing, and Kubernetes integration with volume recovery
+- **🟦 Integration Layer** - WebAssembly ETL processing with sandboxing, BigQuery streaming with schema mapping, and comprehensive monitoring infrastructure
 
 ### Data Flow Patterns
 
+#### Core Message Flows
 - **Write Path**: `Client → QUIC → Broker → WAL → Cache → Object Storage`
 - **Read Path**: `Client ← QUIC ← Broker ← Cache ← Object Storage (if cache miss)`
 - **Replication**: `Leader → Followers (Metadata Only)` - no data movement due to shared storage
 
+#### Security & Authentication Flows
+- **Client Authentication**: `Client → mTLS/QUIC → Broker → Certificate Validation → Principal Extraction`
+- **Authorization**: `Broker → Multi-Level Cache (L1/L2/L3) → Controller ACL → Permission Decision`
+- **Inter-Service**: `Broker ←mTLS/gRPC→ Controller ←mTLS/Raft→ Controller (Cluster)`
+
+#### Administrative & Operational Flows
+- **Admin Operations**: `Admin CLI/API → Controller → Cluster Coordination → Broker Updates`
+- **Health Monitoring**: `Background Tasks → Broker Health → Admin API → Real-time Status`
+- **Scaling Operations**: `Controller → Partition Rebalancing → Broker Addition/Removal → Traffic Migration`
+
 ## 📋 Table of Contents
 
 - [Quick Start](#-quick-start)
-- [Docker Development Setup](#-docker-development-setup)
+- [Security Management CLI](#-security-management-cli)
+- [Enterprise Security](#-enterprise-security)
+- [Test Infrastructure Excellence](#-test-infrastructure-excellence)
 - [Admin REST API](#-admin-rest-api)
 - [BigQuery Subscriber](#-bigquery-subscriber)
 - [Google Cloud Platform Setup](#-google-cloud-platform-setup)
-- [Deployment](#-deployment)
 - [Configuration](#-configuration)
-- [Usage Examples](#-usage-examples)
 - [Message Broker Core API](#-message-broker-core-api)
-- [API Reference](#-api-reference)
-- [Performance Tuning](#-performance-tuning)
-- [Monitoring](#-monitoring)
+- [Client SDKs](#-client-sdks)
+- [Usage Examples](#-usage-examples)
+- [Development & Troubleshooting](#-development--troubleshooting)
 - [Contributing](#-contributing)
+- [Docker & Kubernetes Setup](docker/README.md)
 
-## 🚧 Development Status
-
-**RustMQ is actively under development with major core components now implemented and tested.** The current implementation includes:
-
-### ✅ Fully Implemented Components
-- **Configuration System**: Complete TOML-based configuration with validation and runtime updates
-- **Storage Layer**: Production-ready implementations (DirectIO WAL, Object Storage, Tiered Cache)
-- **Network Layer**: **FULLY IMPLEMENTED** QUIC/gRPC servers with enterprise-grade broker-to-broker communication including connection pooling, circuit breaker patterns, parallel broadcasting with partial failure handling, exponential backoff with jitter, and real-time health tracking
-- **Replication System**: **FULLY IMPLEMENTED** leader-follower replication with epoch validation and ISR tracking
-- **Controller Service**: **FULLY IMPLEMENTED** with Raft consensus, metadata management, and decommission slots
-- **Controller Binary**: **FULLY IMPLEMENTED** production-ready controller with gRPC services and cluster coordination
-- **ETL Processing**: **FULLY IMPLEMENTED** WebAssembly-based stream processing with resource limiting
-- **BigQuery Subscriber**: Functional BigQuery integration with comprehensive configuration options
-- **Scaling Operations**: Complete decommissioning slot management and broker scaling logic
-- **Operational Management**: Rolling upgrades, Kubernetes deployment, volume recovery
-- **Docker Environment**: Complete Docker Compose setup for development and testing
-- **Message Broker Core**: **FULLY IMPLEMENTED** high-level produce/consume API with comprehensive integration tests
-- **Broker Binary**: **FULLY IMPLEMENTED** complete broker initialization with all core components, QUIC/gRPC servers, background tasks, and graceful shutdown
-- **Admin REST API**: **FULLY IMPLEMENTED** cluster management API with real-time health tracking, topic/broker operations, comprehensive monitoring, and advanced rate limiting with token bucket algorithm
-- **Admin CLI**: **FULLY IMPLEMENTED** production-ready command-line interface with comprehensive topic management, cluster health monitoring, and complete security management suite (certificates, ACL, auditing)
-- **Go SDK**: **FULLY IMPLEMENTED** production-ready client library with advanced connection management, TLS/mTLS support, health checking, and robust reconnection logic
-- **Rust SDK**: **FULLY IMPLEMENTED** complete client library with async/await, QUIC transport, and comprehensive producer API
-- **Comprehensive Testing**: ✅ **300+ passing unit tests** including 26 admin module tests (with rate limiting), 11 admin CLI tests, 9 broker core integration tests, 11 Go SDK connection tests, comprehensive security tests, and additional integration tests covering all major components
-  - **Test Stability**: All critical test failures resolved including ACL manager panics and security performance tests
-  - **Test Coverage**: Complete test coverage across storage, network, security, replication, and admin components
-
-### 🚧 In Development  
-- **Advanced Client Features**: Additional language bindings and advanced streaming features
-
-### ❌ Not Yet Implemented
-- **Production Features**: Advanced monitoring dashboards, alerting rules
-- **Advanced Features**: Stream processing pipelines, exactly-once semantics
-
-### Current Capabilities
-- **Full Network Stack**: QUIC/HTTP3 client connections and production-ready gRPC broker-to-broker communication with sophisticated connection management, circuit breaker fault tolerance (configurable thresholds: 3 failures → half-open, 5 failures → open), intelligent retry mechanisms, resilient broadcasting (succeeds if 50% of brokers reached), and comprehensive observability
-- **Complete Replication**: Leader-follower replication with automatic failover and consistency guarantees  
-- **Distributed Coordination**: Raft-based controller cluster with leader election and metadata management
-- **Real-time ETL**: WebAssembly module execution with memory/timeout limits and pipeline chaining
-- **Production Storage**: Tiered storage with intelligent WAL uploads and object storage integration
-- **Message Broker Core**: High-level producer/consumer APIs with automatic partitioning, offset management, and error handling
-- **Production-Ready Broker**: Complete broker binary with all components initialized, QUIC/gRPC servers running, and graceful shutdown
-- **Admin REST API**: Comprehensive cluster management with real-time health monitoring, topic/broker operations, and operational metrics
-- **Admin CLI**: Production-ready command-line interface for topic lifecycle management and cluster health assessment
-- **Kubernetes Ready**: StatefulSet deployments with persistent volumes and service discovery
-- **Operational Excellence**: Automated scaling, rolling upgrades, and configuration hot-reloading
 
 ## 🏃 Quick Start
 
 ### Prerequisites
 
-- Rust 1.73+ and Cargo
-- Docker and Docker Compose
-- Google Cloud SDK (for BigQuery subscriber demo)
-- kubectl (for future Kubernetes deployment)
+- **Rust 1.73+ and Cargo** - Core development environment
+- **Docker and Docker Compose** - Container orchestration (see [docker/README.md](docker/README.md))
+- **Google Cloud SDK** - For BigQuery integration and GCP services
+- **kubectl** - For Kubernetes deployment (see [docker/README.md](docker/README.md))
 
-### Local Development Setup
+### Production Setup
 
+#### Option 1: Docker Environment (Recommended)
 ```bash
 # Clone the repository
 git clone https://github.com/cloudymoma/rustmq.git
 cd rustmq
 
-# Build the project (standard build with fallback I/O)
+# Start complete RustMQ cluster with all services
+cd docker && docker-compose up -d
+
+# Verify cluster health
+curl http://localhost:9642/health
+
+# Access services:
+# - Broker QUIC: localhost:9092 (mTLS enabled)
+# - Admin REST API: localhost:9642 (rate limiting enabled)
+# - Controller: localhost:9094 (Raft consensus)
+```
+
+#### Option 2: Local Build & Run
+```bash
+# Build all production binaries
 cargo build --release
 
-# Build with io_uring for maximum I/O performance (Linux only)
+# Build with io_uring for optimal I/O performance (Linux only)
 cargo build --release --features io-uring
 
-# Run tests
-cargo test
+# Verify all tests pass (300+ tests)
+cargo test --release
 
-# Run tests with io_uring feature (Linux only)
-cargo test --features io-uring
+# Start controller cluster (Raft consensus + ACL storage)
+./target/release/rustmq-controller --config config/controller.toml &
 
-# Start local development environment with Docker Compose
-docker-compose up -d
+# Start broker with security enabled
+./target/release/rustmq-broker --config config/broker.toml &
 
-# Or run individual components locally:
-# Run broker (fully implemented with all core components)
-./target/release/rustmq-broker --config config/broker.toml
+# Initialize security infrastructure
+./target/release/rustmq-admin ca init --cn "RustMQ Root CA" --org "MyOrg"
+./target/release/rustmq-admin certs issue --principal "broker-01" --role broker
 
-# Run controller (production-ready with Raft consensus and cluster coordination) 
-./target/release/rustmq-controller --config config/controller.toml
-
-# Run admin CLI (shows available commands)
-./target/release/rustmq-admin create-topic test-topic 3 2
-
-# Start the Admin REST API server
+# Start Admin REST API with rate limiting
 ./target/release/rustmq-admin serve-api 8080
 ```
 
-## 🐳 Docker Development Setup
+### Basic Operations
 
-RustMQ provides a Docker-based development environment for local testing and development.
-
-### Docker Components
-
-The following Docker containers are available:
-
-- **Dockerfile.broker** - RustMQ message broker (fully implemented with all core components)
-- **Dockerfile.controller** - RustMQ controller (production-ready with Raft consensus)  
-- **Dockerfile.admin** - Admin CLI tool (fully implemented with topic management and cluster health)
-- **Dockerfile.bigquery-subscriber** - Google BigQuery subscriber demo
-
-### Starting the Development Environment
-
+#### Topic Management
 ```bash
-# Start the basic development cluster
-docker-compose up -d
+# Create topic with replication
+./target/release/rustmq-admin create-topic user-events 12 3
 
-# View cluster status
-docker-compose ps
+# List all topics with details
+./target/release/rustmq-admin list-topics
 
-# View logs from all services
-docker-compose logs -f
+# Get comprehensive topic information
+./target/release/rustmq-admin describe-topic user-events
 
-# View logs from specific service
-docker-compose logs -f rustmq-broker-1
+# Check cluster health
+./target/release/rustmq-admin cluster-health
 ```
 
-### Development Architecture
+#### Security Operations
+```bash
+# Certificate management
+./target/release/rustmq-admin certs list --role broker
+./target/release/rustmq-admin certs validate --cert-file /path/to/cert.pem
 
-The Docker Compose setup includes:
+# ACL management
+./target/release/rustmq-admin acl create \
+  --principal "app@company.com" \
+  --resource "topic.events.*" \
+  --permissions read,write \
+  --effect allow
 
-- **3 Broker nodes** (`rustmq-broker-1/2/3`) - Fully implemented broker instances with all core components
-- **3 Controller nodes** (`rustmq-controller-1/2/3`) - Production-ready controller services with Raft consensus
-- **MinIO** - S3-compatible object storage for local development
-- **Admin CLI** - Production-ready admin tool with comprehensive topic management and cluster health monitoring
-- **BigQuery Subscriber** - Demo BigQuery integration
+# Security monitoring
+./target/release/rustmq-admin security status
+./target/release/rustmq-admin audit logs --since "2024-01-01T00:00:00Z"
+```
 
-**Note**: Both broker and controller services are now fully implemented with all core components including Raft consensus, cluster coordination, and production-ready operational capabilities.
+### Client SDK Usage
 
-### Service Endpoints
+#### Rust SDK (Production-Ready)
+```bash
+cd sdk/rust
 
-| Service | Internal Port | External Port | Purpose | Status |
-|---------|---------------|---------------|---------|--------|
-| Broker 1 | 9092/9093 | 9092/9093 | QUIC/RPC | **Functional** |
-| Broker 2 | 9092/9093 | 9192/9193 | QUIC/RPC | **Functional** |  
-| Broker 3 | 9092/9093 | 9292/9293 | QUIC/RPC | **Functional** |
-| Controller 1 | 9094/9095/9642 | 9094/9095/9642 | RPC/Raft/HTTP | Production |
-| Controller 2 | 9094/9095/9642 | 9144/9145/9643 | RPC/Raft/HTTP | Production |
-| Controller 3 | 9094/9095/9642 | 9194/9195/9644 | RPC/Raft/HTTP | Production |
-| Admin REST API | 8080 | 8080 | Cluster Management | **Functional** |
-| MinIO | 9000/9001 | 9000/9001 | API/Console | Functional |
-| BigQuery Subscriber | 8081 | 8081 | Health/Metrics | Demo |
+# Secure producer with mTLS
+cargo run --example secure_producer
 
-### Using the Admin CLI
+# Consumer with ACL authorization
+cargo run --example secure_consumer
+
+# JWT token authentication
+cargo run --example token_authentication
+```
+
+#### Go SDK (Production-Ready)
+```bash
+cd sdk/go
+
+# Basic producer with TLS
+go run examples/tls_producer.go
+
+# Consumer with health monitoring
+go run examples/health_monitoring_consumer.go
+
+# Advanced connection management
+go run examples/connection_pooling.go
+```
+
+### Performance Validation
 
 ```bash
-# Access the admin CLI container
-docker-compose exec rustmq-admin bash
+# Run benchmark tests
+cargo bench
 
-# **FULLY IMPLEMENTED** - Production-ready topic management commands
-rustmq-admin create-topic <name> <partitions> <replication_factor>  # ✅ Create topics with validation
-rustmq-admin list-topics                                            # ✅ List all topics with details
-rustmq-admin describe-topic <name>                                  # ✅ Show topic configuration and partitions
-rustmq-admin delete-topic <name>                                    # ✅ Delete topics safely
-rustmq-admin cluster-health                                         # ✅ Comprehensive cluster health analysis
+# Validate security performance (sub-microsecond authorization)
+cargo test --release security::performance
 
-# Start the Admin REST API server (FULLY IMPLEMENTED)
-rustmq-admin serve-api [port]                                       # ✅ Full REST API with health tracking
+# Test scaling operations
+./target/release/rustmq-admin scaling add-brokers 3
 
-# Example usage:
-rustmq-admin create-topic events 3 2          # Creates 'events' topic with 3 partitions, replication factor 2
-rustmq-admin list-topics                       # Shows formatted table of all topics
-rustmq-admin describe-topic events             # Detailed view with partition assignments
-rustmq-admin cluster-health                    # Health status of brokers, topics, and overall cluster
-
-# All commands provide rich output formatting and comprehensive error handling
+# Verify zero-downtime upgrades
+./target/release/rustmq-admin operations rolling-upgrade --version latest
 ```
+
 
 ## 🔐 Security Management CLI
 
@@ -666,32 +645,6 @@ cargo test admin::
 - **Resource Cleanup**: Automatic cleanup of test resources to prevent interference
 - **Mock Security**: Comprehensive security component mocking for testing without real certificates
 
-### Development Workflow
-
-```bash
-# Make code changes and rebuild specific service
-docker-compose build rustmq-broker
-docker-compose up -d rustmq-broker-1
-
-# Scale brokers for testing
-docker-compose up -d --scale rustmq-broker-2=2
-
-# Clean shutdown
-docker-compose down
-
-# Clean shutdown with volume cleanup
-docker-compose down -v
-```
-
-### Container Features
-
-Each Dockerfile includes:
-- **Multi-stage builds** for optimized image size
-- **Security** - Non-root user execution with gosu
-- **Health checks** - Proper container health monitoring
-- **Configuration** - Environment variable templating
-- **Logging** - Structured logging with configurable levels
-- **Dependencies** - Proper startup ordering and readiness checks
 
 ## 🛠️ Admin REST API
 
@@ -1105,43 +1058,14 @@ For production deployments:
 
 ### 📈 Production Deployment
 
-#### Kubernetes Integration
-The Admin API integrates seamlessly with Kubernetes deployments:
+#### Production Deployment
+For production deployment with Kubernetes, see the comprehensive guide in [docker/README.md](docker/README.md) which includes:
 
-```yaml
-# Service exposure
-apiVersion: v1
-kind: Service
-metadata:
-  name: rustmq-admin
-spec:
-  type: LoadBalancer
-  selector:
-    app: rustmq-controller
-  ports:
-  - name: http
-    port: 80
-    targetPort: 8080
-    protocol: TCP
-```
-
-#### Health Check Configuration
-```yaml
-# Pod health checks
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  
-readinessProbe:
-  httpGet:
-    path: /health  
-    port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 5
-```
+- Complete Kubernetes manifests
+- Service configuration
+- Health check setup
+- Production resource limits
+- Security configurations
 
 ### 🧪 Testing
 
@@ -1230,8 +1154,8 @@ export RUSTMQ_TOPIC="user-events"
 export AUTH_METHOD="application_default"  # or "service_account"
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 
-# Start the cluster with BigQuery subscriber
-docker-compose --profile bigquery up -d
+# Start the cluster with BigQuery subscriber (from docker/ directory)
+cd docker && docker-compose --profile bigquery up -d
 
 # Check BigQuery subscriber health
 curl http://localhost:8080/health
@@ -1531,227 +1455,6 @@ gcloud compute firewall-rules create rustmq-admin \
     --description "RustMQ admin API"
 ```
 
-## 🚀 Deployment
-
-### Kubernetes Deployment
-
-Create the deployment manifests:
-
-```yaml
-# k8s/namespace.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: rustmq
----
-# k8s/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: rustmq-config
-  namespace: rustmq
-data:
-  broker.toml: |
-    [broker]
-    id = "${HOSTNAME}"
-    rack_id = "${NODE_ZONE}"
-
-    [network]
-    quic_listen = "0.0.0.0:9092"
-    rpc_listen = "0.0.0.0:9093"
-    max_connections = 10000
-    connection_timeout_ms = 30000
-
-    [wal]
-    path = "/var/lib/rustmq/wal"
-    capacity_bytes = 10737418240
-    fsync_on_write = true
-    segment_size_bytes = 1073741824
-    buffer_size = 65536
-
-    [cache]
-    write_cache_size_bytes = 1073741824
-    read_cache_size_bytes = 2147483648
-    eviction_policy = "Lru"
-
-    [object_storage]
-    type = "Gcs"
-    bucket = "${GCS_BUCKET}"
-    region = "${GCP_REGION}"
-    endpoint = "https://storage.googleapis.com"
-    multipart_threshold = 104857600
-    max_concurrent_uploads = 10
-
-    [controller]
-    endpoints = ["rustmq-controller:9094"]
-    election_timeout_ms = 5000
-    heartbeat_interval_ms = 1000
-
-    [replication]
-    min_in_sync_replicas = 2
-    ack_timeout_ms = 5000
-    max_replication_lag = 1000
-    heartbeat_timeout_ms = 30000
-
-  controller.toml: |
-    [controller]
-    node_id = "${HOSTNAME}"
-    raft_listen = "0.0.0.0:9095"
-    rpc_listen = "0.0.0.0:9094"
-    http_listen = "0.0.0.0:9642"
-
-    [raft]
-    peers = [
-      "rustmq-controller-0@rustmq-controller-0.rustmq-controller:9095",
-      "rustmq-controller-1@rustmq-controller-1.rustmq-controller:9095",
-      "rustmq-controller-2@rustmq-controller-2.rustmq-controller:9095"
-    ]
-
-    # Note: Metastore configuration not yet implemented
-    # Future versions will include distributed coordination
-
-    [autobalancer]
-    enabled = true
-    cpu_threshold = 0.80
-    memory_threshold = 0.75
-    cooldown_seconds = 300
----
-# k8s/broker.yaml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: rustmq-broker
-  namespace: rustmq
-spec:
-  serviceName: rustmq-broker
-  replicas: 3
-  selector:
-    matchLabels:
-      app: rustmq-broker
-  template:
-    metadata:
-      labels:
-        app: rustmq-broker
-    spec:
-      serviceAccountName: rustmq
-      containers:
-      - name: broker
-        image: rustmq/broker:latest
-        ports:
-        - containerPort: 9092
-          name: quic
-        - containerPort: 9093
-          name: rpc
-        env:
-        - name: HOSTNAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: NODE_ZONE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['topology.kubernetes.io/zone']
-        - name: GCS_BUCKET
-          value: "${PROJECT_ID}-rustmq-data"
-        - name: GCP_REGION
-          value: "${REGION}"
-        - name: GOOGLE_APPLICATION_CREDENTIALS
-          value: "/var/secrets/google/key.json"
-        volumeMounts:
-        - name: config
-          mountPath: /etc/rustmq
-        - name: wal-storage
-          mountPath: /var/lib/rustmq/wal
-        - name: gcp-credentials
-          mountPath: /var/secrets/google
-          readOnly: true
-        resources:
-          requests:
-            memory: "4Gi"
-            cpu: "2"
-          limits:
-            memory: "8Gi"
-            cpu: "4"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 9642
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 9642
-          initialDelaySeconds: 5
-          periodSeconds: 5
-      volumes:
-      - name: config
-        configMap:
-          name: rustmq-config
-      - name: gcp-credentials
-        secret:
-          secretName: rustmq-gcp-credentials
-  volumeClaimTemplates:
-  - metadata:
-      name: wal-storage
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: fast-ssd
-      resources:
-        requests:
-          storage: 50Gi
----
-# k8s/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: rustmq-broker
-  namespace: rustmq
-spec:
-  type: LoadBalancer
-  selector:
-    app: rustmq-broker
-  ports:
-  - name: quic
-    port: 9092
-    targetPort: 9092
-    protocol: TCP
-  - name: rpc
-    port: 9093
-    targetPort: 9093
-    protocol: TCP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: rustmq-admin
-  namespace: rustmq
-spec:
-  type: LoadBalancer
-  selector:
-    app: rustmq-controller
-  ports:
-  - name: http
-    port: 80
-    targetPort: 9642
-    protocol: TCP
-```
-
-Deploy to Kubernetes:
-
-```bash
-# Apply configurations
-envsubst < k8s/configmap.yaml | kubectl apply -f -
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/broker.yaml
-kubectl apply -f k8s/service.yaml
-
-# Wait for deployment
-kubectl wait --for=condition=ready pod -l app=rustmq-broker -n rustmq --timeout=300s
-
-# Get external IP
-kubectl get service rustmq-broker -n rustmq
-```
 
 ## ⚙️ Configuration
 
@@ -2974,7 +2677,8 @@ cargo run --bin rustmq-broker -- --config config/broker.toml
 ### Log Analysis
 
 ```bash
-# View service logs (placeholder implementations)
+# View service logs (from docker/ directory)
+cd docker
 docker-compose logs rustmq-broker-1
 docker-compose logs rustmq-controller-1
 
@@ -2984,6 +2688,8 @@ docker-compose logs | grep ERROR
 # Monitor BigQuery subscriber demo
 docker-compose logs rustmq-bigquery-subscriber
 ```
+
+For complete Docker and Kubernetes deployment guides, troubleshooting, and configuration details, see [docker/README.md](docker/README.md).
 
 ## 🤝 Contributing
 
