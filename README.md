@@ -1,7 +1,7 @@
 # RustMQ: Cloud-Native Distributed Message Queue System
 
 [![Build Status](https://github.com/cloudymoma/rustmq/workflows/Rust/badge.svg)](https://github.com/cloudymoma/rustmq/actions)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: BDL 1.0](https://img.shields.io/badge/License-BDL%201.0-red.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://www.rust-lang.org)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/rustmq/rustmq)
 
@@ -2811,7 +2811,16 @@ cargo test
 
 ## 📄 License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under The Bindiego License (BDL), Version 1.0 - see the [LICENSE](LICENSE) file for details.
+
+### License Summary
+
+- ✅ **Academic Use**: Freely available for teaching, research, and educational purposes
+- ✅ **Contributions**: Welcome contributions back to the original project  
+- ❌ **Commercial Use**: Prohibited without separate commercial license
+- ❌ **Managed Services**: Cannot offer RustMQ as a hosted service
+
+For commercial licensing inquiries, please contact the license holder through the official repository.
 
 ## 🔗 Links
 
