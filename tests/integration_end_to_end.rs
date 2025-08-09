@@ -115,6 +115,14 @@ async fn test_full_system_integration() {
         memory_limit_bytes: 64 * 1024 * 1024,
         execution_timeout_ms: 5000,
         max_concurrent_executions: 10,
+        pipelines: vec![],
+        instance_pool: rustmq::config::EtlInstancePoolConfig {
+            max_pool_size: 10,
+            warmup_instances: 2,
+            creation_rate_limit: 10.0,
+            idle_timeout_seconds: 300,
+            enable_lru_eviction: true,
+        },
     };
 
     let etl_processor = MockEtlProcessor::new(etl_config);
@@ -297,6 +305,14 @@ async fn test_failure_recovery_scenarios() {
         memory_limit_bytes: 64 * 1024 * 1024,
         execution_timeout_ms: 5000,
         max_concurrent_executions: 10,
+        pipelines: vec![],
+        instance_pool: rustmq::config::EtlInstancePoolConfig {
+            max_pool_size: 10,
+            warmup_instances: 2,
+            creation_rate_limit: 10.0,
+            idle_timeout_seconds: 300,
+            enable_lru_eviction: true,
+        },
     };
 
     let etl_processor = MockEtlProcessor::new(etl_config);
@@ -437,6 +453,14 @@ async fn test_concurrent_system_operations() {
         memory_limit_bytes: 64 * 1024 * 1024,
         execution_timeout_ms: 5000,
         max_concurrent_executions: 10,
+        pipelines: vec![],
+        instance_pool: rustmq::config::EtlInstancePoolConfig {
+            max_pool_size: 10,
+            warmup_instances: 2,
+            creation_rate_limit: 10.0,
+            idle_timeout_seconds: 300,
+            enable_lru_eviction: true,
+        },
     };
 
     let etl_processor = Arc::new(MockEtlProcessor::new(etl_config));

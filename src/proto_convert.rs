@@ -736,6 +736,7 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::Storage(_) => ErrorCode::InternalError as u32,
         RustMqError::Replication(_) => ErrorCode::InternalError as u32,
         RustMqError::Config(_) => ErrorCode::InvalidParameter as u32,
+        RustMqError::ConfigurationError(_) => ErrorCode::InvalidParameter as u32,
         RustMqError::Wal(_) => ErrorCode::InternalError as u32,
         RustMqError::Cache(_) => ErrorCode::InternalError as u32,
         RustMqError::Upload(_) => ErrorCode::InternalError as u32,

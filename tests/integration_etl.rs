@@ -1,17 +1,29 @@
 use rustmq::etl::processor::{EtlProcessor, MockEtlProcessor, EtlPipeline, EtlRequest, ProcessingContext, ModuleConfig, DataFormat};
-use rustmq::config::EtlConfig;
+use rustmq::config::{EtlConfig, EtlInstancePoolConfig};
 use rustmq::types::Record;
 use std::collections::HashMap;
 use tokio::time::{timeout, Duration};
 
-#[tokio::test]
-async fn test_etl_processor_creation_and_metrics() {
-    let config = EtlConfig {
+fn create_test_etl_config() -> EtlConfig {
+    EtlConfig {
         enabled: true,
         memory_limit_bytes: 64 * 1024 * 1024,
         execution_timeout_ms: 5000,
         max_concurrent_executions: 10,
-    };
+        pipelines: vec![],
+        instance_pool: EtlInstancePoolConfig {
+            max_pool_size: 10,
+            warmup_instances: 2,
+            creation_rate_limit: 10.0,
+            idle_timeout_seconds: 300,
+            enable_lru_eviction: true,
+        },
+    }
+}
+
+#[tokio::test]
+async fn test_etl_processor_creation_and_metrics() {
+    let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
     
@@ -25,12 +37,7 @@ async fn test_etl_processor_creation_and_metrics() {
 
 #[tokio::test]
 async fn test_mock_etl_processor_full_workflow() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = MockEtlProcessor::new(config);
 
@@ -135,12 +142,7 @@ async fn test_data_format_variants() {
 
 #[tokio::test] 
 async fn test_etl_request_handling() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = MockEtlProcessor::new(config);
 
@@ -185,12 +187,8 @@ async fn test_etl_request_handling() {
 
 #[tokio::test]
 async fn test_concurrent_etl_processing() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 5,
-    };
+    let mut config = create_test_etl_config();
+    config.max_concurrent_executions = 5;
 
     let processor = MockEtlProcessor::new(config);
 
@@ -234,12 +232,7 @@ async fn test_concurrent_etl_processing() {
 
 #[tokio::test]
 async fn test_etl_error_handling() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = MockEtlProcessor::new(config);
 
@@ -262,12 +255,7 @@ async fn test_etl_error_handling() {
 
 #[tokio::test]
 async fn test_module_configuration_validation() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = MockEtlProcessor::new(config);
 
@@ -305,12 +293,7 @@ async fn test_module_configuration_validation() {
 
 #[tokio::test] 
 async fn test_etl_pipeline_chaining() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = MockEtlProcessor::new(config);
 
@@ -348,12 +331,7 @@ async fn test_etl_pipeline_chaining() {
 #[cfg(feature = "wasm")]
 #[tokio::test]
 async fn test_real_etl_processor_basic_functionality() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
     
@@ -386,12 +364,7 @@ async fn test_real_etl_processor_basic_functionality() {
 #[cfg(not(feature = "wasm"))]
 #[tokio::test]
 async fn test_etl_processor_without_wasm_feature() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 64 * 1024 * 1024,
-        execution_timeout_ms: 5000,
-        max_concurrent_executions: 10,
-    };
+    let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
     
@@ -419,12 +392,10 @@ async fn test_etl_processor_without_wasm_feature() {
 
 #[tokio::test]
 async fn test_etl_processor_memory_and_timeout_limits() {
-    let config = EtlConfig {
-        enabled: true,
-        memory_limit_bytes: 1024, // Very small limit
-        execution_timeout_ms: 100, // Very short timeout
-        max_concurrent_executions: 1,
-    };
+    let mut config = create_test_etl_config();
+    config.memory_limit_bytes = 1024; // Very small limit
+    config.execution_timeout_ms = 100; // Very short timeout
+    config.max_concurrent_executions = 1;
 
     let processor = EtlProcessor::new(config).unwrap();
     

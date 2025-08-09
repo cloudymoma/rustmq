@@ -1,4 +1,5 @@
 use crate::{Result, types::*, config::EtlConfig, error::RustMqError};
+use crate::etl::orchestrator::{EtlPipelineOrchestrator, PipelineExecutionResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -8,12 +9,18 @@ use parking_lot::Mutex;
 
 
 /// ETL processor that manages WebAssembly modules for real-time data processing
+/// 
+/// This processor provides both legacy single-module execution and new priority-based
+/// pipeline execution, maintaining backward compatibility while offering advanced features.
 pub struct EtlProcessor {
     #[allow(dead_code)]
     config: EtlConfig,
+    /// Legacy module storage for backward compatibility
     modules: Arc<RwLock<HashMap<String, EtlModule>>>,
     execution_semaphore: Arc<Semaphore>,
     metrics: Arc<Mutex<EtlMetrics>>,
+    /// New priority-based pipeline orchestrator
+    orchestrator: Option<Arc<EtlPipelineOrchestrator>>,
 }
 
 /// Represents a loaded ETL module
@@ -159,7 +166,33 @@ pub struct EtlMetrics {
 }
 
 impl EtlProcessor {
+    /// Create a new ETL processor with optional priority-based pipeline support
     pub fn new(config: EtlConfig) -> Result<Self> {
+        let execution_semaphore = Arc::new(Semaphore::new(config.max_concurrent_executions));
+
+        // Initialize orchestrator if pipelines are configured
+        let orchestrator = if !config.pipelines.is_empty() {
+            let orchestrator = EtlPipelineOrchestrator::new(
+                config.pipelines.clone(),
+                config.instance_pool.clone(),
+                config.max_concurrent_executions,
+            )?;
+            Some(Arc::new(orchestrator))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            config,
+            modules: Arc::new(RwLock::new(HashMap::new())),
+            execution_semaphore,
+            metrics: Arc::new(Mutex::new(EtlMetrics::default())),
+            orchestrator,
+        })
+    }
+
+    /// Create a new ETL processor with explicit orchestrator (for testing)
+    pub fn with_orchestrator(config: EtlConfig, orchestrator: EtlPipelineOrchestrator) -> Result<Self> {
         let execution_semaphore = Arc::new(Semaphore::new(config.max_concurrent_executions));
 
         Ok(Self {
@@ -167,6 +200,7 @@ impl EtlProcessor {
             modules: Arc::new(RwLock::new(HashMap::new())),
             execution_semaphore,
             metrics: Arc::new(Mutex::new(EtlMetrics::default())),
+            orchestrator: Some(Arc::new(orchestrator)),
         })
     }
 
@@ -235,11 +269,61 @@ impl EtlProcessor {
     pub fn get_metrics(&self) -> EtlMetrics {
         (*self.metrics.lock()).clone()
     }
-}
 
-#[async_trait]
-impl EtlPipeline for EtlProcessor {
-    async fn process_record(&self, mut record: Record, module_ids: Vec<String>) -> Result<ProcessedRecord> {
+    /// Process record with explicit topic for pipeline filtering
+    pub async fn process_record_with_topic(&self, record: Record, topic: &str) -> Result<ProcessedRecord> {
+        if let Some(orchestrator) = &self.orchestrator {
+            self.process_record_with_pipelines(record, topic).await
+        } else {
+            // Legacy behavior - process with empty module list
+            self.process_record_legacy(record, vec![]).await
+        }
+    }
+
+    /// Get orchestrator statistics if available
+    pub fn get_orchestrator_stats(&self) -> Option<crate::etl::orchestrator::OrchestratorStats> {
+        self.orchestrator.as_ref().map(|o| o.get_stats())
+    }
+
+    /// Add a new pipeline at runtime
+    pub async fn add_pipeline(&self, config: crate::config::EtlPipelineConfig) -> Result<()> {
+        if let Some(orchestrator) = &self.orchestrator {
+            orchestrator.add_pipeline(config).await
+        } else {
+            Err(RustMqError::EtlProcessingFailed(
+                "No orchestrator available for pipeline management".to_string()
+            ))
+        }
+    }
+
+    /// Remove a pipeline at runtime
+    pub async fn remove_pipeline(&self, pipeline_id: &str) -> Result<()> {
+        if let Some(orchestrator) = &self.orchestrator {
+            orchestrator.remove_pipeline(pipeline_id).await
+        } else {
+            Err(RustMqError::EtlProcessingFailed(
+                "No orchestrator available for pipeline management".to_string()
+            ))
+        }
+    }
+
+    /// Pre-warm WASM instances for all pipeline modules
+    pub async fn prewarm_instances(&self) -> Result<()> {
+        if let Some(orchestrator) = &self.orchestrator {
+            orchestrator.prewarm_instances().await
+        } else {
+            // No-op for processors without orchestrator
+            Ok(())
+        }
+    }
+
+    /// Check if processor has priority-based pipelines enabled
+    pub fn has_pipelines(&self) -> bool {
+        self.orchestrator.is_some()
+    }
+
+    /// Process record using legacy single-module approach
+    async fn process_record_legacy(&self, mut record: Record, module_ids: Vec<String>) -> Result<ProcessedRecord> {
         let start_time = Instant::now();
         let mut processing_metadata = ProcessingMetadata {
             modules_applied: Vec::new(),
@@ -296,6 +380,102 @@ impl EtlPipeline for EtlProcessor {
             transformed: record,
             processing_metadata,
         })
+    }
+
+    /// Process record using new priority-based pipeline orchestrator
+    async fn process_record_with_pipelines(&self, record: Record, topic: &str) -> Result<ProcessedRecord> {
+        if let Some(orchestrator) = &self.orchestrator {
+            let results = orchestrator.execute_pipelines(record.clone(), topic).await?;
+            
+            // Combine results from all pipelines that executed
+            if let Some(final_result) = self.combine_pipeline_results(record.clone(), results).await? {
+                return Ok(final_result);
+            }
+        }
+
+        // Fallback to no transformation if no pipelines executed
+        Ok(ProcessedRecord {
+            original: record.clone(),
+            transformed: record,
+            processing_metadata: ProcessingMetadata {
+                modules_applied: vec![],
+                total_execution_time_ms: 0,
+                transformations_count: 0,
+                error_count: 0,
+            },
+        })
+    }
+
+    /// Combine results from multiple pipeline executions
+    async fn combine_pipeline_results(
+        &self, 
+        original_record: Record, 
+        results: Vec<PipelineExecutionResult>
+    ) -> Result<Option<ProcessedRecord>> {
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        // For now, use the result from the first successful pipeline
+        // In a more sophisticated implementation, you might:
+        // - Apply transformations in order
+        // - Merge transformations from multiple pipelines
+        // - Apply conflict resolution strategies
+        
+        let mut final_record = original_record.clone();
+        let mut total_modules_applied = Vec::new();
+        let mut total_execution_time_ms = 0;
+        let mut total_transformations = 0;
+        let mut total_errors = 0;
+
+        for result in &results {
+            if result.success {
+                // Use the transformation from the first successful result
+                if total_transformations == 0 {
+                    final_record = result.transformed_record.clone();
+                }
+                
+                // Aggregate metadata
+                total_execution_time_ms += result.execution_metadata.total_execution_time.as_millis() as u64;
+                total_transformations += result.execution_metadata.transformations_applied;
+                total_errors += result.execution_metadata.errors_encountered;
+                
+                // Collect all applied modules
+                for stage in &result.execution_metadata.stages_executed {
+                    for module in &stage.modules_executed {
+                        if module.success {
+                            total_modules_applied.push(module.module_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Some(ProcessedRecord {
+            original: original_record,
+            transformed: final_record,
+            processing_metadata: ProcessingMetadata {
+                modules_applied: total_modules_applied,
+                total_execution_time_ms,
+                transformations_count: total_transformations,
+                error_count: total_errors,
+            },
+        }))
+    }
+}
+
+#[async_trait]
+impl EtlPipeline for EtlProcessor {
+    async fn process_record(&self, record: Record, module_ids: Vec<String>) -> Result<ProcessedRecord> {
+        // If orchestrator is available and module_ids is empty, use pipeline-based processing
+        if let Some(orchestrator) = &self.orchestrator {
+            if module_ids.is_empty() {
+                return self.process_record_with_pipelines(record, "unknown").await;
+            }
+        }
+
+        // Legacy single-module processing for backward compatibility
+        self.process_record_legacy(record, module_ids).await
     }
 
     async fn load_module(&self, _module_data: Vec<u8>, config: ModuleConfig) -> Result<String> {
@@ -376,13 +556,13 @@ impl EtlPipeline for EtlProcessor {
     }
 }
 
-
 /// Mock ETL processor for testing
 #[derive(Clone)]
 pub struct MockEtlProcessor {
     #[allow(dead_code)]
     config: EtlConfig,
     modules: Arc<RwLock<HashMap<String, String>>>, // Just store module IDs
+    orchestrator: Option<Arc<EtlPipelineOrchestrator>>,
 }
 
 impl MockEtlProcessor {
@@ -390,6 +570,7 @@ impl MockEtlProcessor {
         Self {
             config,
             modules: Arc::new(RwLock::new(HashMap::new())),
+            orchestrator: None, // Mock processor doesn't use orchestrator
         }
     }
 }
@@ -477,6 +658,14 @@ mod tests {
             memory_limit_bytes: 64 * 1024 * 1024,
             execution_timeout_ms: 5000,
             max_concurrent_executions: 10,
+            pipelines: vec![],
+            instance_pool: crate::config::EtlInstancePoolConfig {
+                max_pool_size: 10,
+                warmup_instances: 2,
+                creation_rate_limit: 5.0,
+                idle_timeout_seconds: 300,
+                enable_lru_eviction: true,
+            },
         };
 
         let processor = MockEtlProcessor::new(config);
@@ -528,6 +717,14 @@ mod tests {
             memory_limit_bytes: 64 * 1024 * 1024,
             execution_timeout_ms: 5000,
             max_concurrent_executions: 10,
+            pipelines: vec![],
+            instance_pool: crate::config::EtlInstancePoolConfig {
+                max_pool_size: 10,
+                warmup_instances: 2,
+                creation_rate_limit: 5.0,
+                idle_timeout_seconds: 300,
+                enable_lru_eviction: true,
+            },
         };
 
         let processor = EtlProcessor::new(config);
@@ -584,6 +781,14 @@ mod tests {
             memory_limit_bytes: 64 * 1024 * 1024,
             execution_timeout_ms: 5000,
             max_concurrent_executions: 10,
+            pipelines: vec![],
+            instance_pool: crate::config::EtlInstancePoolConfig {
+                max_pool_size: 10,
+                warmup_instances: 2,
+                creation_rate_limit: 5.0,
+                idle_timeout_seconds: 300,
+                enable_lru_eviction: true,
+            },
         };
 
         let processor = EtlProcessor::new(config).unwrap();

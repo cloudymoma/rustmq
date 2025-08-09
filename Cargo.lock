@@ -4352,6 +4352,7 @@ dependencies = [
  "fastrand",
  "futures",
  "gcp-bigquery-client",
+ "glob",
  "google-cloud-auth",
  "google-cloud-googleapis",
  "governor",

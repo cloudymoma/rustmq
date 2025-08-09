@@ -21,6 +21,9 @@ pub enum RustMqError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
 
     #[error("Wal error: {0}")]
     Wal(String),

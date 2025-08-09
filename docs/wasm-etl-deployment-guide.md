@@ -49,25 +49,43 @@ RustMQ's WebAssembly ETL system provides a production-ready platform for real-ti
 
 ### ETL Processing Pipeline
 
-RustMQ's WASM ETL system performs **in-place message transformation** as messages flow through the broker:
+RustMQ's WASM ETL system now supports **priority-based multi-stage pipelines** with sophisticated topic filtering and conditional processing:
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Message Flow   │───▶│  WASM ETL Module │───▶│  Transformed    │
-│  (Any Topic)    │    │   (In-Memory)    │    │  Message        │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │                          │
-                              ▼                          ▼
-                       ┌──────────────────┐    ┌─────────────────┐
-                       │   Error Logs     │    │  Continue to    │
-                       │  (Processing     │    │  Consumer or    │
-                       │   Failures)      │    │  Storage        │
-                       └──────────────────┘    └─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    ETL Pipeline Orchestrator                    │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │ Priority 0  │  │ Priority 1  │  │ Priority 2  │   ...        │
+│  │ [Module A]  │→ │ [Module B]  │→ │ [Module C]  │              │
+│  │ [Module D]  │  │ [Module E]  │  │             │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+├─────────────────────────────────────────────────────────────────┤
+│                     Topic Filter Engine                         │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐    │
+│  │ Exact Matches   │ │ Wildcard Rules  │ │ Regex Patterns  │    │
+│  │ - topic-a       │ │ - logs.*        │ │ - ^sensor-\d+   │    │
+│  │ - events        │ │ - *.critical    │ │ - .*error.*     │    │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘    │
+├─────────────────────────────────────────────────────────────────┤
+│                    WASM Instance Pool                           │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐    │
+│  │ Module Cache    │ │ Instance Pool   │ │ Resource Limits │    │
+│  │ - Hot modules   │ │ - Pre-warmed    │ │ - Memory caps   │    │
+│  │ - LRU eviction  │ │ - Instance reuse│ │ - CPU limits    │    │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Current Implementation**: The ETL processor transforms messages **in-place** during the normal message flow, modifying message content and headers before they reach consumers or are stored. It does **not** automatically publish to separate destination topics.
+**Enhanced Architecture**: The ETL system now supports **priority-ordered multi-stage pipelines** with:
+- **Priority-based execution**: Lower numbers execute first (0 → 1 → 2)
+- **Advanced topic filtering**: Exact match, wildcards, regex, prefix/suffix patterns
+- **Conditional processing**: Rules based on message headers and payload content
+- **Parallel execution**: Multiple modules can run concurrently within the same priority level
+- **Instance pooling**: Pre-warmed WASM instances for optimal performance
+- **Runtime configuration**: Hot-reload pipeline configurations without broker restart
 
-**Architecture Note**: The current implementation focuses on stream processing and message enrichment. For use cases requiring message routing to different topics based on transformation results, additional integration with the broker's producer API would be needed.
+**Processing Model**: Messages are still transformed **in-place** during broker flow, but now through sophisticated multi-stage pipelines that can apply complex transformation sequences based on topic patterns and message content.
 
 ### Processing Stages
 
@@ -244,6 +262,81 @@ sandbox_strict_mode = true
 enable_debug_logging = false
 log_execution_times = true
 log_memory_usage = true
+
+# Instance pooling configuration
+[etl.instance_pool]
+max_pool_size = 50              # Maximum instances per module
+warmup_instances = 5            # Pre-warmed instances per module
+creation_rate_limit = 10.0      # Max new instances per second
+idle_timeout_seconds = 300      # Idle instance cleanup timeout
+enable_lru_eviction = true      # Enable LRU-based eviction
+enable_background_cleanup = true # Enable background cleanup task
+
+# Priority-based pipeline configuration
+[[etl.pipelines]]
+pipeline_id = "default-enrichment"
+name = "Default Message Enrichment Pipeline"
+enabled = true
+global_timeout_ms = 10000       # Total pipeline timeout
+max_retries = 3                 # Retry attempts on failure
+error_handling = "SkipModule"   # StopPipeline | SkipModule | RetryWithBackoff | SendToDeadLetter
+
+# Stage 0: Input validation (highest priority)
+[[etl.pipelines.stages]]
+priority = 0
+parallel_execution = false      # Sequential execution for validation
+continue_on_error = true
+
+[[etl.pipelines.stages.modules]]
+module_id = "message-validator"
+[[etl.pipelines.stages.modules.topic_filters]]
+filter_type = "Wildcard"
+pattern = "events.*"
+case_sensitive = false
+negate = false
+
+# Stage 1: Content enrichment (parallel execution)
+[[etl.pipelines.stages]]
+priority = 1
+parallel_execution = true       # Allow parallel execution
+continue_on_error = true
+
+[[etl.pipelines.stages.modules]]
+module_id = "geolocation-enricher"
+[[etl.pipelines.stages.modules.topic_filters]]
+filter_type = "Regex"
+pattern = "^(events|logs)\\.(mobile|web)\\."
+case_sensitive = true
+negate = false
+
+[[etl.pipelines.stages.modules.conditional_rules]]
+condition_type = "HeaderValue"
+field_path = "client_ip"
+operator = "Contains"
+value = "."
+negate = false
+
+[[etl.pipelines.stages.modules]]
+module_id = "content-analyzer"
+[[etl.pipelines.stages.modules.topic_filters]]
+filter_type = "Suffix" 
+pattern = ".content"
+case_sensitive = false
+negate = false
+
+# Stage 2: Final formatting (lowest priority)
+[[etl.pipelines.stages]]
+priority = 2
+parallel_execution = false
+continue_on_error = false
+
+[[etl.pipelines.stages.modules]]
+module_id = "message-formatter"
+[[etl.pipelines.stages.modules.topic_filters]]
+filter_type = "Exact"
+pattern = "*"  # Matches all topics
+case_sensitive = false
+negate = false
 ```
 
 ### 1.2 Controller Configuration
@@ -1075,35 +1168,270 @@ curl -s http://localhost:9094/api/v1/etl/modules | jq '.'
 curl -s http://localhost:9094/api/v1/etl/modules/message-processor-v1.0.0 | jq '.'
 ```
 
-## Step 5: Configure Message Processing
+## Step 5: Configure Priority-Based ETL Pipelines
 
-### 5.1 Create ETL Pipeline Configuration
+### 5.1 Understanding Pipeline Configuration
 
-Create `etl-pipeline.json`:
+The new priority-based ETL system supports complex multi-stage pipelines with advanced filtering and conditional processing:
+
+#### Pipeline Structure
+- **Stages**: Ordered by priority (0 = highest priority, executed first)
+- **Modules**: Multiple modules can exist in each stage
+- **Filters**: Topic patterns that determine which messages each module processes
+- **Conditions**: Rules based on message headers or payload content
+- **Execution**: Sequential or parallel execution within each stage
+
+### 5.2 Create Advanced ETL Pipeline Configuration
+
+Create `etl-pipeline.json` for a sophisticated processing pipeline:
 
 ```json
 {
-  "pipeline_name": "message-transformation",
-  "description": "Transform and enrich messages in-place during broker processing",
-  "target_topics": ["raw-events", "sensor-data"],
-  "module_name": "message-processor",
-  "module_version": "1.0.0",
-  "configuration": {
-    "batch_size": 1,
-    "processing_mode": "single_message",
-    "timeout_ms": 1000,
-    "retry_policy": {
-      "max_retries": 3,
-      "backoff_ms": 100
+  "pipeline_id": "iot-sensor-processing",
+  "name": "IoT Sensor Data Processing Pipeline",
+  "description": "Multi-stage processing for IoT sensor data with validation, enrichment, and formatting",
+  "enabled": true,
+  "global_timeout_ms": 15000,
+  "max_retries": 3,
+  "error_handling": "SkipModule",
+  "stages": [
+    {
+      "priority": 0,
+      "parallel_execution": false,
+      "continue_on_error": true,
+      "stage_timeout_ms": 2000,
+      "modules": [
+        {
+          "module_id": "sensor-data-validator",
+          "topic_filters": [
+            {
+              "filter_type": "Prefix",
+              "pattern": "iot.sensors.",
+              "case_sensitive": true,
+              "negate": false
+            },
+            {
+              "filter_type": "Regex",
+              "pattern": "^sensor-\\d+\\.",
+              "case_sensitive": true,
+              "negate": false
+            }
+          ],
+          "conditional_rules": [
+            {
+              "condition_type": "HeaderValue",
+              "field_path": "content-type",
+              "operator": "Equals",
+              "value": "application/json",
+              "negate": false
+            },
+            {
+              "condition_type": "PayloadField",
+              "field_path": "$.sensor_id",
+              "operator": "Contains",
+              "value": "sensor",
+              "negate": false
+            }
+          ],
+          "instance_config": {
+            "memory_limit_bytes": 33554432,
+            "execution_timeout_ms": 1000,
+            "max_concurrent_instances": 10,
+            "enable_caching": true,
+            "cache_ttl_seconds": 300,
+            "custom_config": {
+              "strict_validation": true,
+              "schema_version": "v2.1"
+            }
+          }
+        }
+      ]
     },
-    "filter_rules": {
-      "enable_filtering": true,
-      "drop_filtered_messages": true
+    {
+      "priority": 1,
+      "parallel_execution": true,
+      "continue_on_error": true,
+      "stage_timeout_ms": 5000,
+      "modules": [
+        {
+          "module_id": "temperature-converter",
+          "topic_filters": [
+            {
+              "filter_type": "Contains",
+              "pattern": "temperature",
+              "case_sensitive": false,
+              "negate": false
+            }
+          ],
+          "conditional_rules": [
+            {
+              "condition_type": "PayloadField",
+              "field_path": "$.sensor_type",
+              "operator": "Equals",
+              "value": "temperature",
+              "negate": false
+            },
+            {
+              "condition_type": "PayloadField",
+              "field_path": "$.unit",
+              "operator": "Equals",
+              "value": "celsius",
+              "negate": false
+            }
+          ],
+          "instance_config": {
+            "memory_limit_bytes": 16777216,
+            "execution_timeout_ms": 500,
+            "max_concurrent_instances": 20,
+            "enable_caching": false
+          }
+        },
+        {
+          "module_id": "geolocation-enricher",
+          "topic_filters": [
+            {
+              "filter_type": "Wildcard",
+              "pattern": "iot.sensors.*",
+              "case_sensitive": true,
+              "negate": false
+            }
+          ],
+          "conditional_rules": [
+            {
+              "condition_type": "HeaderValue",
+              "field_path": "location",
+              "operator": "Contains",
+              "value": "lat",
+              "negate": false
+            }
+          ],
+          "instance_config": {
+            "memory_limit_bytes": 25165824,
+            "execution_timeout_ms": 800,
+            "max_concurrent_instances": 15,
+            "enable_caching": true,
+            "cache_ttl_seconds": 600
+          }
+        },
+        {
+          "module_id": "anomaly-detector",
+          "topic_filters": [
+            {
+              "filter_type": "Suffix",
+              "pattern": ".critical",
+              "case_sensitive": false,
+              "negate": false
+            }
+          ],
+          "conditional_rules": [
+            {
+              "condition_type": "PayloadField",
+              "field_path": "$.reading",
+              "operator": "GreaterThan",
+              "value": 100,
+              "negate": false
+            }
+          ],
+          "instance_config": {
+            "memory_limit_bytes": 50331648,
+            "execution_timeout_ms": 2000,
+            "max_concurrent_instances": 5,
+            "enable_caching": true,
+            "cache_ttl_seconds": 120
+          }
+        }
+      ]
+    },
+    {
+      "priority": 2,
+      "parallel_execution": false,
+      "continue_on_error": false,
+      "stage_timeout_ms": 3000,
+      "modules": [
+        {
+          "module_id": "data-formatter",
+          "topic_filters": [
+            {
+              "filter_type": "Exact",
+              "pattern": "*",
+              "case_sensitive": false,
+              "negate": false
+            }
+          ],
+          "conditional_rules": [],
+          "instance_config": {
+            "memory_limit_bytes": 8388608,
+            "execution_timeout_ms": 300,
+            "max_concurrent_instances": 30,
+            "enable_caching": true,
+            "cache_ttl_seconds": 60
+          }
+        }
+      ]
     }
-  },
-  "enabled": true
+  ]
 }
 ```
+
+### 5.3 Filter Types and Patterns
+
+#### Available Filter Types
+
+1. **Exact**: Direct string comparison (fastest)
+   ```json
+   {"filter_type": "Exact", "pattern": "events.user.login"}
+   ```
+
+2. **Wildcard**: Glob patterns with `*` and `?`
+   ```json
+   {"filter_type": "Wildcard", "pattern": "logs.*.error"}
+   ```
+
+3. **Regex**: Full regular expression support
+   ```json
+   {"filter_type": "Regex", "pattern": "^sensor-\\d{3}-\\w+$"}
+   ```
+
+4. **Prefix**: String prefix matching
+   ```json
+   {"filter_type": "Prefix", "pattern": "iot.devices."}
+   ```
+
+5. **Suffix**: String suffix matching
+   ```json
+   {"filter_type": "Suffix", "pattern": ".critical"}
+   ```
+
+6. **Contains**: Substring matching
+   ```json
+   {"filter_type": "Contains", "pattern": "temperature"}
+   ```
+
+#### Conditional Rules
+
+Rules evaluate message content for fine-grained processing control:
+
+```json
+{
+  "condition_type": "HeaderValue",
+  "field_path": "content-type",
+  "operator": "Equals", 
+  "value": "application/json",
+  "negate": false
+}
+```
+
+**Condition Types:**
+- `HeaderValue`: Check message headers
+- `PayloadField`: Check JSON payload fields (JSONPath syntax)
+- `MessageSize`: Check total message size
+- `MessageAge`: Check message timestamp
+
+**Operators:**
+- `Equals`, `NotEquals`
+- `GreaterThan`, `LessThan`, `GreaterThanOrEqual`, `LessThanOrEqual`
+- `Contains`, `StartsWith`, `EndsWith`
+- `Matches` (regex)
 
 ### 5.2 Deploy the Pipeline
 
@@ -1162,16 +1490,196 @@ curl -s "http://localhost:9092/api/v1/topics/raw-events/messages?offset=0&max_me
 ### 6.3 Monitor Pipeline Metrics
 
 ```bash
-# Get ETL pipeline metrics
-curl -s http://localhost:9094/api/v1/etl/pipelines/pipeline-123/metrics | jq '.'
+# Get comprehensive ETL pipeline metrics
+curl -s http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing/metrics | jq '.'
 
 # Expected metrics:
 # {
-#   "messages_processed": 1,
-#   "messages_filtered": 0,
-#   "messages_failed": 0,
-#   "avg_processing_time_ms": 2.5,
-#   "throughput_msgs_per_sec": 100.0
+#   "pipeline_id": "iot-sensor-processing",
+#   "total_messages_processed": 1542,
+#   "messages_by_stage": {
+#     "0": {"processed": 1542, "failed": 3, "avg_time_ms": 0.8},
+#     "1": {"processed": 1539, "failed": 12, "avg_time_ms": 2.3},
+#     "2": {"processed": 1527, "failed": 0, "avg_time_ms": 0.3}
+#   },
+#   "filter_performance": {
+#     "exact_matches": 892,
+#     "wildcard_matches": 435,
+#     "regex_matches": 127,
+#     "filter_evaluation_time_us": 45.2
+#   },
+#   "instance_pool_stats": {
+#     "pool_hit_ratio": 0.94,
+#     "instances_created": 23,
+#     "instances_reused": 1519,
+#     "avg_pool_utilization": 0.76
+#   },
+#   "parallel_execution_stats": {
+#     "concurrent_modules_avg": 2.3,
+#     "parallelization_efficiency": 0.89
+#   },
+#   "error_handling": {
+#     "modules_skipped": 12,
+#     "retries_attempted": 4,
+#     "dead_letter_messages": 3
+#   },
+#   "throughput_msgs_per_sec": 156.7,
+#   "avg_pipeline_latency_ms": 3.4
+# }
+
+# Get instance pool statistics
+curl -s http://localhost:9094/api/v1/etl/instance-pool/stats | jq '.'
+
+# Get filter engine performance
+curl -s http://localhost:9094/api/v1/etl/filters/performance | jq '.'
+
+# Monitor real-time pipeline execution
+curl -s http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing/status | jq '.'
+```
+
+## Step 7: Pipeline Management and Runtime Operations
+
+### 7.1 Runtime Pipeline Management
+
+The priority-based ETL system supports hot configuration updates and runtime pipeline management:
+
+```bash
+# Add a new pipeline at runtime
+curl -X POST http://localhost:9094/api/v1/etl/pipelines \
+  -H "Content-Type: application/json" \
+  -d @new-pipeline.json
+
+# Update an existing pipeline configuration
+curl -X PUT http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing \
+  -H "Content-Type: application/json" \
+  -d @updated-pipeline.json
+
+# Enable/disable a pipeline without removal
+curl -X PATCH http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
+# Remove a pipeline completely
+curl -X DELETE http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing
+
+# List all configured pipelines
+curl -s http://localhost:9094/api/v1/etl/pipelines | jq '.'
+```
+
+### 7.2 Instance Pool Management
+
+Monitor and manage the WASM instance pool for optimal performance:
+
+```bash
+# Get detailed pool statistics
+curl -s http://localhost:9094/api/v1/etl/instance-pool/stats | jq '.'
+
+# Warm up instances for a specific module
+curl -X POST http://localhost:9094/api/v1/etl/instance-pool/warmup \
+  -H "Content-Type: application/json" \
+  -d '{"module_id": "temperature-converter", "instance_count": 10}'
+
+# Evict idle instances to free memory
+curl -X POST http://localhost:9094/api/v1/etl/instance-pool/cleanup
+
+# Resize pool for a module
+curl -X PATCH http://localhost:9094/api/v1/etl/instance-pool/temperature-converter \
+  -H "Content-Type: application/json" \
+  -d '{"max_pool_size": 30, "warmup_instances": 8}'
+```
+
+### 7.3 Performance Tuning
+
+#### Optimize Filter Performance
+
+```bash
+# Get filter performance statistics
+curl -s http://localhost:9094/api/v1/etl/filters/performance | jq '.'
+
+# Response shows evaluation times by filter type:
+# {
+#   "exact_match_time_ns": 45,
+#   "wildcard_time_ns": 1250,
+#   "regex_time_ns": 8900,
+#   "prefix_suffix_time_ns": 180,
+#   "contains_time_ns": 320,
+#   "total_evaluations": 15432,
+#   "cache_hit_ratio": 0.89
+# }
+```
+
+#### Parallel Execution Optimization
+
+```json
+{
+  "stages": [
+    {
+      "priority": 1,
+      "parallel_execution": true,
+      "max_concurrent_modules": 5,
+      "execution_strategy": "WorkStealing",
+      "modules": [
+        // Multiple independent modules can run in parallel
+      ]
+    }
+  ]
+}
+```
+
+### 7.4 Error Handling Strategies
+
+Configure different error handling approaches based on your requirements:
+
+```json
+{
+  "error_handling": "RetryWithBackoff",
+  "retry_config": {
+    "max_retries": 3,
+    "initial_delay_ms": 100,
+    "max_delay_ms": 5000,
+    "backoff_multiplier": 2.0,
+    "jitter": true
+  },
+  "dead_letter_config": {
+    "topic_prefix": "dlq.etl",
+    "include_error_context": true,
+    "max_message_size": 1048576
+  }
+}
+```
+
+**Error Handling Options:**
+- `StopPipeline`: Halt entire pipeline on any module failure
+- `SkipModule`: Continue with next module, log error
+- `RetryWithBackoff`: Retry failed module with exponential backoff
+- `SendToDeadLetter`: Route failed messages to error topic
+
+### 7.5 Health Monitoring and Alerting
+
+```bash
+# Check overall ETL system health
+curl -s http://localhost:9094/api/v1/etl/health | jq '.'
+
+# Get pipeline health status
+curl -s http://localhost:9094/api/v1/etl/pipelines/iot-sensor-processing/health | jq '.'
+
+# Response includes health indicators:
+# {
+#   "status": "healthy",
+#   "pipeline_id": "iot-sensor-processing",
+#   "last_successful_execution": "2024-01-15T10:30:45Z",
+#   "error_rate_percent": 0.8,
+#   "avg_latency_ms": 3.2,
+#   "instance_pool_health": "optimal",
+#   "stages": [
+#     {
+#       "priority": 0,
+#       "status": "healthy",
+#       "modules_healthy": 1,
+#       "modules_degraded": 0,
+#       "modules_failed": 0
+#     }
+#   ]
 # }
 ```
 
