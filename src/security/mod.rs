@@ -23,6 +23,7 @@ pub mod auth;
 pub mod acl;
 pub mod tls;
 pub mod metrics;
+pub mod ultra_fast;
 
 #[cfg(test)]
 pub mod tests;
@@ -44,6 +45,7 @@ pub use tls::{
     CaGenerationParams, ValidationResult, RevokedCertificate, CertificateAuditEntry,
 };
 pub use metrics::SecurityMetrics;
+pub use ultra_fast::{UltraFastAuthSystem, UltraFastConfig, UltraFastAuthResult, PerformanceTargets};
 
 use crate::error::RustMqError;
 use std::sync::Arc;
