@@ -49,31 +49,37 @@ RustMQ's WebAssembly ETL system provides a production-ready platform for real-ti
 
 ### ETL Processing Pipeline
 
-RustMQ's WASM ETL system follows a sophisticated multi-stage processing pipeline:
+RustMQ's WASM ETL system performs **in-place message transformation** as messages flow through the broker:
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Source Topic  │───▶│  WASM ETL Module │───▶│ Destination     │
-│                 │    │                  │    │ Topic           │
+│  Message Flow   │───▶│  WASM ETL Module │───▶│  Transformed    │
+│  (Any Topic)    │    │   (In-Memory)    │    │  Message        │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐
-                       │   Error Topic    │
-                       │  (Dead Letter    │
-                       │     Queue)       │
-                       └──────────────────┘
+                              │                          │
+                              ▼                          ▼
+                       ┌──────────────────┐    ┌─────────────────┐
+                       │   Error Logs     │    │  Continue to    │
+                       │  (Processing     │    │  Consumer or    │
+                       │   Failures)      │    │  Storage        │
+                       └──────────────────┘    └─────────────────┘
 ```
+
+**Current Implementation**: The ETL processor transforms messages **in-place** during the normal message flow, modifying message content and headers before they reach consumers or are stored. It does **not** automatically publish to separate destination topics.
+
+**Architecture Note**: The current implementation focuses on stream processing and message enrichment. For use cases requiring message routing to different topics based on transformation results, additional integration with the broker's producer API would be needed.
 
 ### Processing Stages
 
-1. **Message Ingestion**: Messages arrive from source topics via the broker's QUIC/HTTP3 interface
+1. **Message Interception**: Messages are intercepted during normal broker processing flow
 2. **Deserialization**: Binary message data is efficiently deserialized using `bincode`
-3. **Filtering**: Messages are evaluated against configurable filter rules (spam detection, size limits, age restrictions)
-4. **Transformation**: Content-specific transformations are applied based on message type (JSON, XML, text)
-5. **Enrichment**: Additional metadata is added (geolocation, language detection, content analysis)
-6. **Serialization**: Processed messages are serialized back to binary format
-7. **Output**: Transformed messages are sent to destination topics or error queues
+3. **Pipeline Execution**: Messages are processed through a sequential pipeline of WASM modules
+4. **Filtering**: Messages are evaluated against configurable filter rules (spam detection, size limits, age restrictions)
+   - Filtered messages are dropped from the pipeline (not forwarded)
+5. **Transformation**: Content-specific transformations are applied in-place based on message type (JSON, XML, text)
+6. **Enrichment**: Additional metadata is added to message headers (geolocation, language detection, content analysis)
+7. **Serialization**: Processed messages are serialized back to binary format
+8. **Continuation**: Transformed messages continue through the normal broker flow to consumers and storage
 
 ### Memory Management Model
 
@@ -1078,10 +1084,8 @@ Create `etl-pipeline.json`:
 ```json
 {
   "pipeline_name": "message-transformation",
-  "description": "Transform and enrich incoming messages",
-  "source_topic": "raw-events",
-  "destination_topic": "processed-events",
-  "error_topic": "etl-errors",
+  "description": "Transform and enrich messages in-place during broker processing",
+  "target_topics": ["raw-events", "sensor-data"],
   "module_name": "message-processor",
   "module_version": "1.0.0",
   "configuration": {
@@ -1091,6 +1095,10 @@ Create `etl-pipeline.json`:
     "retry_policy": {
       "max_retries": 3,
       "backoff_ms": 100
+    },
+    "filter_rules": {
+      "enable_filtering": true,
+      "drop_filtered_messages": true
     }
   },
   "enabled": true
@@ -1123,7 +1131,7 @@ curl -s http://localhost:9094/api/v1/etl/pipelines/pipeline-123/status | jq '.'
 ### 6.1 Send Test Messages
 
 ```bash
-# Send a test message to the source topic
+# Send a test message to a topic configured for ETL processing
 curl -X POST http://localhost:9092/api/v1/topics/raw-events/messages \
   -H "Content-Type: application/json" \
   -d '{
@@ -1140,14 +1148,15 @@ curl -X POST http://localhost:9092/api/v1/topics/raw-events/messages \
 ### 6.2 Verify Processed Messages
 
 ```bash
-# Consume messages from the destination topic
-curl -s "http://localhost:9092/api/v1/topics/processed-events/messages?offset=0&max_messages=10" | jq '.'
+# Consume messages from the same topic - messages will be transformed in-place
+curl -s "http://localhost:9092/api/v1/topics/raw-events/messages?offset=0&max_messages=10" | jq '.'
 
 # Expected output should show transformed message with:
-# - temperature_fahrenheit field added
-# - _processed: true
-# - enrichment headers
-# - processing timestamps
+# - temperature_fahrenheit field added to JSON payload
+# - _processed: true in the message content
+# - enrichment headers added to message headers
+# - processing timestamps in headers
+# - original message structure preserved but enhanced
 ```
 
 ### 6.3 Monitor Pipeline Metrics
@@ -1170,7 +1179,7 @@ curl -s http://localhost:9094/api/v1/etl/pipelines/pipeline-123/metrics | jq '.'
 
 ### Multiple Message Output
 
-Your ETL module can output multiple messages from a single input:
+Your ETL module can output multiple messages from a single input (useful for message splitting):
 
 ```rust
 fn transform_message(message: Message) -> Result<ProcessResult, String> {
@@ -1201,6 +1210,8 @@ fn transform_message(message: Message) -> Result<ProcessResult, String> {
     })
 }
 ```
+
+**Note**: Multiple messages returned by the ETL module replace the original message in the processing pipeline. To send messages to different topics, you would need to integrate the ETL processor with the broker's producer API (not currently implemented).
 
 ### Error Handling and Dead Letter Queue
 
