@@ -38,8 +38,8 @@ flush_interval_ms = 1000
 write_cache_size_bytes = 1073741824
 # Read cache size for historical data (2GB)
 read_cache_size_bytes = 2147483648
-# Cache eviction policy (Lru, Lfu, Random)
-eviction_policy = "Lru"
+# Cache eviction policy (Lru, Lfu, Random, Moka)
+eviction_policy = "Moka"  # High-performance cache with TinyLFU algorithm
 
 [object_storage]
 # Storage backend type (S3, Gcs, Azure, or Local)

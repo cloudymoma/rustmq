@@ -8,6 +8,11 @@ use std::time::Instant;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+#[cfg(feature = "moka-cache")]
+use moka::future::Cache as MokaCache;
+#[cfg(feature = "moka-cache")]
+use std::time::Duration;
+
 #[derive(Debug, Clone)]
 struct CacheEntry {
     data: Bytes,
@@ -166,6 +171,58 @@ impl Cache for LruCache {
     }
 }
 
+#[cfg(feature = "moka-cache")]
+pub struct MokaCacheAdapter {
+    inner: MokaCache<String, Bytes>,
+}
+
+#[cfg(feature = "moka-cache")]
+impl MokaCacheAdapter {
+    pub fn new(max_size_bytes: u64) -> Self {
+        let cache = MokaCache::builder()
+            .max_capacity(max_size_bytes / 1024) // Rough estimate: assume 1KB average entry size
+            .weigher(|_key: &String, value: &Bytes| -> u32 {
+                // Weight = key size + value size
+                (std::mem::size_of::<String>() + _key.len() + value.len())
+                    .try_into().unwrap_or(u32::MAX)
+            })
+            .time_to_live(Duration::from_secs(3600)) // 1 hour TTL
+            .eviction_listener(|key, _value, cause| {
+                tracing::debug!("Cache eviction: key={}, cause={:?}", key, cause);
+            })
+            .build();
+        
+        Self { inner: cache }
+    }
+}
+
+#[cfg(feature = "moka-cache")]
+#[async_trait]
+impl Cache for MokaCacheAdapter {
+    async fn get(&self, key: &str) -> Result<Option<Bytes>> {
+        Ok(self.inner.get(key).await)
+    }
+    
+    async fn put(&self, key: &str, value: Bytes) -> Result<()> {
+        self.inner.insert(key.to_string(), value).await;
+        Ok(())
+    }
+    
+    async fn remove(&self, key: &str) -> Result<()> {
+        self.inner.invalidate(key);
+        Ok(())
+    }
+    
+    async fn clear(&self) -> Result<()> {
+        self.inner.invalidate_all();
+        Ok(())
+    }
+    
+    async fn size(&self) -> Result<usize> {
+        Ok(self.inner.entry_count() as usize)
+    }
+}
+
 pub struct CacheManager {
     write_cache: Arc<dyn Cache>,
     read_cache: Arc<dyn Cache>,
@@ -173,6 +230,39 @@ pub struct CacheManager {
 
 impl CacheManager {
     pub fn new(config: &CacheConfig) -> Self {
+        // Determine cache implementation based on config and available features
+        #[cfg(feature = "moka-cache")]
+        let use_moka = matches!(config.eviction_policy, crate::config::EvictionPolicy::Moka | crate::config::EvictionPolicy::Lru);
+        
+        #[cfg(not(feature = "moka-cache"))]
+        let use_moka = false;
+        
+        if use_moka {
+            #[cfg(feature = "moka-cache")]
+            {
+                let write_cache = Arc::new(MokaCacheAdapter::new(config.write_cache_size_bytes));
+                let read_cache = Arc::new(MokaCacheAdapter::new(config.read_cache_size_bytes));
+                
+                // Spawn maintenance tasks for both caches
+                let write_cache_clone = write_cache.clone();
+                let read_cache_clone = read_cache.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(60));
+                    loop {
+                        interval.tick().await;
+                        write_cache_clone.inner.run_pending_tasks().await;
+                        read_cache_clone.inner.run_pending_tasks().await;
+                    }
+                });
+                
+                return Self {
+                    write_cache,
+                    read_cache,
+                };
+            }
+        }
+        
+        // Fallback to LRU cache
         Self {
             write_cache: Arc::new(LruCache::new(config.write_cache_size_bytes)),
             read_cache: Arc::new(LruCache::new(config.read_cache_size_bytes)),

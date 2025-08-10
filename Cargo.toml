@@ -103,6 +103,9 @@ zstd = "0.13"
 # Checksums
 crc32fast = "1.4"
 
+# High-performance caching
+moka = { version = "0.12", features = ["future"], optional = true }
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["serde", "macros"] }
@@ -118,7 +121,7 @@ sysinfo = "0.30"
 sha2 = "0.10"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = "3.15"
 pretty_assertions = "1.4"
 rand = "0.8"
@@ -131,9 +134,10 @@ proptest = "1.5"
 tracing-test = "0.2"
 
 [features]
-default = ["wasm"]
+default = ["wasm", "moka-cache"]
 io-uring = ["tokio-uring"]
 wasm = ["wasmer"]
+moka-cache = ["moka"]
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -185,4 +189,8 @@ harness = false
 
 [[bench]]
 name = "standalone_security_bench"
+harness = false
+
+[[bench]]
+name = "cache_performance_bench"
 harness = false

@@ -78,6 +78,8 @@ pub enum EvictionPolicy {
     Lru,
     Lfu,
     Random,
+    #[cfg(feature = "moka-cache")]
+    Moka,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

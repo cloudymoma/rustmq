@@ -30,7 +30,7 @@ flush_interval_ms = 500
 [cache]
 write_cache_size_bytes = 67108864  # 64MB
 read_cache_size_bytes = 134217728  # 128MB
-eviction_policy = "Lru"
+eviction_policy = "Moka"  # High-performance cache with TinyLFU algorithm
 
 [object_storage]
 storage_type = { Local = { path = "/tmp/rustmq/broker-storage" } }

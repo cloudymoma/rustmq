@@ -1574,7 +1574,7 @@ flush_interval_ms = 1000            # 1 second flush interval
 [cache]
 write_cache_size_bytes = 1073741824  # 1GB hot data cache
 read_cache_size_bytes = 2147483648   # 2GB cold data cache
-eviction_policy = "Lru"              # Cache eviction policy (Lru/Lfu/Random)
+eviction_policy = "Moka"             # Cache eviction policy (Moka/Lru/Lfu/Random)
 
 [object_storage]
 storage_type = "S3"                 # Storage backend (S3/Gcs/Azure/Local)
