@@ -227,6 +227,34 @@ pub enum RustMqError {
 
     #[error("Validation error: {0}")]
     ValidationError(String),
+
+    // OpenRaft specific errors
+    #[error("Raft error: {0}")]
+    RaftError(String),
+
+    #[error("Raft storage error: {0}")]
+    RaftStorage(String),
+
+    #[error("Raft network error: {0}")]
+    RaftNetwork(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+
+    #[error("Consensus timeout: {0}")]
+    ConsensusTimeout(String),
+
+    #[error("Log compaction error: {0}")]
+    LogCompaction(String),
+
+    #[error("Snapshot error: {0}")]
+    SnapshotError(String),
+
+    #[error("Leader election failed: {0}")]
+    LeaderElection(String),
+
+    #[error("Membership change failed: {0}")]
+    MembershipChange(String),
 }
 
 // Add missing From implementations for tonic transport errors

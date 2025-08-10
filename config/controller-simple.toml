@@ -1,0 +1,53 @@
+# Minimal controller configuration for testing
+[broker]
+id = "controller-001"
+rack_id = "us-central1-a"
+
+[network]
+quic_listen = "127.0.0.1:9094"
+rpc_listen = "127.0.0.1:9095"
+
+[wal]
+path = "/tmp/rustmq/controller-wal"
+
+[cache]
+write_cache_size_bytes = 67108864
+read_cache_size_bytes = 134217728
+
+[object_storage]
+storage_type = { Local = { path = "/tmp/rustmq/controller-storage" } }
+bucket = "controller-bucket"
+
+[controller]
+endpoints = ["127.0.0.1:9094"]
+bind_addr = "127.0.0.1"
+rpc_port = 9095
+admin_port = 9642
+
+[replication]
+min_in_sync_replicas = 1
+
+[etl]
+enabled = false
+pipelines = []
+
+[etl.instance_pool]
+max_pool_size = 10
+warmup_instances = 2
+creation_rate_limit = 5.0
+idle_timeout_seconds = 300
+enable_lru_eviction = true
+
+[scaling]
+max_concurrent_additions = 3
+max_concurrent_decommissions = 1
+
+[operations]
+allow_runtime_config_updates = true
+graceful_shutdown_timeout_ms = 30000
+
+[operations.kubernetes]
+use_stateful_sets = true
+pvc_storage_class = "fast-ssd"
+wal_volume_size = "100Gi"
+enable_pod_affinity = true

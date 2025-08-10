@@ -84,7 +84,7 @@ pub enum ClusterCommand {
     },
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct TopicInfo {
     pub name: String,
     pub partitions: u32,
@@ -93,7 +93,7 @@ pub struct TopicInfo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct TopicConfig {
     pub retention_ms: Option<u64>,
     pub segment_bytes: Option<u64>,

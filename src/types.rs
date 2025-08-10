@@ -7,7 +7,7 @@ pub type PartitionId = u32;
 pub type Offset = u64;
 pub type StreamId = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct TopicPartition {
     pub topic: TopicName,
     pub partition: PartitionId,
@@ -56,7 +56,7 @@ impl WalRecord {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrokerInfo {
     pub id: BrokerId,
     pub host: String,

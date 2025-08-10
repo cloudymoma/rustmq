@@ -65,6 +65,29 @@ endpoints = ["controller-1:9094", "controller-2:9094", "controller-3:9094"]
 election_timeout_ms = 5000
 # Heartbeat interval in milliseconds
 heartbeat_interval_ms = 1000
+# Bind address for Raft cluster communication
+bind_addr = "0.0.0.0"
+# RPC port for cluster communication
+rpc_port = 9095
+# Admin API port
+admin_port = 9642
+
+[controller.raft]
+# OpenRaft production configuration for high-throughput clusters
+max_payload_entries = 1000
+enable_tick = true
+enable_heartbeat = true
+heartbeat_timeout_ms = 1000
+install_snapshot_timeout_ms = 600000  # 10 minutes for large clusters
+max_replication_lag = 5000
+enable_elect = true
+max_uncommitted_entries = 5000
+network_timeout_ms = 30000
+
+[controller.raft.snapshot_policy]
+log_entries_since_last = 10000
+enable_periodic = true
+periodic_interval_secs = 1800  # 30 minutes for production
 
 [replication]
 # Minimum in-sync replicas for durability

@@ -43,10 +43,30 @@ multipart_threshold = 10485760  # 10MB
 max_concurrent_uploads = 2
 
 [controller]
-# Single controller for testing
+# Single controller for testing - production OpenRaft enabled
 endpoints = ["127.0.0.1:9094"]
+bind_addr = "127.0.0.1"
+rpc_port = 9095
+admin_port = 9642
 election_timeout_ms = 3000
 heartbeat_interval_ms = 1000
+
+[controller.raft]
+# OpenRaft production configuration
+max_payload_entries = 300
+enable_tick = true
+enable_heartbeat = true
+heartbeat_timeout_ms = 1000
+install_snapshot_timeout_ms = 300000  # 5 minutes
+max_replication_lag = 1000
+enable_elect = true
+max_uncommitted_entries = 1000
+network_timeout_ms = 10000
+
+[controller.raft.snapshot_policy]
+log_entries_since_last = 5000
+enable_periodic = true
+periodic_interval_secs = 3600  # 1 hour
 
 [replication]
 min_in_sync_replicas = 1
@@ -59,6 +79,14 @@ enabled = true
 memory_limit_bytes = 16777216  # 16MB
 execution_timeout_ms = 2000
 max_concurrent_executions = 10
+pipelines = []  # No ETL pipelines in controller
+
+[etl.instance_pool]
+max_pool_size = 10
+warmup_instances = 2
+creation_rate_limit = 5.0  # 5 instances per second
+idle_timeout_seconds = 300  # 5 minutes
+enable_lru_eviction = true
 
 [scaling]
 max_concurrent_additions = 3
@@ -77,3 +105,92 @@ use_stateful_sets = true
 pvc_storage_class = "fast-ssd"
 wal_volume_size = "100Gi"
 enable_pod_affinity = true
+
+[rate_limiting]
+enabled = true
+
+[rate_limiting.global]
+requests_per_second = 1000
+burst_capacity = 2000
+window_size_secs = 60
+
+[rate_limiting.per_ip]
+enabled = false
+requests_per_second = 100
+burst_capacity = 200
+window_size_secs = 60
+max_tracked_ips = 10000
+ip_expiry_secs = 3600
+
+[rate_limiting.endpoints]
+[rate_limiting.endpoints.health]
+enabled = true
+requests_per_second = 100
+burst_capacity = 200
+window_size_secs = 60
+endpoint_patterns = ["/health", "/api/v1/health"]
+
+[rate_limiting.endpoints.read_operations]
+enabled = true
+requests_per_second = 30
+burst_capacity = 60
+window_size_secs = 60
+endpoint_patterns = ["/api/v1/cluster", "/api/v1/topics", "/api/v1/brokers"]
+
+[rate_limiting.endpoints.write_operations]
+enabled = true
+requests_per_second = 10
+burst_capacity = 20
+window_size_secs = 60
+endpoint_patterns = ["/api/v1/topics", "/api/v1/acl", "/api/v1/certs"]
+
+[rate_limiting.endpoints.cluster_operations]
+enabled = true
+requests_per_second = 5
+burst_capacity = 10
+window_size_secs = 60
+endpoint_patterns = ["/api/v1/cluster/*", "/api/v1/upgrade"]
+
+[rate_limiting.cleanup]
+enabled = true
+cleanup_interval_secs = 300
+max_age_secs = 3600
+max_cleanup_per_run = 1000
+
+[security]
+enabled = true
+default_auth_mode = "mTLS"
+max_auth_cache_size = 10000
+auth_cache_ttl_seconds = 300
+
+[security.tls]
+enabled = false  # Disabled for development
+ca_cert_path = "/etc/certs/ca.crt"
+ca_cert_chain_path = "/etc/certs/ca-chain.crt"
+server_cert_path = "/etc/certs/controller.crt"
+server_key_path = "/etc/certs/controller.key"
+client_cert_required = true
+cert_verify_mode = "Full"
+crl_path = "/etc/certs/ca.crl"
+ocsp_url = "http://ocsp.example.com"
+min_tls_version = "1.3"
+cert_refresh_interval_hours = 24
+cipher_suites = ["TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256"]
+
+[security.acl]
+enabled = true
+cache_size_mb = 10
+cache_ttl_seconds = 300
+l2_shard_count = 32
+bloom_filter_size = 100000
+batch_fetch_size = 50
+enable_audit_logging = true
+negative_cache_enabled = true
+
+[security.audit]
+enabled = true
+log_authentication_events = true
+log_authorization_events = false
+log_certificate_events = true
+log_failed_attempts = true
+max_log_size_mb = 100

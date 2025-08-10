@@ -34,6 +34,7 @@ prost-types = "0.12"
 rustls = "0.21"
 rustls-pemfile = "1.0"
 rcgen = "0.11"
+reqwest = { version = "0.12", features = ["json"] }
 
 # Security and Authentication
 x509-parser = "0.15"
@@ -106,6 +107,12 @@ crc32fast = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
 time = { version = "0.3", features = ["serde", "macros"] }
 
+# Raft Consensus
+openraft = { version = "0.9.21", features = ["serde", "storage-v2"] }
+
+# Performance optimization
+num_cpus = "1.16"
+
 # Cryptography
 sha2 = "0.10"
 
@@ -119,6 +126,8 @@ fastrand = "2.0"
 tonic-mock = "0.4"
 # Property-based testing
 proptest = "1.5"
+# Testing utilities
+tracing-test = "0.2"
 
 [features]
 default = ["wasm"]

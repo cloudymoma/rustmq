@@ -805,6 +805,15 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::SecurityAuditLog(_) => ErrorCode::InternalError as u32,
         RustMqError::InsufficientPrivileges { .. } => ErrorCode::PermissionDenied as u32,
         RustMqError::ValidationError(_) => ErrorCode::InvalidParameter as u32,
+        RustMqError::RaftError(_) => ErrorCode::InternalError as u32,
+        RustMqError::RaftStorage(_) => ErrorCode::InternalError as u32,
+        RustMqError::RaftNetwork(_) => ErrorCode::InternalError as u32,
+        RustMqError::InvalidConfiguration(_) => ErrorCode::InvalidParameter as u32,
+        RustMqError::ConsensusTimeout(_) => ErrorCode::InternalError as u32,
+        RustMqError::LeaderElection(_) => ErrorCode::NotLeader as u32,
+        RustMqError::LogCompaction(_) => ErrorCode::InternalError as u32,
+        RustMqError::SnapshotError(_) => ErrorCode::InternalError as u32,
+        RustMqError::MembershipChange(_) => ErrorCode::InternalError as u32,
     }
 }
 

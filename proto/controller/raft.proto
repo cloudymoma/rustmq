@@ -40,6 +40,62 @@ service ControllerRaftService {
   rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
 }
 
+// Simplified OpenRaft service for direct OpenRaft integration
+service RaftService {
+  // Standard OpenRaft Vote RPC
+  rpc Vote(SimpleVoteRequest) returns (SimpleVoteResponse);
+  
+  // Standard OpenRaft AppendEntries RPC
+  rpc AppendEntries(SimpleAppendEntriesRequest) returns (SimpleAppendEntriesResponse);
+  
+  // Standard OpenRaft InstallSnapshot RPC
+  rpc InstallSnapshot(SimpleInstallSnapshotRequest) returns (SimpleInstallSnapshotResponse);
+}
+
+// Simplified Vote request for OpenRaft compatibility
+message SimpleVoteRequest {
+  uint64 term = 1;
+  uint64 candidate_id = 2;
+  bytes last_log_id = 3; // Serialized LogId
+}
+
+// Simplified Vote response for OpenRaft compatibility
+message SimpleVoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+// Simplified AppendEntries request for OpenRaft compatibility  
+message SimpleAppendEntriesRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  bytes prev_log_id = 3; // Serialized LogId
+  bytes entries = 4; // Serialized Vec<Entry>
+  uint64 leader_commit = 5; // Log index
+}
+
+// Simplified AppendEntries response for OpenRaft compatibility
+message SimpleAppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+  bytes conflict_log_id = 3; // Serialized Option<LogId>
+}
+
+// Simplified InstallSnapshot request for OpenRaft compatibility
+message SimpleInstallSnapshotRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  bytes meta = 3; // Serialized SnapshotMeta
+  uint64 offset = 4;
+  bytes data = 5;
+  bool done = 6;
+}
+
+// Simplified InstallSnapshot response for OpenRaft compatibility
+message SimpleInstallSnapshotResponse {
+  uint64 term = 1;
+}
+
 // Raft node state enumeration
 enum NodeState {
   NODE_STATE_FOLLOWER = 0;      // Follower state

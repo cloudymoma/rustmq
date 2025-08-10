@@ -48,6 +48,26 @@ max_concurrent_uploads = 2
 endpoints = ["127.0.0.1:9094"]
 election_timeout_ms = 2000
 heartbeat_interval_ms = 500
+bind_addr = "127.0.0.1"
+rpc_port = 9095
+admin_port = 9642
+
+[controller.raft]
+# OpenRaft development configuration - optimized for fast iteration
+max_payload_entries = 100
+enable_tick = true
+enable_heartbeat = true
+heartbeat_timeout_ms = 500
+install_snapshot_timeout_ms = 60000  # 1 minute for dev
+max_replication_lag = 1000
+enable_elect = true
+max_uncommitted_entries = 500
+network_timeout_ms = 5000
+
+[controller.raft.snapshot_policy]
+log_entries_since_last = 1000
+enable_periodic = true
+periodic_interval_secs = 300  # 5 minutes for development
 
 [replication]
 # Single replica for development
