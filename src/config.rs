@@ -1198,49 +1198,427 @@ impl Config {
         Ok(config)
     }
 
+    /// Comprehensive validation of configuration with logical consistency checks
     pub fn validate(&self) -> crate::Result<()> {
+        // Basic field validation
+        self.validate_basic_fields()?;
+        
+        // Cross-component logical consistency checks
+        self.validate_replication_consistency()?;
+        self.validate_storage_consistency()?;
+        self.validate_network_consistency()?;
+        self.validate_controller_consistency()?;
+        self.validate_scaling_consistency()?;
+        self.validate_etl_consistency()?;
+        self.validate_timeout_consistency()?;
+        self.validate_performance_consistency()?;
+        
+        // Component-specific validation
+        self.rate_limiting.validate()?;
+        self.security.validate()?;
+        
+        Ok(())
+    }
+    
+    /// Validate basic required fields
+    fn validate_basic_fields(&self) -> crate::Result<()> {
         if self.broker.id.is_empty() {
             return Err(crate::error::RustMqError::InvalidConfig(
                 "broker.id cannot be empty".to_string(),
             ));
         }
-
+        
+        if self.broker.rack_id.is_empty() {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "broker.rack_id cannot be empty".to_string(),
+            ));
+        }
+        
         if self.wal.capacity_bytes == 0 {
             return Err(crate::error::RustMqError::InvalidConfig(
                 "wal.capacity_bytes must be greater than 0".to_string(),
             ));
         }
-
+        
         if self.replication.min_in_sync_replicas == 0 {
             return Err(crate::error::RustMqError::InvalidConfig(
                 "replication.min_in_sync_replicas must be greater than 0".to_string(),
             ));
         }
-
-        if self.scaling.max_concurrent_decommissions == 0 {
-            return Err(crate::error::RustMqError::InvalidConfig(
-                "scaling.max_concurrent_decommissions must be greater than 0".to_string(),
-            ));
+        
+        // Create WAL directory if it doesn't exist
+        if !self.wal.path.exists() {
+            if let Err(e) = std::fs::create_dir_all(&self.wal.path) {
+                return Err(crate::error::RustMqError::InvalidConfig(
+                    format!("Cannot create wal.path {}: {}", self.wal.path.display(), e)
+                ));
+            }
         }
-
-        if self.scaling.max_concurrent_decommissions > 10 {
-            return Err(crate::error::RustMqError::InvalidConfig(
-                "scaling.max_concurrent_decommissions should not exceed 10 for safety".to_string(),
-            ));
-        }
-
+        
+        Ok(())
+    }
+    
+    /// Validate replication configuration consistency
+    fn validate_replication_consistency(&self) -> crate::Result<()> {
+        // Ensure replication settings are consistent
         if self.replication.heartbeat_timeout_ms == 0 {
             return Err(crate::error::RustMqError::InvalidConfig(
                 "replication.heartbeat_timeout_ms must be greater than 0".to_string(),
             ));
         }
-
-        // Validate rate limiting configuration
-        self.rate_limiting.validate()?;
-
-        // Validate security configuration
-        self.security.validate()?;
-
+        
+        // Controller endpoints count vs min_in_sync_replicas
+        if self.controller.endpoints.len() > 1 && 
+           self.replication.min_in_sync_replicas > self.controller.endpoints.len() {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                format!("replication.min_in_sync_replicas ({}) cannot exceed number of controller endpoints ({})", 
+                       self.replication.min_in_sync_replicas, self.controller.endpoints.len())
+            ));
+        }
+        
+        // Heartbeat timing consistency
+        if self.replication.heartbeat_timeout_ms <= self.controller.heartbeat_interval_ms {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "replication.heartbeat_timeout_ms must be greater than controller.heartbeat_interval_ms".to_string(),
+            ));
+        }
+        
+        // Acknowledge timeout should be reasonable compared to heartbeat
+        if self.replication.ack_timeout_ms > self.replication.heartbeat_timeout_ms * 3 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "replication.ack_timeout_ms should not exceed 3x heartbeat_timeout_ms to avoid unnecessary delays".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate storage configuration consistency  
+    fn validate_storage_consistency(&self) -> crate::Result<()> {
+        // WAL segment size should be reasonable compared to capacity
+        if self.wal.segment_size_bytes >= self.wal.capacity_bytes {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "wal.segment_size_bytes must be smaller than wal.capacity_bytes".to_string(),
+            ));
+        }
+        
+        // Buffer size should be reasonable compared to segment size
+        if self.wal.buffer_size as u64 > self.wal.segment_size_bytes / 2 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "wal.buffer_size should not exceed half of wal.segment_size_bytes".to_string(),
+            ));
+        }
+        
+        // Upload interval timing validation
+        if self.wal.upload_interval_ms < self.wal.flush_interval_ms * 2 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "wal.upload_interval_ms should be at least 2x flush_interval_ms".to_string(),
+            ));
+        }
+        
+        // Cache size validation
+        if self.cache.write_cache_size_bytes == 0 || self.cache.read_cache_size_bytes == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "cache sizes must be greater than 0".to_string(),
+            ));
+        }
+        
+        // Object storage multipart threshold validation
+        if self.object_storage.multipart_threshold < 5 * 1024 * 1024 {  // 5MB minimum
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "object_storage.multipart_threshold should be at least 5MB".to_string(),
+            ));
+        }
+        
+        // Validate storage paths exist for Local storage (create if needed)
+        if let crate::config::StorageType::Local { path } = &self.object_storage.storage_type {
+            if !path.exists() {
+                // Auto-create directory during validation for convenience
+                if let Err(e) = std::fs::create_dir_all(path) {
+                    return Err(crate::error::RustMqError::InvalidConfig(
+                        format!("Cannot create object_storage.storage_type.Local.path {}: {}", path.display(), e)
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate network configuration consistency
+    fn validate_network_consistency(&self) -> crate::Result<()> {
+        // Parse and validate listen addresses
+        let quic_addr = self.network.quic_listen.parse::<std::net::SocketAddr>().map_err(|_| {
+            crate::error::RustMqError::InvalidConfig(
+                format!("network.quic_listen is not a valid socket address: {}", self.network.quic_listen)
+            )
+        })?;
+        
+        let rpc_addr = self.network.rpc_listen.parse::<std::net::SocketAddr>().map_err(|_| {
+            crate::error::RustMqError::InvalidConfig(
+                format!("network.rpc_listen is not a valid socket address: {}", self.network.rpc_listen)
+            )
+        })?;
+        
+        // Ensure QUIC and RPC don't use the same port
+        if quic_addr.port() == rpc_addr.port() {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "network.quic_listen and network.rpc_listen cannot use the same port".to_string(),
+            ));
+        }
+        
+        // Validate connection limits
+        if self.network.max_connections == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "network.max_connections must be greater than 0".to_string(),
+            ));
+        }
+        
+        // QUIC configuration validation
+        if self.network.quic_config.max_idle_timeout_ms < 1000 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "network.quic_config.max_idle_timeout_ms should be at least 1000ms".to_string(),
+            ));
+        }
+        
+        if self.network.quic_config.max_stream_data == 0 || self.network.quic_config.max_connection_data == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "QUIC stream and connection data limits must be greater than 0".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate controller configuration consistency
+    fn validate_controller_consistency(&self) -> crate::Result<()> {
+        // Validate controller endpoints
+        if self.controller.endpoints.is_empty() {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "controller.endpoints cannot be empty".to_string(),
+            ));
+        }
+        
+        // Validate timing relationships
+        if self.controller.election_timeout_ms <= self.controller.heartbeat_interval_ms * 2 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "controller.election_timeout_ms should be at least 2x heartbeat_interval_ms".to_string(),
+            ));
+        }
+        
+        // Raft-specific validation
+        if self.controller.raft.heartbeat_timeout_ms <= self.controller.heartbeat_interval_ms {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "controller.raft.heartbeat_timeout_ms must be greater than controller.heartbeat_interval_ms".to_string(),
+            ));
+        }
+        
+        if self.controller.raft.max_payload_entries == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "controller.raft.max_payload_entries must be greater than 0".to_string(),
+            ));
+        }
+        
+        // Snapshot policy validation
+        if self.controller.raft.snapshot_policy.log_entries_since_last == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "controller.raft.snapshot_policy.log_entries_since_last must be greater than 0".to_string(),
+            ));
+        }
+        
+        // Validate address format
+        let _addr = self.controller.bind_addr.parse::<std::net::IpAddr>().map_err(|_| {
+            crate::error::RustMqError::InvalidConfig(
+                format!("controller.bind_addr is not a valid IP address: {}", self.controller.bind_addr)
+            )
+        })?;
+        
+        Ok(())
+    }
+    
+    /// Validate scaling configuration consistency
+    fn validate_scaling_consistency(&self) -> crate::Result<()> {
+        if self.scaling.max_concurrent_decommissions == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.max_concurrent_decommissions must be greater than 0".to_string(),
+            ));
+        }
+        
+        if self.scaling.max_concurrent_decommissions > 10 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.max_concurrent_decommissions should not exceed 10 for safety".to_string(),
+            ));
+        }
+        
+        // Traffic migration rate validation
+        if self.scaling.traffic_migration_rate <= 0.0 || self.scaling.traffic_migration_rate > 1.0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.traffic_migration_rate must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        
+        // Health check timeout should be reasonable
+        if self.scaling.health_check_timeout_ms < 1000 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.health_check_timeout_ms should be at least 1000ms".to_string(),
+            ));
+        }
+        
+        // Upgrade velocity validation
+        if self.operations.upgrade_velocity == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "operations.upgrade_velocity must be greater than 0".to_string(),
+            ));
+        }
+        
+        if self.operations.upgrade_velocity > self.controller.endpoints.len() {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "operations.upgrade_velocity cannot exceed number of controller endpoints".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate ETL configuration consistency
+    fn validate_etl_consistency(&self) -> crate::Result<()> {
+        if !self.etl.enabled {
+            return Ok(()); // Skip validation if ETL is disabled
+        }
+        
+        if self.etl.memory_limit_bytes == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.memory_limit_bytes must be greater than 0 when ETL is enabled".to_string(),
+            ));
+        }
+        
+        if self.etl.execution_timeout_ms == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.execution_timeout_ms must be greater than 0 when ETL is enabled".to_string(),
+            ));
+        }
+        
+        // Instance pool validation
+        if self.etl.instance_pool.max_pool_size == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.instance_pool.max_pool_size must be greater than 0 when ETL is enabled".to_string(),
+            ));
+        }
+        
+        if self.etl.instance_pool.warmup_instances > self.etl.instance_pool.max_pool_size {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.instance_pool.warmup_instances cannot exceed max_pool_size".to_string(),
+            ));
+        }
+        
+        // Validate pipelines
+        for (i, pipeline) in self.etl.pipelines.iter().enumerate() {
+            if pipeline.pipeline_id.is_empty() {
+                return Err(crate::error::RustMqError::InvalidConfig(
+                    format!("etl.pipelines[{}].pipeline_id cannot be empty", i)
+                ));
+            }
+            
+            if pipeline.enabled && pipeline.stages.is_empty() {
+                return Err(crate::error::RustMqError::InvalidConfig(
+                    format!("etl.pipelines[{}].stages cannot be empty when pipeline is enabled", i)
+                ));
+            }
+            
+            // Validate stage priorities are ordered
+            let mut prev_priority = None;
+            for stage in &pipeline.stages {
+                if let Some(prev) = prev_priority {
+                    if stage.priority <= prev {
+                        return Err(crate::error::RustMqError::InvalidConfig(
+                            format!("etl.pipelines[{}] stages must have increasing priority values", i)
+                        ));
+                    }
+                }
+                prev_priority = Some(stage.priority);
+                
+                // Validate module instances in stage
+                if stage.modules.is_empty() {
+                    return Err(crate::error::RustMqError::InvalidConfig(
+                        format!("etl.pipelines[{}] stage priority {} has no modules", i, stage.priority)
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate timeout consistency across components
+    fn validate_timeout_consistency(&self) -> crate::Result<()> {
+        // Network connection timeout should be reasonable
+        if self.network.connection_timeout_ms < 1000 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "network.connection_timeout_ms should be at least 1000ms".to_string(),
+            ));
+        }
+        
+        // ETL execution timeout should not exceed connection timeout significantly
+        if self.etl.enabled && self.etl.execution_timeout_ms > self.network.connection_timeout_ms * 2 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.execution_timeout_ms should not exceed 2x network.connection_timeout_ms".to_string(),
+            ));
+        }
+        
+        // Graceful shutdown timeout validation
+        if self.operations.graceful_shutdown_timeout_ms < 5000 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "operations.graceful_shutdown_timeout_ms should be at least 5000ms".to_string(),
+            ));
+        }
+        
+        // Rebalance timeout should be sufficient for the operation
+        if self.scaling.rebalance_timeout_ms < 30000 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "scaling.rebalance_timeout_ms should be at least 30000ms for safe rebalancing".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate performance-related configuration consistency
+    fn validate_performance_consistency(&self) -> crate::Result<()> {
+        // WAL fsync settings vs flush interval
+        if !self.wal.fsync_on_write && self.wal.flush_interval_ms == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "wal.flush_interval_ms must be greater than 0 when wal.fsync_on_write is false".to_string(),
+            ));
+        }
+        
+        // Object storage concurrent uploads should be reasonable
+        if self.object_storage.max_concurrent_uploads == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "object_storage.max_concurrent_uploads must be greater than 0".to_string(),
+            ));
+        }
+        
+        if self.object_storage.max_concurrent_uploads > 100 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "object_storage.max_concurrent_uploads should not exceed 100 to avoid overwhelming the storage backend".to_string(),
+            ));
+        }
+        
+        // ETL concurrency settings
+        if self.etl.enabled && self.etl.max_concurrent_executions == 0 {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "etl.max_concurrent_executions must be greater than 0 when ETL is enabled".to_string(),
+            ));
+        }
+        
+        // Cache sizes should be reasonable
+        let total_cache_size = self.cache.write_cache_size_bytes + self.cache.read_cache_size_bytes;
+        if total_cache_size > 100_000_000_000 { // 100GB warning
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "total cache size exceeds 100GB - this may cause memory pressure".to_string(),
+            ));
+        }
+        
         Ok(())
     }
 }
@@ -1290,7 +1668,12 @@ mod tests {
     #[test]
     fn test_default_config_is_valid() {
         let config = Config::default();
-        assert!(config.validate().is_ok());
+        let result = config.validate();
+        match &result {
+            Ok(_) => println!("✅ Default config is valid"),
+            Err(e) => println!("❌ Default config failed: {}", e),
+        }
+        assert!(result.is_ok());
         assert_eq!(config.scaling.max_concurrent_decommissions, 1);
         assert_eq!(config.replication.heartbeat_timeout_ms, 30000);
     }
@@ -1482,5 +1865,367 @@ mod tests {
         // Verify rate limiting is properly included
         assert!(deserialized.rate_limiting.enabled);
         assert_eq!(deserialized.rate_limiting.global.requests_per_second, 1000);
+    }
+    
+    // ==================== New Comprehensive Validation Tests ====================
+    
+    #[test]
+    fn test_validation_basic_fields() {
+        let mut config = Config::default();
+        
+        // Test empty broker ID
+        config.broker.id = "".to_string();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("broker.id cannot be empty"));
+        
+        // Fix broker ID, test empty rack ID
+        config.broker.id = "broker-1".to_string();
+        config.broker.rack_id = "".to_string();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("broker.rack_id cannot be empty"));
+    }
+    
+    #[test]
+    fn test_validation_replication_consistency() {
+        let mut config = Config::default();
+        
+        // Test min_in_sync_replicas exceeds controller endpoints
+        config.controller.endpoints = vec!["controller-1:9094".to_string(), "controller-2:9094".to_string()];
+        config.replication.min_in_sync_replicas = 5; // More than 2 endpoints
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot exceed number of controller endpoints"));
+        
+        // Test heartbeat timing inconsistency
+        config.replication.min_in_sync_replicas = 2;
+        config.replication.heartbeat_timeout_ms = 500;
+        config.controller.heartbeat_interval_ms = 1000; // Greater than heartbeat timeout
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("heartbeat_timeout_ms must be greater than controller.heartbeat_interval_ms"));
+        
+        // Test ack timeout too high compared to heartbeat
+        config.replication.heartbeat_timeout_ms = 2000;
+        config.controller.heartbeat_interval_ms = 1000;
+        config.replication.ack_timeout_ms = 7000; // > 3x heartbeat timeout
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("should not exceed 3x heartbeat_timeout_ms"));
+    }
+    
+    #[test]
+    fn test_validation_storage_consistency() {
+        let mut config = Config::default();
+        
+        // Test WAL segment size >= capacity
+        config.wal.segment_size_bytes = 10 * 1024 * 1024 * 1024; // 10GB
+        config.wal.capacity_bytes = 5 * 1024 * 1024 * 1024; // 5GB (smaller)
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("segment_size_bytes must be smaller than wal.capacity_bytes"));
+        
+        // Test buffer size too large compared to segment
+        config.wal.capacity_bytes = 20 * 1024 * 1024 * 1024; // 20GB
+        config.wal.segment_size_bytes = 128 * 1024 * 1024; // 128MB
+        config.wal.buffer_size = 100 * 1024 * 1024; // 100MB (> half of 128MB)
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("buffer_size should not exceed half of"));
+        
+        // Test upload interval too short
+        config.wal.buffer_size = 64 * 1024; // Reset to reasonable value
+        config.wal.flush_interval_ms = 5000;
+        config.wal.upload_interval_ms = 8000; // < 2x flush interval
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("upload_interval_ms should be at least 2x flush_interval_ms"));
+        
+        // Test multipart threshold too small
+        config.wal.upload_interval_ms = 10000; // Fix upload interval
+        config.object_storage.multipart_threshold = 1024 * 1024; // 1MB (< 5MB minimum)
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("multipart_threshold should be at least 5MB"));
+    }
+    
+    #[test]
+    fn test_validation_network_consistency() {
+        let mut config = Config::default();
+        
+        // Test invalid socket addresses
+        config.network.quic_listen = "invalid-address".to_string();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a valid socket address"));
+        
+        // Test same port for QUIC and RPC
+        config.network.quic_listen = "0.0.0.0:9092".to_string();
+        config.network.rpc_listen = "0.0.0.0:9092".to_string(); // Same port
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot use the same port"));
+        
+        // Test zero max connections
+        config.network.rpc_listen = "0.0.0.0:9093".to_string(); // Fix port conflict
+        config.network.max_connections = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("max_connections must be greater than 0"));
+        
+        // Test QUIC idle timeout too short
+        config.network.max_connections = 1000;
+        config.network.quic_config.max_idle_timeout_ms = 500; // < 1000ms
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("max_idle_timeout_ms should be at least 1000ms"));
+    }
+    
+    #[test]
+    fn test_validation_controller_consistency() {
+        let mut config = Config::default();
+        
+        // Test empty controller endpoints
+        config.controller.endpoints = vec![];
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("controller.endpoints cannot be empty"));
+        
+        // Test election timeout too short compared to heartbeat
+        config.controller.endpoints = vec!["controller-1:9094".to_string()];
+        config.controller.heartbeat_interval_ms = 2000;
+        config.controller.election_timeout_ms = 3000; // < 2x heartbeat
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("election_timeout_ms should be at least 2x heartbeat_interval_ms"));
+        
+        // Test raft heartbeat timeout inconsistency
+        config.controller.election_timeout_ms = 5000;
+        config.controller.raft.heartbeat_timeout_ms = 1500; // < controller heartbeat
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("raft.heartbeat_timeout_ms must be greater than controller.heartbeat_interval_ms"));
+        
+        // Test invalid bind address
+        config.controller.raft.heartbeat_timeout_ms = 3000;
+        config.controller.bind_addr = "invalid-ip".to_string();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a valid IP address"));
+    }
+    
+    #[test]
+    fn test_validation_scaling_consistency() {
+        let mut config = Config::default();
+        
+        // Test invalid traffic migration rate
+        config.scaling.traffic_migration_rate = 1.5; // > 1.0
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("traffic_migration_rate must be between 0.0 and 1.0"));
+        
+        // Test upgrade velocity exceeds endpoints
+        config.scaling.traffic_migration_rate = 0.1;
+        config.controller.endpoints = vec!["controller-1:9094".to_string()]; // 1 endpoint
+        config.operations.upgrade_velocity = 5; // > 1 endpoint
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("upgrade_velocity cannot exceed number of controller endpoints"));
+        
+        // Test health check timeout too short
+        config.operations.upgrade_velocity = 1;
+        config.scaling.health_check_timeout_ms = 500; // < 1000ms
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("health_check_timeout_ms should be at least 1000ms"));
+    }
+    
+    #[test]
+    fn test_validation_etl_consistency() {
+        let mut config = Config::default();
+        
+        // Enable ETL to test its validation
+        config.etl.enabled = true;
+        
+        // Test warmup instances exceed max pool size
+        config.etl.instance_pool.max_pool_size = 10;
+        config.etl.instance_pool.warmup_instances = 15; // > max_pool_size
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("warmup_instances cannot exceed max_pool_size"));
+        
+        // Add a pipeline with invalid configuration
+        config.etl.instance_pool.warmup_instances = 5;
+        config.etl.pipelines = vec![crate::config::EtlPipelineConfig {
+            pipeline_id: "".to_string(), // Empty ID
+            name: "test-pipeline".to_string(),
+            description: None,
+            enabled: true,
+            stages: vec![],
+            global_timeout_ms: 5000,
+            max_retries: 3,
+            error_handling: crate::config::ErrorHandlingStrategy::StopPipeline,
+        }];
+        
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("pipeline_id cannot be empty"));
+    }
+    
+    #[test]
+    fn test_validation_timeout_consistency() {
+        let mut config = Config::default();
+        
+        // Test connection timeout too short
+        config.network.connection_timeout_ms = 500; // < 1000ms
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connection_timeout_ms should be at least 1000ms"));
+        
+        // Test graceful shutdown timeout too short
+        config.network.connection_timeout_ms = 30000;
+        config.operations.graceful_shutdown_timeout_ms = 3000; // < 5000ms
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("graceful_shutdown_timeout_ms should be at least 5000ms"));
+        
+        // Test rebalance timeout too short
+        config.operations.graceful_shutdown_timeout_ms = 60000;
+        config.scaling.rebalance_timeout_ms = 10000; // < 30000ms
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("rebalance_timeout_ms should be at least 30000ms"));
+    }
+    
+    #[test]
+    fn test_validation_performance_consistency() {
+        let mut config = Config::default();
+        
+        // Test WAL flush interval when fsync is disabled
+        config.wal.fsync_on_write = false;
+        config.wal.flush_interval_ms = 0; // Must be > 0 when fsync is false
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("flush_interval_ms must be greater than 0 when wal.fsync_on_write is false"));
+        
+        // Test object storage concurrent uploads too high
+        config.wal.flush_interval_ms = 1000;
+        config.object_storage.max_concurrent_uploads = 200; // > 100
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("max_concurrent_uploads should not exceed 100"));
+        
+        // Test cache size too large
+        config.object_storage.max_concurrent_uploads = 10;
+        config.cache.write_cache_size_bytes = 60_000_000_000; // 60GB
+        config.cache.read_cache_size_bytes = 50_000_000_000; // 50GB (total > 100GB)
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("total cache size exceeds 100GB"));
+    }
+    
+    #[test]
+    fn test_validation_with_valid_complex_config() {
+        let mut config = Config::default();
+        
+        // Set up a complex but valid configuration
+        config.controller.endpoints = vec![
+            "controller-1:9094".to_string(),
+            "controller-2:9094".to_string(),
+            "controller-3:9094".to_string(),
+        ];
+        config.replication.min_in_sync_replicas = 2; // <= 3 endpoints
+        config.controller.heartbeat_interval_ms = 1000;
+        config.controller.election_timeout_ms = 5000; // >= 2x heartbeat
+        config.replication.heartbeat_timeout_ms = 2000; // > controller heartbeat
+        config.controller.raft.heartbeat_timeout_ms = 2500; // > controller heartbeat
+        config.replication.ack_timeout_ms = 5000; // <= 3x heartbeat timeout
+        
+        // Storage configuration
+        config.wal.capacity_bytes = 20 * 1024 * 1024 * 1024; // 20GB
+        config.wal.segment_size_bytes = 128 * 1024 * 1024; // 128MB
+        config.wal.buffer_size = 32 * 1024; // 32KB (< half of segment)
+        config.wal.flush_interval_ms = 1000;
+        config.wal.upload_interval_ms = 10000; // >= 2x flush interval
+        config.object_storage.multipart_threshold = 100 * 1024 * 1024; // 100MB
+        
+        // Network configuration
+        config.network.quic_listen = "0.0.0.0:9092".to_string();
+        config.network.rpc_listen = "0.0.0.0:9093".to_string(); // Different port
+        config.network.max_connections = 10000;
+        config.network.connection_timeout_ms = 30000;
+        
+        // Scaling configuration
+        config.scaling.traffic_migration_rate = 0.1; // Valid range 0.0-1.0
+        config.operations.upgrade_velocity = 2; // <= 3 endpoints
+        config.scaling.health_check_timeout_ms = 30000;
+        config.operations.graceful_shutdown_timeout_ms = 60000;
+        config.scaling.rebalance_timeout_ms = 300000;
+        
+        // This complex configuration should pass all validation checks
+        let result = config.validate();
+        assert!(result.is_ok(), "Complex valid configuration should pass validation: {:?}", result);
+    }
+    
+    #[test]
+    fn test_validation_etl_pipeline_priorities() {
+        let mut config = Config::default();
+        config.etl.enabled = true;
+        
+        // Test pipeline with unordered priorities
+        config.etl.pipelines = vec![crate::config::EtlPipelineConfig {
+            pipeline_id: "test-pipeline".to_string(),
+            name: "Test Pipeline".to_string(),
+            description: None,
+            enabled: true,
+            stages: vec![
+                crate::config::EtlStage {
+                    priority: 2, // Higher priority first
+                    modules: vec![crate::config::EtlModuleInstance {
+                        module_id: "module-1".to_string(),
+                        instance_config: crate::config::ModuleInstanceConfig {
+                            memory_limit_bytes: 1024 * 1024,
+                            execution_timeout_ms: 1000,
+                            max_concurrent_instances: 1,
+                            enable_caching: false,
+                            cache_ttl_seconds: 0,
+                            custom_config: serde_json::Value::Null,
+                        },
+                        topic_filters: vec![],
+                        conditional_rules: vec![],
+                    }],
+                    parallel_execution: false,
+                    stage_timeout_ms: None,
+                    continue_on_error: false,
+                },
+                crate::config::EtlStage {
+                    priority: 1, // Lower priority second (invalid ordering)
+                    modules: vec![crate::config::EtlModuleInstance {
+                        module_id: "module-2".to_string(),
+                        instance_config: crate::config::ModuleInstanceConfig {
+                            memory_limit_bytes: 1024 * 1024,
+                            execution_timeout_ms: 1000,
+                            max_concurrent_instances: 1,
+                            enable_caching: false,
+                            cache_ttl_seconds: 0,
+                            custom_config: serde_json::Value::Null,
+                        },
+                        topic_filters: vec![],
+                        conditional_rules: vec![],
+                    }],
+                    parallel_execution: false,
+                    stage_timeout_ms: None,
+                    continue_on_error: false,
+                },
+            ],
+            global_timeout_ms: 5000,
+            max_retries: 3,
+            error_handling: crate::config::ErrorHandlingStrategy::StopPipeline,
+        }];
+        
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stages must have increasing priority values"));
     }
 }
