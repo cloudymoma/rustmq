@@ -352,6 +352,22 @@ impl OptimizedDirectIOWal {
         
         Ok((file_offset, returned_buffer))
     }
+
+    async fn write_with_buffer(&self, buffer: Vec<u8>) -> Result<(u64, Vec<u8>)> {
+        let file_offset = self.current_file_offset.fetch_add(buffer.len() as u64, Ordering::SeqCst);
+        
+        let (tx, rx) = oneshot::channel();
+        self.write_tx.send(OptimizedWriteCommand::Write {
+            data: buffer, // Direct ownership transfer - eliminates data.to_vec() allocation
+            file_offset,
+            response: tx,
+        }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+        
+        let returned_buffer = rx.await
+            .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
+        
+        Ok((file_offset, returned_buffer))
+    }
 }
 
 #[async_trait]
@@ -361,32 +377,24 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         let record_size = serialized.len() as u64;
         let total_size = serialized.len() + 8;
         
-        let buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
+        // Get buffer from pool and write directly into it
+        let mut buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
+        buffer.clear(); // Ensure buffer is empty
+        buffer.extend_from_slice(&record_size.to_le_bytes());
+        buffer.extend_from_slice(&serialized);
         
-        let mut write_buffer = Vec::with_capacity(total_size);
-        write_buffer.extend_from_slice(&record_size.to_le_bytes());
-        write_buffer.extend_from_slice(&serialized);
-        
-        if write_buffer.len() > buffer.len() {
-            self.buffer_pool.return_buffer(buffer);
-            return Err(crate::error::RustMqError::BufferTooSmall);
-        }
-
-        let (file_offset, returned_buffer) = self.write_with_optimized_io(&write_buffer).await?;
+        // Use optimized method that takes ownership to avoid data.to_vec()
+        let (file_offset, returned_buffer) = self.write_with_buffer(buffer).await?;
         let logical_offset = self.current_offset.fetch_add(1, Ordering::SeqCst);
 
-        // For io_uring, the returned_buffer might be reusable
-        // For now, we'll return the aligned buffer from our pool
-        self.buffer_pool.return_buffer(buffer);
-        
-        // The returned_buffer from io_uring could potentially be reused in a more advanced implementation
-        drop(returned_buffer);
+        // Return the buffer to pool for reuse
+        self.buffer_pool.return_buffer(returned_buffer);
 
         let segment_meta = WalSegmentMetadata {
             start_offset: logical_offset,
             end_offset: logical_offset + 1,
             file_offset,
-            size_bytes: write_buffer.len() as u64,
+            size_bytes: total_size as u64,
             created_at: Instant::now(),
         };
 
@@ -394,7 +402,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         
         {
             let _guard = self.segment_tracking_lock.lock().unwrap();
-            self.current_segment_size.fetch_add(write_buffer.len() as u64, Ordering::SeqCst);
+            self.current_segment_size.fetch_add(total_size as u64, Ordering::SeqCst);
         }
 
         Ok(logical_offset)
