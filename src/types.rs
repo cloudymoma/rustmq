@@ -287,3 +287,113 @@ pub struct TopicMetadata {
     pub error_code: u32,
     pub error_message: Option<String>,
 }
+
+/// Comprehensive health check request for broker components
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckRequest {
+    pub check_wal: bool,
+    pub check_cache: bool,
+    pub check_object_storage: bool,
+    pub check_network: bool,
+    pub check_replication: bool,
+    pub timeout_ms: Option<u32>,
+}
+
+/// Detailed health check response with component-specific status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckResponse {
+    pub overall_healthy: bool,
+    pub broker_id: BrokerId,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub uptime_seconds: u64,
+    pub wal_health: ComponentHealth,
+    pub cache_health: ComponentHealth,
+    pub object_storage_health: ComponentHealth,
+    pub network_health: ComponentHealth,
+    pub replication_health: ComponentHealth,
+    pub resource_usage: ResourceUsage,
+    pub partition_count: u32,
+    pub error_summary: Option<String>,
+}
+
+/// Health status for individual broker components
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentHealth {
+    pub status: HealthStatus,
+    pub last_check: chrono::DateTime<chrono::Utc>,
+    pub latency_ms: Option<u32>,
+    pub error_count: u32,
+    pub last_error: Option<String>,
+    pub details: std::collections::HashMap<String, String>,
+}
+
+/// Health status enumeration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+    Unknown,
+}
+
+/// Resource usage statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub cpu_usage_percent: f64,
+    pub memory_usage_bytes: u64,
+    pub memory_total_bytes: u64,
+    pub disk_usage_bytes: u64,
+    pub disk_total_bytes: u64,
+    pub network_in_bytes_per_sec: u64,
+    pub network_out_bytes_per_sec: u64,
+    pub open_file_descriptors: u32,
+    pub active_connections: u32,
+}
+
+impl Default for HealthCheckRequest {
+    fn default() -> Self {
+        Self {
+            check_wal: true,
+            check_cache: true,
+            check_object_storage: true,
+            check_network: true,
+            check_replication: true,
+            timeout_ms: Some(5000),
+        }
+    }
+}
+
+impl ComponentHealth {
+    pub fn healthy() -> Self {
+        Self {
+            status: HealthStatus::Healthy,
+            last_check: chrono::Utc::now(),
+            latency_ms: None,
+            error_count: 0,
+            last_error: None,
+            details: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn unhealthy(error: String) -> Self {
+        Self {
+            status: HealthStatus::Unhealthy,
+            last_check: chrono::Utc::now(),
+            latency_ms: None,
+            error_count: 1,
+            last_error: Some(error),
+            details: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn degraded(latency_ms: u32) -> Self {
+        Self {
+            status: HealthStatus::Degraded,
+            last_check: chrono::Utc::now(),
+            latency_ms: Some(latency_ms),
+            error_count: 0,
+            last_error: None,
+            details: std::collections::HashMap::new(),
+        }
+    }
+}

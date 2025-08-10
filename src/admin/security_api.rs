@@ -1686,34 +1686,82 @@ async fn handle_get_security_metrics(
 async fn handle_get_security_health(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    debug!("Performing security component health checks");
+    debug!("Performing comprehensive security component health checks");
     
-    // TODO: Implement security health checks logic
-    let health_status = serde_json::json!({
-        "overall_health": "healthy",
-        "components": {
-            "certificate_manager": {
-                "status": "healthy",
-                "response_time_ms": 12,
-                "last_check": Utc::now()
-            },
-            "acl_manager": {
-                "status": "healthy", 
-                "response_time_ms": 8,
-                "last_check": Utc::now()
-            },
-            "authentication_service": {
-                "status": "healthy",
-                "response_time_ms": 5,
-                "last_check": Utc::now()
-            },
-            "authorization_service": {
-                "status": "degraded",
-                "response_time_ms": 45,
-                "last_check": Utc::now(),
-                "issues": ["High latency detected"]
+    let check_start = std::time::Instant::now();
+    let current_time = Utc::now();
+    
+    // Perform comprehensive health checks on all security components
+    let (
+        cert_manager_health,
+        acl_manager_health,
+        auth_service_health,
+        authz_service_health,
+        tls_config_health,
+        security_storage_health
+    ) = tokio::join!(
+        check_certificate_manager_health(&security_manager),
+        check_acl_manager_health(&security_manager),
+        check_authentication_service_health(&security_manager),
+        check_authorization_service_health(&security_manager),
+        check_tls_configuration_health(&security_manager),
+        check_security_storage_health(&security_manager)
+    );
+    
+    // Calculate overall health status
+    let all_components = vec![
+        &cert_manager_health,
+        &acl_manager_health,
+        &auth_service_health,
+        &authz_service_health,
+        &tls_config_health,
+        &security_storage_health,
+    ];
+    
+    let overall_health = calculate_overall_security_health(&all_components);
+    let total_check_time = check_start.elapsed().as_millis() as u64;
+    
+    // Collect all issues and warnings
+    let mut all_issues = Vec::new();
+    let mut all_warnings = Vec::new();
+    
+    for component in &all_components {
+        if let Some(issues) = component["issues"].as_array() {
+            for issue in issues {
+                if let Some(issue_str) = issue.as_str() {
+                    all_issues.push(issue_str.to_string());
+                }
             }
         }
+        if let Some(warnings) = component["warnings"].as_array() {
+            for warning in warnings {
+                if let Some(warning_str) = warning.as_str() {
+                    all_warnings.push(warning_str.to_string());
+                }
+            }
+        }
+    }
+    
+    // Build comprehensive health response
+    let health_status = serde_json::json!({
+        "overall_health": overall_health,
+        "total_check_time_ms": total_check_time,
+        "check_timestamp": current_time,
+        "components": {
+            "certificate_manager": cert_manager_health,
+            "acl_manager": acl_manager_health,
+            "authentication_service": auth_service_health,
+            "authorization_service": authz_service_health,
+            "tls_configuration": tls_config_health,
+            "security_storage": security_storage_health
+        },
+        "summary": {
+            "total_issues": all_issues.len(),
+            "total_warnings": all_warnings.len(),
+            "critical_issues": all_issues,
+            "warnings": all_warnings
+        },
+        "recommendations": generate_security_recommendations(&all_components)
     });
     
     let response = ApiResponse {
@@ -1724,6 +1772,493 @@ async fn handle_get_security_health(
     };
     
     Ok(warp::reply::json(&response))
+}
+
+/// Check certificate manager health with comprehensive validation
+async fn check_certificate_manager_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Test certificate operations
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(5000),
+        async {
+            // Test certificate manager availability
+            security_manager.get_certificate_metrics().await
+        }
+    ).await {
+        Ok(Ok(metrics)) => {
+            // Check certificate expiration warnings
+            if metrics.certificates_expiring_soon > 0 {
+                warnings.push(format!("{} certificates expiring within 30 days", metrics.certificates_expiring_soon));
+            }
+            
+            // Check for excessive certificate load
+            if metrics.total_certificates > 1000 {
+                warnings.push("High certificate count detected - consider cleanup".to_string());
+            }
+            
+            // Check for certificate validation failures
+            if metrics.validation_failure_rate > 0.05 { // >5% failure rate
+                status = "degraded";
+                issues.push(format!("High certificate validation failure rate: {:.2}%", metrics.validation_failure_rate * 100.0));
+            }
+        }
+        Ok(Err(e)) => {
+            status = "unhealthy";
+            issues.push(format!("Certificate manager error: {}", e));
+        }
+        Err(_) => {
+            status = "unhealthy";
+            issues.push("Certificate manager health check timed out".to_string());
+        }
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    // Flag high response times
+    if response_time > 1000 {
+        status = if status == "healthy" { "degraded" } else { status };
+        warnings.push(format!("High certificate manager response time: {}ms", response_time));
+    }
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "certificates_checked": "available",
+            "expiration_monitoring": "active",
+            "validation_service": if issues.is_empty() { "operational" } else { "degraded" }
+        }
+    })
+}
+
+/// Check ACL manager health with authorization performance testing
+async fn check_acl_manager_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Test ACL operations and cache performance
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(3000),
+        async {
+            // Test ACL rule evaluation performance
+            security_manager.get_authorization_metrics().await
+        }
+    ).await {
+        Ok(Ok(metrics)) => {
+            // Check cache hit rate
+            if metrics.cache_hit_rate < 0.8 { // <80% hit rate
+                status = "degraded";
+                warnings.push(format!("Low ACL cache hit rate: {:.1}%", metrics.cache_hit_rate * 100.0));
+            }
+            
+            // Check authorization latency
+            if metrics.average_latency_ns > 10_000 { // >10μs
+                status = "degraded";
+                warnings.push(format!("High authorization latency: {}ns", metrics.average_latency_ns));
+            }
+            
+            // Check for excessive rule count
+            if metrics.total_rules > 10000 {
+                warnings.push("High ACL rule count - consider optimization".to_string());
+            }
+            
+            // Check synchronization status
+            if !metrics.is_synchronized {
+                status = "unhealthy";
+                issues.push("ACL rules not synchronized across brokers".to_string());
+            }
+        }
+        Ok(Err(e)) => {
+            status = "unhealthy";
+            issues.push(format!("ACL manager error: {}", e));
+        }
+        Err(_) => {
+            status = "unhealthy";
+            issues.push("ACL manager health check timed out".to_string());
+        }
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    if response_time > 500 {
+        status = if status == "healthy" { "degraded" } else { status };
+        warnings.push(format!("High ACL manager response time: {}ms", response_time));
+    }
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "rule_evaluation": "active",
+            "cache_status": if response_time < 500 { "optimal" } else { "slow" },
+            "synchronization": if issues.is_empty() { "synchronized" } else { "out_of_sync" }
+        }
+    })
+}
+
+/// Check authentication service health
+async fn check_authentication_service_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Test authentication mechanisms
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(2000),
+        async {
+            // Test authentication provider health
+            security_manager.get_authentication_metrics().await
+        }
+    ).await {
+        Ok(Ok(metrics)) => {
+            // Check authentication success rate
+            if metrics.success_rate < 0.95 { // <95% success rate
+                status = "degraded";
+                issues.push(format!("Low authentication success rate: {:.1}%", metrics.success_rate * 100.0));
+            }
+            
+            // Check for authentication latency
+            if metrics.average_auth_time_ms > 100 {
+                warnings.push(format!("High authentication latency: {}ms", metrics.average_auth_time_ms));
+            }
+            
+            // Check certificate validation
+            if !metrics.certificate_validation_enabled {
+                warnings.push("Certificate validation is disabled".to_string());
+            }
+            
+            // Check for failed login attempts
+            if metrics.failed_attempts_last_hour > 1000 {
+                status = "degraded";
+                warnings.push(format!("High failed authentication attempts: {}/hour", metrics.failed_attempts_last_hour));
+            }
+        }
+        Ok(Err(e)) => {
+            status = "unhealthy";
+            issues.push(format!("Authentication service error: {}", e));
+        }
+        Err(_) => {
+            status = "unhealthy";
+            issues.push("Authentication service health check timed out".to_string());
+        }
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "certificate_auth": "enabled",
+            "provider_status": if issues.is_empty() { "operational" } else { "degraded" },
+            "response_time": if response_time < 100 { "fast" } else { "acceptable" }
+        }
+    })
+}
+
+/// Check authorization service health with detailed performance metrics
+async fn check_authorization_service_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Test authorization decision making
+    let test_decisions = 10;
+    let mut total_decision_time = 0u64;
+    let mut successful_decisions = 0;
+    
+    for i in 0..test_decisions {
+        let decision_start = std::time::Instant::now();
+        
+        // Test authorization decision with sample data
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            async {
+                security_manager.test_authorization_decision(
+                    &format!("test-principal-{}", i),
+                    "test-resource",
+                    "read"
+                ).await
+            }
+        ).await {
+            Ok(Ok(_)) => {
+                successful_decisions += 1;
+                total_decision_time += decision_start.elapsed().as_nanos() as u64;
+            }
+            Ok(Err(e)) => {
+                issues.push(format!("Authorization decision failed: {}", e));
+            }
+            Err(_) => {
+                issues.push("Authorization decision timed out".to_string());
+            }
+        }
+    }
+    
+    let avg_decision_time_ns = if successful_decisions > 0 {
+        total_decision_time / successful_decisions as u64
+    } else {
+        u64::MAX
+    };
+    
+    // Evaluate performance thresholds
+    if successful_decisions < (test_decisions * 8 / 10) { // <80% success rate
+        status = "unhealthy";
+        issues.push(format!("Low authorization success rate: {}/{}", successful_decisions, test_decisions));
+    }
+    
+    if avg_decision_time_ns > 2_000_000 { // >2ms average
+        status = if status == "healthy" { "degraded" } else { status };
+        warnings.push(format!("High authorization decision latency: {}ns", avg_decision_time_ns));
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "decision_success_rate": format!("{:.1}%", (successful_decisions as f64 / test_decisions as f64) * 100.0),
+            "average_decision_time_ns": avg_decision_time_ns,
+            "cache_utilization": "active",
+            "performance_target": if avg_decision_time_ns <= 2_000_000 { "met" } else { "exceeded" }
+        }
+    })
+}
+
+/// Check TLS configuration health
+async fn check_tls_configuration_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Check TLS configuration
+    match security_manager.get_tls_configuration_status().await {
+        Ok(tls_status) => {
+            // Check cipher suites
+            if !tls_status.has_secure_ciphers {
+                status = "degraded";
+                warnings.push("Weak cipher suites detected in TLS configuration".to_string());
+            }
+            
+            // Check protocol versions
+            if tls_status.allows_weak_protocols {
+                status = "degraded";
+                issues.push("Weak TLS protocol versions enabled".to_string());
+            }
+            
+            // Check certificate requirements
+            if !tls_status.requires_client_certificates {
+                warnings.push("Client certificate authentication not required".to_string());
+            }
+            
+            // Check certificate rotation
+            if !tls_status.certificate_rotation_enabled {
+                warnings.push("Automatic certificate rotation disabled".to_string());
+            }
+        }
+        Err(e) => {
+            status = "unhealthy";
+            issues.push(format!("TLS configuration check failed: {}", e));
+        }
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "protocol_security": if issues.is_empty() { "secure" } else { "insecure" },
+            "cipher_strength": if warnings.is_empty() { "strong" } else { "weak" },
+            "certificate_management": "automated"
+        }
+    })
+}
+
+/// Check security storage health (certificates, keys, ACL rules)
+async fn check_security_storage_health(
+    security_manager: &Arc<SecurityManager>
+) -> serde_json::Value {
+    let check_start = std::time::Instant::now();
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+    let mut status = "healthy";
+    
+    // Check storage components
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(3000),
+        async {
+            // Test storage read/write operations
+            security_manager.test_security_storage_health().await
+        }
+    ).await {
+        Ok(Ok(storage_metrics)) => {
+            // Check storage latency
+            if storage_metrics.avg_read_latency_ms > 50 {
+                warnings.push(format!("High storage read latency: {}ms", storage_metrics.avg_read_latency_ms));
+            }
+            
+            if storage_metrics.avg_write_latency_ms > 100 {
+                warnings.push(format!("High storage write latency: {}ms", storage_metrics.avg_write_latency_ms));
+            }
+            
+            // Check storage utilization
+            if storage_metrics.storage_utilization_percent > 90.0 {
+                status = "degraded";
+                issues.push(format!("High storage utilization: {:.1}%", storage_metrics.storage_utilization_percent));
+            } else if storage_metrics.storage_utilization_percent > 80.0 {
+                warnings.push(format!("Storage utilization warning: {:.1}%", storage_metrics.storage_utilization_percent));
+            }
+            
+            // Check backup status
+            if !storage_metrics.backup_current {
+                warnings.push("Security data backup is not current".to_string());
+            }
+            
+            // Check replication status
+            if !storage_metrics.replication_healthy {
+                status = "unhealthy";
+                issues.push("Security data replication is unhealthy".to_string());
+            }
+        }
+        Ok(Err(e)) => {
+            status = "unhealthy";
+            issues.push(format!("Security storage error: {}", e));
+        }
+        Err(_) => {
+            status = "unhealthy";
+            issues.push("Security storage health check timed out".to_string());
+        }
+    }
+    
+    let response_time = check_start.elapsed().as_millis() as u64;
+    
+    serde_json::json!({
+        "status": status,
+        "response_time_ms": response_time,
+        "last_check": Utc::now(),
+        "issues": issues,
+        "warnings": warnings,
+        "metrics": {
+            "read_performance": if response_time < 50 { "optimal" } else { "slow" },
+            "write_performance": "measured",
+            "backup_status": "monitored",
+            "replication_status": if issues.iter().any(|i| i.contains("replication")) { "unhealthy" } else { "healthy" }
+        }
+    })
+}
+
+/// Calculate overall security health based on component statuses
+fn calculate_overall_security_health(components: &[&serde_json::Value]) -> &'static str {
+    let mut unhealthy_count = 0;
+    let mut degraded_count = 0;
+    
+    for component in components {
+        if let Some(status) = component["status"].as_str() {
+            match status {
+                "unhealthy" => unhealthy_count += 1,
+                "degraded" => degraded_count += 1,
+                _ => {}
+            }
+        }
+    }
+    
+    if unhealthy_count > 0 {
+        "unhealthy"
+    } else if degraded_count > 2 {
+        "degraded"
+    } else if degraded_count > 0 {
+        "warning"
+    } else {
+        "healthy"
+    }
+}
+
+/// Generate security recommendations based on health check results
+fn generate_security_recommendations(components: &[&serde_json::Value]) -> Vec<String> {
+    let mut recommendations = Vec::new();
+    
+    // Check for common issues and provide recommendations
+    for component in components {
+        if let Some(warnings) = component["warnings"].as_array() {
+            for warning in warnings {
+                if let Some(warning_str) = warning.as_str() {
+                    if warning_str.contains("expiring") {
+                        recommendations.push("Schedule certificate renewal to avoid service disruption".to_string());
+                    }
+                    if warning_str.contains("cache hit rate") {
+                        recommendations.push("Consider warming ACL cache or increasing cache size".to_string());
+                    }
+                    if warning_str.contains("latency") || warning_str.contains("response time") {
+                        recommendations.push("Investigate performance bottlenecks in security components".to_string());
+                    }
+                    if warning_str.contains("storage utilization") {
+                        recommendations.push("Plan for security storage capacity expansion".to_string());
+                    }
+                }
+            }
+        }
+        
+        if let Some(issues) = component["issues"].as_array() {
+            for issue in issues {
+                if let Some(issue_str) = issue.as_str() {
+                    if issue_str.contains("synchronization") || issue_str.contains("replication") {
+                        recommendations.push("Investigate and resolve security data synchronization issues immediately".to_string());
+                    }
+                    if issue_str.contains("validation failure") {
+                        recommendations.push("Review certificate validation configuration and fix validation errors".to_string());
+                    }
+                    if issue_str.contains("authentication success") {
+                        recommendations.push("Investigate authentication failures and review security logs".to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Add general recommendations if no specific issues found
+    if recommendations.is_empty() {
+        recommendations.push("Security health is optimal - continue monitoring".to_string());
+        recommendations.push("Consider periodic security audits and penetration testing".to_string());
+    }
+    
+    recommendations.sort();
+    recommendations.dedup();
+    recommendations
 }
 
 async fn handle_get_security_configuration(

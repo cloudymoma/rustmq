@@ -1133,7 +1133,7 @@ impl Default for Config {
                     max_payload_entries: 300,
                     enable_tick: true,
                     enable_heartbeat: true,
-                    heartbeat_timeout_ms: 1000,
+                    heartbeat_timeout_ms: 2000, // Must be greater than controller.heartbeat_interval_ms (1000)
                     install_snapshot_timeout_ms: 300000, // 5 minutes
                     max_replication_lag: 1000,
                     enable_elect: true,

@@ -458,6 +458,123 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
 
         Ok(Response::new(response))
     }
+
+    async fn health_check(
+        &self,
+        request: Request<broker::HealthCheckRequest>,
+    ) -> Result<Response<broker::HealthCheckResponse>, Status> {
+        self.apply_latency_and_failure("health_check").await?;
+        
+        let _req = request.into_inner();
+        let response = broker::HealthCheckResponse {
+            overall_healthy: true,
+            broker_id: self.broker_id.clone(),
+            timestamp: Some(prost_types::Timestamp {
+                seconds: Utc::now().timestamp(),
+                nanos: 0,
+            }),
+            uptime_seconds: 3600,
+            metadata: Some(common::ResponseMetadata {
+                correlation_id: "mock-health-response".to_string(),
+                timestamp: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                error_code: 0,
+                error_message: String::new(),
+                throttle_time_ms: self.simulated_latency.as_millis() as u32,
+            }),
+            wal_health: Some(broker::ComponentHealth {
+                status: broker::HealthStatus::Healthy as i32,
+                last_check: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                latency_ms: 5,
+                error_count: 0,
+                last_error: String::new(),
+                details: std::collections::HashMap::new(),
+                throughput_ops_per_sec: 100.0,
+                total_operations: 10000,
+                failed_operations: 0,
+            }),
+            cache_health: Some(broker::ComponentHealth {
+                status: broker::HealthStatus::Healthy as i32,
+                last_check: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                latency_ms: 2,
+                error_count: 0,
+                last_error: String::new(),
+                details: std::collections::HashMap::new(),
+                throughput_ops_per_sec: 500.0,
+                total_operations: 50000,
+                failed_operations: 0,
+            }),
+            object_storage_health: Some(broker::ComponentHealth {
+                status: broker::HealthStatus::Healthy as i32,
+                last_check: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                latency_ms: 50,
+                error_count: 0,
+                last_error: String::new(),
+                details: std::collections::HashMap::new(),
+                throughput_ops_per_sec: 10.0,
+                total_operations: 1000,
+                failed_operations: 0,
+            }),
+            network_health: Some(broker::ComponentHealth {
+                status: broker::HealthStatus::Healthy as i32,
+                last_check: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                latency_ms: 10,
+                error_count: 0,
+                last_error: String::new(),
+                details: std::collections::HashMap::new(),
+                throughput_ops_per_sec: 200.0,
+                total_operations: 20000,
+                failed_operations: 0,
+            }),
+            replication_health: Some(broker::ComponentHealth {
+                status: broker::HealthStatus::Healthy as i32,
+                last_check: Some(prost_types::Timestamp {
+                    seconds: Utc::now().timestamp(),
+                    nanos: 0,
+                }),
+                latency_ms: 15,
+                error_count: 0,
+                last_error: String::new(),
+                details: std::collections::HashMap::new(),
+                throughput_ops_per_sec: 75.0,
+                total_operations: 7500,
+                failed_operations: 0,
+            }),
+            resource_usage: Some(broker::ResourceUsage {
+                cpu_usage_percent: 25.0,
+                memory_usage_bytes: 1024 * 1024 * 512, // 512MB
+                memory_total_bytes: 1024 * 1024 * 1024 * 2, // 2GB
+                disk_usage_bytes: 1024 * 1024 * 1024, // 1GB
+                disk_total_bytes: 1024 * 1024 * 1024 * 10, // 10GB
+                network_in_bytes_per_sec: 1024 * 100,
+                network_out_bytes_per_sec: 1024 * 50,
+                open_file_descriptors: 100,
+                active_connections: 10,
+                heap_usage_bytes: 1024 * 1024 * 256, // 256MB
+                heap_total_bytes: 1024 * 1024 * 512, // 512MB
+                gc_count: 5,
+                gc_time_ms: 10,
+            }),
+            partition_count: 5,
+            error_summary: String::new(),
+        };
+
+        Ok(Response::new(response))
+    }
 }
 
 /// Mock implementation of ControllerRaftService for testing

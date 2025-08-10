@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .build_transport(true)
-        .out_dir(&src_proto_dir)
+        .out_dir(src_proto_dir)
         .emit_rerun_if_changed(false); // We handle this manually above
     
     // Configure file descriptor sets for reflection support
@@ -168,7 +168,7 @@ fn generate_package_module(
     package: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Convert package name to module path (e.g., "rustmq.common" -> "common")
-    let module_name = package.split('.').last().unwrap_or(package);
+    let module_name = package.split('.').next_back().unwrap_or(package);
     let module_file = src_proto_dir.join(format!("{}.rs", module_name));
     
     // tonic-build will generate the actual module content
@@ -192,15 +192,15 @@ fn generate_main_module_file(
     content.push_str("//! \n");
     content.push_str("//! This module contains all generated protobuf types and services.\n");
     content.push_str("//! Generated automatically by build.rs - do not edit manually.\n");
-    content.push_str("\n");
+    content.push('\n');
     content.push_str("#![allow(clippy::all)]\n");
     content.push_str("#![allow(warnings)]\n");
-    content.push_str("\n");
+    content.push('\n');
 
     // Extract unique module names and sort them for deterministic output
     let mut module_names: Vec<String> = packages
         .iter()
-        .map(|package| package.split('.').last().unwrap_or(package).to_string())
+        .map(|package| package.split('.').next_back().unwrap_or(package).to_string())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -211,12 +211,12 @@ fn generate_main_module_file(
         let package = packages.iter().find(|p| p.ends_with(module_name)).unwrap();
         content.push_str(&format!("#[path = \"{}.rs\"]\n", package));
         content.push_str(&format!("pub mod {};\n", module_name));
-        content.push_str("\n");
+        content.push('\n');
     }
     
     content.push_str("// Re-export commonly used types for convenience\n");
     content.push_str("pub use common::*;\n");
-    content.push_str("\n");
+    content.push('\n');
     
     // Generate convenience re-exports
     content.push_str("// Service re-exports\n");

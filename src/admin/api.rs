@@ -85,6 +85,8 @@ pub struct BrokerHealthTracker {
     health_cache: RwLock<HashMap<String, BrokerHealth>>,
     /// Timeout for considering a broker unhealthy
     health_timeout: Duration,
+    /// Test mode - when true, assume all health checks pass
+    test_mode: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +102,17 @@ impl BrokerHealthTracker {
         Self {
             health_cache: RwLock::new(HashMap::new()),
             health_timeout,
+            test_mode: false,
+        }
+    }
+
+    /// Create a new health tracker in test mode (skips actual network calls)
+    #[cfg(test)]
+    pub fn new_test_mode(health_timeout: Duration) -> Self {
+        Self {
+            health_cache: RwLock::new(HashMap::new()),
+            health_timeout,
+            test_mode: true,
         }
     }
 
@@ -168,46 +181,85 @@ impl BrokerHealthTracker {
         result
     }
 
-    /// Perform the actual health check (simplified implementation)
+    /// Perform the actual health check using gRPC health check RPC
     async fn perform_health_check(&self, broker: &BrokerInfo) -> bool {
-        // In a real implementation, this would:
-        // 1. Try to establish a connection to the broker's RPC port
-        // 2. Send a ping/health check RPC
-        // 3. Verify the response
+        // In test mode, always return true to avoid network calls
+        if self.test_mode {
+            return true;
+        }
+
+        use crate::proto::broker::broker_replication_service_client::BrokerReplicationServiceClient;
+        use crate::proto::broker::{HealthCheckRequest as ProtoHealthCheckRequest};
+        use tonic::transport::Channel;
         
-        // For now, we'll simulate this with a simple check based on broker info
-        // This is a placeholder - in production you'd want actual network checks
+        // Create connection to broker's gRPC endpoint
+        let endpoint = format!("http://{}:{}", broker.host, broker.port_rpc);
         
-        // Simulate network check with a simple timeout
-        let timeout = Duration::from_millis(100);
-        let check_result = tokio::time::timeout(timeout, self.simulate_network_check(broker)).await;
+        // Set a reasonable timeout for health checks
+        let timeout = Duration::from_millis(2000);
+        let check_result = tokio::time::timeout(timeout, async {
+            // Attempt to connect to the broker
+            match Channel::from_shared(endpoint.clone()) {
+                Ok(channel_builder) => {
+                    match channel_builder
+                        .timeout(Duration::from_millis(1000))
+                        .connect()
+                        .await
+                    {
+                        Ok(channel) => {
+                            let mut client = BrokerReplicationServiceClient::new(channel);
+                            
+                            // Create health check request
+                            let request = tonic::Request::new(ProtoHealthCheckRequest {
+                                check_wal: true,
+                                check_cache: true,
+                                check_object_storage: true,
+                                check_network: true,
+                                check_replication: true,
+                                timeout_ms: 1000,
+                                metadata: None,
+                                include_detailed_metrics: false,
+                                include_resource_usage: false,
+                            });
+                            
+                            // Send health check request
+                            match client.health_check(request).await {
+                                Ok(response) => {
+                                    let health_response = response.into_inner();
+                                    debug!(
+                                        "Health check response from broker {}: overall_healthy={}",
+                                        broker.id, health_response.overall_healthy
+                                    );
+                                    health_response.overall_healthy
+                                }
+                                Err(e) => {
+                                    debug!("Health check RPC failed for broker {}: {}", broker.id, e);
+                                    false
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to connect to broker {} at {}: {}", broker.id, endpoint, e);
+                            false
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Invalid endpoint for broker {} ({}): {}", broker.id, endpoint, e);
+                    false
+                }
+            }
+        }).await;
         
         match check_result {
             Ok(result) => result,
             Err(_) => {
-                debug!("Health check timeout for broker {}", broker.id);
+                debug!("Health check timeout for broker {} at {}", broker.id, endpoint);
                 false
             }
         }
     }
 
-    /// Simulate a network health check (placeholder)
-    async fn simulate_network_check(&self, broker: &BrokerInfo) -> bool {
-        // Simulate network latency
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        
-        // For demo purposes, we'll consider brokers healthy most of the time
-        // In reality, you'd check actual network connectivity and RPC responses
-        
-        // Simple heuristic: localhost brokers are usually healthy
-        if broker.host == "localhost" || broker.host == "127.0.0.1" {
-            return true;
-        }
-        
-        // For other hosts, simulate occasional failures
-        let random_factor = (broker.id.len() + broker.host.len()) % 10;
-        random_factor < 8 // 80% success rate for demo
-    }
 
     /// Clean up stale health entries
     pub async fn cleanup_stale_entries(&self) {
@@ -996,7 +1048,7 @@ mod tests {
     #[tokio::test]
     async fn test_cluster_status_endpoint() {
         let controller = setup_test_controller().await;
-        let health_tracker = Arc::new(BrokerHealthTracker::new(Duration::from_secs(30)));
+        let health_tracker = Arc::new(BrokerHealthTracker::new_test_mode(Duration::from_secs(30)));
         
         // Manually add health status for test brokers
         let broker1 = BrokerInfo {
@@ -1183,7 +1235,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_brokers_endpoint() {
         let controller = setup_test_controller().await;
-        let health_tracker = Arc::new(BrokerHealthTracker::new(Duration::from_secs(30)));
+        let health_tracker = Arc::new(BrokerHealthTracker::new_test_mode(Duration::from_secs(30)));
         
         // Manually add health status for test brokers
         let broker1 = BrokerInfo {
@@ -1293,7 +1345,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broker_health_tracking() {
-        let health_tracker = BrokerHealthTracker::new(Duration::from_millis(100));
+        let health_tracker = BrokerHealthTracker::new_test_mode(Duration::from_millis(100));
         
         let broker = BrokerInfo {
             id: "test-broker".to_string(),
@@ -1327,7 +1379,7 @@ mod tests {
     #[tokio::test]
     async fn test_cluster_health_calculation() {
         let controller = setup_test_controller().await;
-        let health_tracker = Arc::new(BrokerHealthTracker::new(Duration::from_secs(30)));
+        let health_tracker = Arc::new(BrokerHealthTracker::new_test_mode(Duration::from_secs(30)));
         
         // Add health for only one broker (test-broker-1)
         let broker1 = BrokerInfo {

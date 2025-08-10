@@ -844,7 +844,7 @@ curl http://localhost:8080/api/v1/brokers
 
 ### 🔧 Health Tracking System
 
-The Admin API includes a sophisticated health tracking system:
+The Admin API includes a sophisticated health tracking system with comprehensive broker health monitoring:
 
 #### Features
 - **Background Health Monitoring**: Automatic health checks every 15 seconds
@@ -852,12 +852,24 @@ The Admin API includes a sophisticated health tracking system:
 - **Intelligent Cluster Health**: Smart health calculation for small clusters
 - **Real-time Updates**: Live health status in all broker-related endpoints
 - **Stale Entry Cleanup**: Automatic cleanup of old health data
+- **🆕 Broker Health Check API**: Comprehensive broker health assessment with component-level monitoring
 
 #### Health Check Logic
 - **Healthy**: Last successful health check within 30 seconds
 - **Unhealthy**: No successful health check or timeout exceeded
 - **Cluster Health**: For ≤2 brokers: healthy if ≥1 broker healthy + leader exists
 - **Large Clusters**: Healthy if majority of brokers healthy + leader exists
+
+#### Broker Health Check
+The newly implemented broker health check provides detailed component-level monitoring:
+- **WAL Health**: Write-ahead log performance and status monitoring
+- **Cache Health**: Memory cache hit rates and efficiency metrics
+- **Object Storage Health**: Cloud storage connectivity and upload performance
+- **Network Health**: Connection status and throughput monitoring
+- **Replication Health**: Follower sync status and replication lag tracking
+- **Resource Usage**: CPU, memory, disk, and network utilization statistics
+
+For detailed configuration and usage, see [Broker Health Monitoring](docs/broker-health-monitoring.md).
 
 ### 🚨 Error Handling
 

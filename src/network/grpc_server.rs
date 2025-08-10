@@ -4,6 +4,7 @@ use crate::{
     proto::broker,
     proto_convert,
     replication::FollowerReplicationHandler,
+    health::HealthCheckService,
     error::RustMqError
 };
 // Import types for legacy trait implementations
@@ -20,6 +21,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use tonic::{Request, Response, Status};
+use tracing::error;
 
 /// gRPC service implementation for broker-to-broker communication
 /// All RPCs enforce leader epoch validation to prevent stale leader attacks
@@ -27,16 +29,32 @@ pub struct BrokerReplicationServiceImpl {
     /// Map of topic partitions to their follower handlers
     follower_handlers: Arc<RwLock<HashMap<internal::TopicPartition, Arc<FollowerReplicationHandler>>>>,
     /// Current broker ID
-    #[allow(dead_code)]
     broker_id: internal::BrokerId,
+    /// Health check service for comprehensive broker health monitoring
+    health_service: Arc<HealthCheckService>,
 }
 
 impl BrokerReplicationServiceImpl {
     pub fn new(broker_id: internal::BrokerId) -> Self {
+        let health_service = Arc::new(HealthCheckService::new(broker_id.clone()));
         Self {
             follower_handlers: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
+            health_service,
         }
+    }
+
+    pub fn new_with_health_service(broker_id: internal::BrokerId, health_service: Arc<HealthCheckService>) -> Self {
+        Self {
+            follower_handlers: Arc::new(RwLock::new(HashMap::new())),
+            broker_id,
+            health_service,
+        }
+    }
+
+    /// Get reference to the health check service for component registration
+    pub fn health_service(&self) -> Arc<HealthCheckService> {
+        self.health_service.clone()
     }
 
     /// Register a follower handler for a specific topic partition
@@ -431,6 +449,101 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         };
         
         Ok(Response::new(response))
+    }
+
+    async fn health_check(
+        &self,
+        request: Request<broker::HealthCheckRequest>,
+    ) -> std::result::Result<Response<broker::HealthCheckResponse>, Status> {
+        let proto_request = request.into_inner();
+        
+        // Convert protobuf request to internal types
+        let internal_request = internal::HealthCheckRequest {
+            check_wal: proto_request.check_wal,
+            check_cache: proto_request.check_cache,
+            check_object_storage: proto_request.check_object_storage,
+            check_network: proto_request.check_network,
+            check_replication: proto_request.check_replication,
+            timeout_ms: if proto_request.timeout_ms > 0 { Some(proto_request.timeout_ms) } else { None },
+        };
+        
+        // Perform comprehensive health check
+        match self.health_service.perform_health_check(internal_request).await {
+            Ok(internal_response) => {
+                // Convert internal response to protobuf
+                let proto_response = broker::HealthCheckResponse {
+                    overall_healthy: internal_response.overall_healthy,
+                    broker_id: internal_response.broker_id,
+                    timestamp: Some(prost_types::Timestamp {
+                        seconds: internal_response.timestamp.timestamp(),
+                        nanos: internal_response.timestamp.timestamp_subsec_nanos() as i32,
+                    }),
+                    uptime_seconds: internal_response.uptime_seconds,
+                    metadata: None, // Could be populated with request metadata if needed
+                    
+                    // Convert component health
+                    wal_health: Some(convert_component_health(&internal_response.wal_health)),
+                    cache_health: Some(convert_component_health(&internal_response.cache_health)),
+                    object_storage_health: Some(convert_component_health(&internal_response.object_storage_health)),
+                    network_health: Some(convert_component_health(&internal_response.network_health)),
+                    replication_health: Some(convert_component_health(&internal_response.replication_health)),
+                    
+                    // Convert resource usage
+                    resource_usage: Some(convert_resource_usage(&internal_response.resource_usage)),
+                    
+                    partition_count: internal_response.partition_count,
+                    error_summary: internal_response.error_summary.unwrap_or_default(),
+                };
+                
+                Ok(Response::new(proto_response))
+            }
+            Err(e) => {
+                error!("Health check failed: {}", e);
+                Err(Self::error_to_status(e))
+            }
+        }
+    }
+}
+
+/// Convert internal ComponentHealth to protobuf ComponentHealth
+fn convert_component_health(internal: &internal::ComponentHealth) -> broker::ComponentHealth {
+    broker::ComponentHealth {
+        status: match internal.status {
+            internal::HealthStatus::Healthy => broker::HealthStatus::Healthy as i32,
+            internal::HealthStatus::Degraded => broker::HealthStatus::Degraded as i32,
+            internal::HealthStatus::Unhealthy => broker::HealthStatus::Unhealthy as i32,
+            internal::HealthStatus::Unknown => broker::HealthStatus::Unknown as i32,
+        },
+        last_check: Some(prost_types::Timestamp {
+            seconds: internal.last_check.timestamp(),
+            nanos: internal.last_check.timestamp_subsec_nanos() as i32,
+        }),
+        latency_ms: internal.latency_ms.unwrap_or(0),
+        error_count: internal.error_count,
+        last_error: internal.last_error.clone().unwrap_or_default(),
+        details: internal.details.clone(),
+        throughput_ops_per_sec: 0.0, // Not currently tracked in internal type
+        total_operations: 0,          // Not currently tracked in internal type
+        failed_operations: 0,         // Not currently tracked in internal type
+    }
+}
+
+/// Convert internal ResourceUsage to protobuf ResourceUsage
+fn convert_resource_usage(internal: &internal::ResourceUsage) -> broker::ResourceUsage {
+    broker::ResourceUsage {
+        cpu_usage_percent: internal.cpu_usage_percent,
+        memory_usage_bytes: internal.memory_usage_bytes,
+        memory_total_bytes: internal.memory_total_bytes,
+        disk_usage_bytes: internal.disk_usage_bytes,
+        disk_total_bytes: internal.disk_total_bytes,
+        network_in_bytes_per_sec: internal.network_in_bytes_per_sec,
+        network_out_bytes_per_sec: internal.network_out_bytes_per_sec,
+        open_file_descriptors: internal.open_file_descriptors,
+        active_connections: internal.active_connections,
+        heap_usage_bytes: 0,   // Not applicable for Rust
+        heap_total_bytes: 0,   // Not applicable for Rust
+        gc_count: 0,           // Not applicable for Rust
+        gc_time_ms: 0,         // Not applicable for Rust
     }
 }
 

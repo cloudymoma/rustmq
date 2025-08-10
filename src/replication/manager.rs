@@ -472,6 +472,69 @@ impl ReplicationManagerTrait for ReplicationManager {
     }
 }
 
+impl ReplicationManager {
+    /// Get current log end offset for health checks
+    pub fn get_log_end_offset(&self) -> u64 {
+        self.log_end_offset.load(Ordering::SeqCst)
+    }
+
+    /// Get current high watermark for health checks
+    pub fn get_high_watermark_sync(&self) -> u64 {
+        self.high_watermark.load(Ordering::SeqCst)
+    }
+
+    /// Get current leader ID
+    pub fn get_current_leader(&self) -> Option<BrokerId> {
+        self.current_leader.clone()
+    }
+
+    /// Get all replica set members
+    pub fn get_replica_set(&self) -> Vec<BrokerId> {
+        self.replica_set.clone()
+    }
+
+    /// Get minimum in-sync replicas requirement
+    pub fn get_min_in_sync_replicas(&self) -> usize {
+        self.min_in_sync_replicas
+    }
+
+    /// Get replication lag for a specific follower
+    pub fn get_follower_lag(&self, broker_id: &BrokerId) -> Option<u64> {
+        let states = self.follower_states.read();
+        if let Some(state) = states.get(broker_id) {
+            let current_offset = self.log_end_offset.load(Ordering::SeqCst);
+            Some(current_offset.saturating_sub(state.last_known_offset))
+        } else {
+            None
+        }
+    }
+
+    /// Get last heartbeat time for a specific follower
+    pub fn get_last_heartbeat_time(&self, broker_id: &BrokerId) -> Option<std::time::Instant> {
+        let states = self.follower_states.read();
+        states.get(broker_id).map(|state| {
+            // Convert chrono::DateTime to std::time::Instant
+            // This is approximate since we can't directly convert between different time types
+            // In a real implementation, you'd store both or use a consistent time type
+            let now_chrono = chrono::Utc::now();
+            let now_instant = std::time::Instant::now();
+            let duration_since_heartbeat = (now_chrono - state.last_heartbeat).to_std().unwrap_or(std::time::Duration::from_secs(0));
+            now_instant - duration_since_heartbeat
+        })
+    }
+
+    /// Check if the replication is healthy
+    pub fn is_replication_healthy(&self) -> bool {
+        let in_sync_replicas = self.get_in_sync_replicas();
+        in_sync_replicas.len() >= self.min_in_sync_replicas
+    }
+
+    /// Get topic partition this manager is responsible for
+    pub fn get_topic_partition(&self) -> &TopicPartition {
+        &self.topic_partition
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -634,6 +634,210 @@ pub struct TruncateLogResponse {
     #[prost(uint64, tag = "9")]
     pub new_high_watermark: u64,
 }
+/// Comprehensive health check request for broker components
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HealthCheckRequest {
+    /// Check WAL (Write-Ahead Log) health
+    #[prost(bool, tag = "1")]
+    pub check_wal: bool,
+    /// Check cache health
+    #[prost(bool, tag = "2")]
+    pub check_cache: bool,
+    /// Check object storage health
+    #[prost(bool, tag = "3")]
+    pub check_object_storage: bool,
+    /// Check network connectivity
+    #[prost(bool, tag = "4")]
+    pub check_network: bool,
+    /// Check replication status
+    #[prost(bool, tag = "5")]
+    pub check_replication: bool,
+    /// Timeout for health checks
+    #[prost(uint32, tag = "6")]
+    pub timeout_ms: u32,
+    /// Request metadata
+    #[prost(message, optional, tag = "7")]
+    pub metadata: ::core::option::Option<super::common::RequestMetadata>,
+    /// Additional check options
+    ///
+    /// Include detailed performance metrics
+    #[prost(bool, tag = "8")]
+    pub include_detailed_metrics: bool,
+    /// Include resource usage statistics
+    #[prost(bool, tag = "9")]
+    pub include_resource_usage: bool,
+}
+/// Detailed health check response with component-specific status
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HealthCheckResponse {
+    /// Overall broker health status
+    #[prost(bool, tag = "1")]
+    pub overall_healthy: bool,
+    /// Broker identifier
+    #[prost(string, tag = "2")]
+    pub broker_id: ::prost::alloc::string::String,
+    /// Health check timestamp
+    #[prost(message, optional, tag = "3")]
+    pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
+    /// Broker uptime in seconds
+    #[prost(uint64, tag = "4")]
+    pub uptime_seconds: u64,
+    /// Response metadata
+    #[prost(message, optional, tag = "5")]
+    pub metadata: ::core::option::Option<super::common::ResponseMetadata>,
+    /// Component health status
+    ///
+    /// WAL health status
+    #[prost(message, optional, tag = "6")]
+    pub wal_health: ::core::option::Option<ComponentHealth>,
+    /// Cache health status
+    #[prost(message, optional, tag = "7")]
+    pub cache_health: ::core::option::Option<ComponentHealth>,
+    /// Object storage health status
+    #[prost(message, optional, tag = "8")]
+    pub object_storage_health: ::core::option::Option<ComponentHealth>,
+    /// Network health status
+    #[prost(message, optional, tag = "9")]
+    pub network_health: ::core::option::Option<ComponentHealth>,
+    /// Replication health status
+    #[prost(message, optional, tag = "10")]
+    pub replication_health: ::core::option::Option<ComponentHealth>,
+    /// Resource usage statistics
+    ///
+    /// Current resource usage
+    #[prost(message, optional, tag = "11")]
+    pub resource_usage: ::core::option::Option<ResourceUsage>,
+    /// Operational metrics
+    ///
+    /// Number of partitions hosted
+    #[prost(uint32, tag = "12")]
+    pub partition_count: u32,
+    /// Summary of any errors
+    #[prost(string, tag = "13")]
+    pub error_summary: ::prost::alloc::string::String,
+}
+/// Health status for individual broker components
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ComponentHealth {
+    /// Component health status
+    #[prost(enumeration = "HealthStatus", tag = "1")]
+    pub status: i32,
+    /// Last health check time
+    #[prost(message, optional, tag = "2")]
+    pub last_check: ::core::option::Option<::prost_types::Timestamp>,
+    /// Component response latency
+    #[prost(uint32, tag = "3")]
+    pub latency_ms: u32,
+    /// Recent error count
+    #[prost(uint32, tag = "4")]
+    pub error_count: u32,
+    /// Last error message
+    #[prost(string, tag = "5")]
+    pub last_error: ::prost::alloc::string::String,
+    /// Additional component details
+    #[prost(map = "string, string", tag = "6")]
+    pub details: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Performance metrics
+    ///
+    /// Operations per second
+    #[prost(double, tag = "7")]
+    pub throughput_ops_per_sec: f64,
+    /// Total operations processed
+    #[prost(uint64, tag = "8")]
+    pub total_operations: u64,
+    /// Total failed operations
+    #[prost(uint64, tag = "9")]
+    pub failed_operations: u64,
+}
+/// Resource usage statistics
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResourceUsage {
+    /// CPU usage percentage
+    #[prost(double, tag = "1")]
+    pub cpu_usage_percent: f64,
+    /// Memory usage in bytes
+    #[prost(uint64, tag = "2")]
+    pub memory_usage_bytes: u64,
+    /// Total available memory
+    #[prost(uint64, tag = "3")]
+    pub memory_total_bytes: u64,
+    /// Disk usage in bytes
+    #[prost(uint64, tag = "4")]
+    pub disk_usage_bytes: u64,
+    /// Total available disk space
+    #[prost(uint64, tag = "5")]
+    pub disk_total_bytes: u64,
+    /// Network input rate
+    #[prost(uint64, tag = "6")]
+    pub network_in_bytes_per_sec: u64,
+    /// Network output rate
+    #[prost(uint64, tag = "7")]
+    pub network_out_bytes_per_sec: u64,
+    /// Open file descriptor count
+    #[prost(uint32, tag = "8")]
+    pub open_file_descriptors: u32,
+    /// Active network connections
+    #[prost(uint32, tag = "9")]
+    pub active_connections: u32,
+    /// JVM/Runtime specific metrics (if applicable)
+    ///
+    /// Heap memory usage
+    #[prost(uint64, tag = "10")]
+    pub heap_usage_bytes: u64,
+    /// Total heap memory
+    #[prost(uint64, tag = "11")]
+    pub heap_total_bytes: u64,
+    /// Garbage collection count
+    #[prost(uint32, tag = "12")]
+    pub gc_count: u32,
+    /// Total GC time
+    #[prost(uint64, tag = "13")]
+    pub gc_time_ms: u64,
+}
+/// Health status enumeration
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum HealthStatus {
+    /// Unknown health status
+    Unknown = 0,
+    /// Component is healthy
+    Healthy = 1,
+    /// Component is degraded but functional
+    Degraded = 2,
+    /// Component is unhealthy
+    Unhealthy = 3,
+}
+impl HealthStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            HealthStatus::Unknown => "HEALTH_STATUS_UNKNOWN",
+            HealthStatus::Healthy => "HEALTH_STATUS_HEALTHY",
+            HealthStatus::Degraded => "HEALTH_STATUS_DEGRADED",
+            HealthStatus::Unhealthy => "HEALTH_STATUS_UNHEALTHY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "HEALTH_STATUS_UNKNOWN" => Some(Self::Unknown),
+            "HEALTH_STATUS_HEALTHY" => Some(Self::Healthy),
+            "HEALTH_STATUS_DEGRADED" => Some(Self::Degraded),
+            "HEALTH_STATUS_UNHEALTHY" => Some(Self::Unhealthy),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod broker_replication_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -974,6 +1178,38 @@ pub mod broker_replication_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Comprehensive health check for broker components (WAL, cache, storage, network)
+        /// Used by controllers and admin systems to monitor broker health
+        pub async fn health_check(
+            &mut self,
+            request: impl tonic::IntoRequest<super::HealthCheckRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HealthCheckResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/rustmq.broker.BrokerReplicationService/HealthCheck",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "HealthCheck",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1047,6 +1283,15 @@ pub mod broker_replication_service_server {
             request: tonic::Request<super::TruncateLogRequest>,
         ) -> std::result::Result<
             tonic::Response<super::TruncateLogResponse>,
+            tonic::Status,
+        >;
+        /// Comprehensive health check for broker components (WAL, cache, storage, network)
+        /// Used by controllers and admin systems to monitor broker health
+        async fn health_check(
+            &self,
+            request: tonic::Request<super::HealthCheckRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HealthCheckResponse>,
             tonic::Status,
         >;
     }
@@ -1519,6 +1764,56 @@ pub mod broker_replication_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = TruncateLogSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rustmq.broker.BrokerReplicationService/HealthCheck" => {
+                    #[allow(non_camel_case_types)]
+                    struct HealthCheckSvc<T: BrokerReplicationService>(pub Arc<T>);
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::HealthCheckRequest>
+                    for HealthCheckSvc<T> {
+                        type Response = super::HealthCheckResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::HealthCheckRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BrokerReplicationService>::health_check(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = HealthCheckSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

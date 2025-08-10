@@ -112,6 +112,7 @@ openraft = { version = "0.9.21", features = ["serde", "storage-v2"] }
 
 # Performance optimization
 num_cpus = "1.16"
+sysinfo = "0.30"
 
 # Cryptography
 sha2 = "0.10"

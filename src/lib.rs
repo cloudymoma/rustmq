@@ -13,6 +13,7 @@ pub mod subscribers;
 pub mod scaling;
 pub mod operations;
 pub mod security;
+pub mod health;
 pub mod proto;
 pub mod proto_convert;
 

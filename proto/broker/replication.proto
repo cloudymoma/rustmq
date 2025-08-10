@@ -44,6 +44,10 @@ service BrokerReplicationService {
 
   // Request leader to truncate log to specific offset (used during recovery)
   rpc TruncateLog(TruncateLogRequest) returns (TruncateLogResponse);
+
+  // Comprehensive health check for broker components (WAL, cache, storage, network)
+  // Used by controllers and admin systems to monitor broker health
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
 // Request to replicate data from leader to follower
@@ -389,4 +393,96 @@ message TruncateLogResponse {
   
   // Reserved for future response fields
   reserved 10 to 15;
+}
+
+// Comprehensive health check request for broker components
+message HealthCheckRequest {
+  bool check_wal = 1;                               // Check WAL (Write-Ahead Log) health
+  bool check_cache = 2;                             // Check cache health
+  bool check_object_storage = 3;                    // Check object storage health
+  bool check_network = 4;                           // Check network connectivity
+  bool check_replication = 5;                       // Check replication status
+  uint32 timeout_ms = 6;                            // Timeout for health checks
+  rustmq.common.RequestMetadata metadata = 7;       // Request metadata
+  
+  // Additional check options
+  bool include_detailed_metrics = 8;                // Include detailed performance metrics
+  bool include_resource_usage = 9;                  // Include resource usage statistics
+  
+  // Reserved for future health check options
+  reserved 10 to 15;
+}
+
+// Detailed health check response with component-specific status
+message HealthCheckResponse {
+  bool overall_healthy = 1;                         // Overall broker health status
+  string broker_id = 2;                             // Broker identifier
+  google.protobuf.Timestamp timestamp = 3;          // Health check timestamp
+  uint64 uptime_seconds = 4;                        // Broker uptime in seconds
+  rustmq.common.ResponseMetadata metadata = 5;      // Response metadata
+  
+  // Component health status
+  ComponentHealth wal_health = 6;                   // WAL health status
+  ComponentHealth cache_health = 7;                 // Cache health status
+  ComponentHealth object_storage_health = 8;        // Object storage health status
+  ComponentHealth network_health = 9;               // Network health status
+  ComponentHealth replication_health = 10;          // Replication health status
+  
+  // Resource usage statistics
+  ResourceUsage resource_usage = 11;                // Current resource usage
+  
+  // Operational metrics
+  uint32 partition_count = 12;                      // Number of partitions hosted
+  string error_summary = 13;                        // Summary of any errors
+  
+  // Reserved for future health fields
+  reserved 14 to 20;
+}
+
+// Health status for individual broker components
+message ComponentHealth {
+  HealthStatus status = 1;                          // Component health status
+  google.protobuf.Timestamp last_check = 2;         // Last health check time
+  uint32 latency_ms = 3;                           // Component response latency
+  uint32 error_count = 4;                          // Recent error count
+  string last_error = 5;                           // Last error message
+  map<string, string> details = 6;                 // Additional component details
+  
+  // Performance metrics
+  double throughput_ops_per_sec = 7;               // Operations per second
+  uint64 total_operations = 8;                     // Total operations processed
+  uint64 failed_operations = 9;                    // Total failed operations
+  
+  // Reserved for future component fields
+  reserved 10 to 15;
+}
+
+// Health status enumeration
+enum HealthStatus {
+  HEALTH_STATUS_UNKNOWN = 0;                       // Unknown health status
+  HEALTH_STATUS_HEALTHY = 1;                       // Component is healthy
+  HEALTH_STATUS_DEGRADED = 2;                      // Component is degraded but functional
+  HEALTH_STATUS_UNHEALTHY = 3;                     // Component is unhealthy
+}
+
+// Resource usage statistics
+message ResourceUsage {
+  double cpu_usage_percent = 1;                    // CPU usage percentage
+  uint64 memory_usage_bytes = 2;                   // Memory usage in bytes
+  uint64 memory_total_bytes = 3;                   // Total available memory
+  uint64 disk_usage_bytes = 4;                     // Disk usage in bytes
+  uint64 disk_total_bytes = 5;                     // Total available disk space
+  uint64 network_in_bytes_per_sec = 6;             // Network input rate
+  uint64 network_out_bytes_per_sec = 7;            // Network output rate
+  uint32 open_file_descriptors = 8;                // Open file descriptor count
+  uint32 active_connections = 9;                   // Active network connections
+  
+  // JVM/Runtime specific metrics (if applicable)
+  uint64 heap_usage_bytes = 10;                    // Heap memory usage
+  uint64 heap_total_bytes = 11;                    // Total heap memory
+  uint32 gc_count = 12;                            // Garbage collection count
+  uint64 gc_time_ms = 13;                          // Total GC time
+  
+  // Reserved for future resource fields
+  reserved 14 to 20;
 }
