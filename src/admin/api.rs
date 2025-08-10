@@ -276,6 +276,17 @@ impl BrokerHealthTracker {
     }
 }
 
+/// Macro to reduce duplication in route definitions with optional rate limiting
+macro_rules! create_route {
+    ($rate_limit:expr, $path:expr, $($rest:tt)*) => {
+        if let Some(ref rate_limit) = $rate_limit {
+            $path.and(rate_limit.clone()).$($rest)*.boxed()
+        } else {
+            $path.$($rest)*.boxed()
+        }
+    };
+}
+
 impl AdminApi {
     pub fn new(controller: Arc<ControllerService>, port: u16) -> Self {
         let health_tracker = Arc::new(BrokerHealthTracker::new(Duration::from_secs(30)));
@@ -409,121 +420,68 @@ impl AdminApi {
         };
         
         // Health check endpoint
-        let mut health = warp::path("health")
-            .and(warp::get())
-            .and(with_controller(controller.clone()))
-            .and(with_start_time(start_time))
-            .and_then(handle_health)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            health = warp::path("health")
-                .and(rate_limit.clone())
-                .and(warp::get())
+        let health = create_route!(
+            rate_limit_middleware,
+            warp::path("health"),
+            and(warp::get())
                 .and(with_controller(controller.clone()))
                 .and(with_start_time(start_time))
                 .and_then(handle_health)
-                .boxed();
-        }
+        );
 
         // Cluster status endpoint
-        let mut cluster = warp::path!("api" / "v1" / "cluster")
-            .and(warp::get())
-            .and(with_controller(controller.clone()))
-            .and(with_health_tracker(health_tracker.clone()))
-            .and_then(handle_cluster_status)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            cluster = warp::path!("api" / "v1" / "cluster")
-                .and(rate_limit.clone())
-                .and(warp::get())
+        let cluster = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "cluster"),
+            and(warp::get())
                 .and(with_controller(controller.clone()))
                 .and(with_health_tracker(health_tracker.clone()))
                 .and_then(handle_cluster_status)
-                .boxed();
-        }
+        );
 
         // Topics endpoints
-        let mut topics_list = warp::path!("api" / "v1" / "topics")
-            .and(warp::get())
-            .and(with_controller(controller.clone()))
-            .and_then(handle_list_topics)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            topics_list = warp::path!("api" / "v1" / "topics")
-                .and(rate_limit.clone())
-                .and(warp::get())
+        let topics_list = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "topics"),
+            and(warp::get())
                 .and(with_controller(controller.clone()))
                 .and_then(handle_list_topics)
-                .boxed();
-        }
+        );
 
-        let mut topics_create = warp::path!("api" / "v1" / "topics")
-            .and(warp::post())
-            .and(warp::body::json())
-            .and(with_controller(controller.clone()))
-            .and_then(handle_create_topic)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            topics_create = warp::path!("api" / "v1" / "topics")
-                .and(rate_limit.clone())
-                .and(warp::post())
+        let topics_create = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "topics"),
+            and(warp::post())
                 .and(warp::body::json())
                 .and(with_controller(controller.clone()))
                 .and_then(handle_create_topic)
-                .boxed();
-        }
+        );
 
-        let mut topics_delete = warp::path!("api" / "v1" / "topics" / String)
-            .and(warp::delete())
-            .and(with_controller(controller.clone()))
-            .and_then(handle_delete_topic)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            topics_delete = warp::path!("api" / "v1" / "topics" / String)
-                .and(rate_limit.clone())
-                .and(warp::delete())
+        let topics_delete = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "topics" / String),
+            and(warp::delete())
                 .and(with_controller(controller.clone()))
                 .and_then(handle_delete_topic)
-                .boxed();
-        }
+        );
 
-        let mut topics_describe = warp::path!("api" / "v1" / "topics" / String)
-            .and(warp::get())
-            .and(with_controller(controller.clone()))
-            .and_then(handle_describe_topic)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            topics_describe = warp::path!("api" / "v1" / "topics" / String)
-                .and(rate_limit.clone())
-                .and(warp::get())
+        let topics_describe = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "topics" / String),
+            and(warp::get())
                 .and(with_controller(controller.clone()))
                 .and_then(handle_describe_topic)
-                .boxed();
-        }
+        );
 
         // Brokers endpoints
-        let mut brokers_list = warp::path!("api" / "v1" / "brokers")
-            .and(warp::get())
-            .and(with_controller(controller.clone()))
-            .and(with_health_tracker(health_tracker.clone()))
-            .and_then(handle_list_brokers)
-            .boxed();
-        
-        if let Some(ref rate_limit) = rate_limit_middleware {
-            brokers_list = warp::path!("api" / "v1" / "brokers")
-                .and(rate_limit.clone())
-                .and(warp::get())
+        let brokers_list = create_route!(
+            rate_limit_middleware,
+            warp::path!("api" / "v1" / "brokers"),
+            and(warp::get())
                 .and(with_controller(controller.clone()))
                 .and(with_health_tracker(health_tracker.clone()))
                 .and_then(handle_list_brokers)
-                .boxed();
-        }
+        );
 
         // Combine all main routes first
         let main_routes = health
