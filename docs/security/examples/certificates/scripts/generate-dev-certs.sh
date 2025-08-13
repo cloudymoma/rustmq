@@ -1,6 +1,7 @@
 #!/bin/bash
-# Development Certificate Generation Script
-# This script generates a complete set of certificates for development/testing
+# RustMQ Development Certificate Generation Script v2.0
+# Compatible with RustMQ 1.0.0+ Certificate Signing Implementation
+# This script generates a complete set of properly signed certificates for development/testing
 
 set -euo pipefail
 
@@ -443,6 +444,12 @@ These are development certificates only. Do not use in production!
 - Certificates have long validity periods
 - No hardware security modules used
 - Suitable for development and testing only
+
+CERTIFICATE SIGNING STATUS:
+✅ Proper certificate chain signing (RustMQ 1.0.0+ compatible)
+✅ CA-signed end-entity certificates (no self-signed issues)
+✅ Full X.509 certificate validation supported
+✅ Compatible with enterprise PKI infrastructure
 
 EOF
 

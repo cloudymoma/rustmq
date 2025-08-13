@@ -15,11 +15,11 @@ pub struct TopicPartition {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Record {
     /// Optional message key
-    #[prost(bytes = "vec", tag = "1")]
-    pub key: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "1")]
+    pub key: ::prost::bytes::Bytes,
     /// Message payload
-    #[prost(bytes = "vec", tag = "2")]
-    pub value: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "2")]
+    pub value: ::prost::bytes::Bytes,
     /// Message headers
     #[prost(message, repeated, tag = "3")]
     pub headers: ::prost::alloc::vec::Vec<Header>,
@@ -35,8 +35,8 @@ pub struct Header {
     #[prost(string, tag = "1")]
     pub key: ::prost::alloc::string::String,
     /// Header value
-    #[prost(bytes = "vec", tag = "2")]
-    pub value: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "2")]
+    pub value: ::prost::bytes::Bytes,
 }
 /// Write-ahead log record with metadata
 #[allow(clippy::derive_partial_eq_without_eq)]

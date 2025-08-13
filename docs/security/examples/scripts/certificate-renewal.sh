@@ -1,5 +1,7 @@
 #!/bin/bash
-# Certificate Renewal Script for RustMQ
+# Certificate Renewal Script for RustMQ - v2.0
+# Compatible with RustMQ 1.0.0+ Certificate Infrastructure
+# Updated: August 2025 - Enhanced for production certificate chains
 # Automated certificate renewal and rotation
 
 set -euo pipefail
@@ -63,6 +65,13 @@ check_certificate_expiry() {
     local days_until_expiry=$(( (expiry_epoch - current_epoch) / 86400 ))
     
     info "$cert_name expires in $days_until_expiry days ($expiry_date)"
+    
+    # RustMQ 1.0.0+ Certificate validation
+    if openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | grep -q "CN=.*Root CA"; then
+        info "$cert_name has proper CA-signed certificate chain (RustMQ 1.0.0+ compatible)"
+    else
+        warn "$cert_name may be self-signed or have invalid chain"
+    fi
     
     if [[ $days_until_expiry -le $RENEWAL_THRESHOLD_DAYS ]]; then
         warn "$cert_name expires in $days_until_expiry days - renewal required"

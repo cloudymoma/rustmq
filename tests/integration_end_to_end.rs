@@ -10,6 +10,7 @@ use rustmq::types::*;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_full_system_integration() {
@@ -142,12 +143,12 @@ async fn test_full_system_integration() {
     ).await.unwrap();
 
     // End-to-end message flow test
-    let original_record = Record {
-        key: Some(b"integration-test-key".to_vec()),
-        value: b"integration-test-value".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let original_record = Record::new(
+        Some(b"integration-test-key".to_vec()),
+        b"integration-test-value".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     // 1. Process through ETL pipeline
     let processed_record = etl_processor.process_record(
@@ -286,12 +287,12 @@ async fn test_failure_recovery_scenarios() {
     let record = WalRecord {
         topic_partition,
         offset: 0,
-        record: Record {
-            key: Some(b"test-key".to_vec()),
-            value: b"test-value".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        },
+        record: Record::new(
+            Some(b"test-key".to_vec()),
+            b"test-value".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        ),
         crc32: 0,
     };
 
@@ -317,12 +318,12 @@ async fn test_failure_recovery_scenarios() {
 
     let etl_processor = MockEtlProcessor::new(etl_config);
 
-    let test_record = Record {
-        key: Some(b"error-test".to_vec()),
-        value: b"error-test-value".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let test_record = Record::new(
+        Some(b"error-test".to_vec()),
+        b"error-test-value".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     // Process with non-existent module - should handle gracefully
     let result = etl_processor.process_record(
@@ -425,12 +426,12 @@ async fn test_concurrent_system_operations() {
             let record = WalRecord {
                 topic_partition: tp,
                 offset: i,
-                record: Record {
-                    key: Some(format!("concurrent-key-{}", i).into_bytes()),
-                    value: format!("concurrent-value-{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("concurrent-key-{}", i).into_bytes()),
+                    format!("concurrent-value-{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             manager.replicate_record(record).await
@@ -483,12 +484,12 @@ async fn test_concurrent_system_operations() {
         let processor = etl_processor.clone();
         let module = module_id.clone();
         etl_tasks.push(tokio::spawn(async move {
-            let record = Record {
-                key: Some(format!("etl-key-{}", i).into_bytes()),
-                value: format!("etl-value-{}", i).into_bytes(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
+            let record = Record::new(
+                Some(format!("etl-key-{}", i).into_bytes()),
+                format!("etl-value-{}", i).into_bytes(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            );
             processor.process_record(record, vec![module]).await
         }));
     }
@@ -643,12 +644,12 @@ async fn test_data_consistency_across_components() {
     );
 
     // Process data through the pipeline
-    let test_data = Record {
-        key: Some(b"consistency-key".to_vec()),
-        value: b"consistency-value".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let test_data = Record::new(
+        Some(b"consistency-key".to_vec()),
+        b"consistency-value".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     let wal_record = WalRecord {
         topic_partition,

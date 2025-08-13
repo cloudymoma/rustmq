@@ -7,6 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::any::Any;
 
 #[cfg(feature = "moka-cache")]
 use moka::future::Cache as MokaCache;
@@ -169,6 +170,10 @@ impl Cache for LruCache {
         }
         Ok(total_size)
     }
+    
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
 }
 
 #[cfg(feature = "moka-cache")]
@@ -221,15 +226,29 @@ impl Cache for MokaCacheAdapter {
     async fn size(&self) -> Result<usize> {
         Ok(self.inner.entry_count() as usize)
     }
+    
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
 }
 
 pub struct CacheManager {
     write_cache: Arc<dyn Cache>,
     read_cache: Arc<dyn Cache>,
+    #[cfg(feature = "moka-cache")]
+    maintenance_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl CacheManager {
     pub fn new(config: &CacheConfig) -> Self {
+        Self::new_with_maintenance(config, true)
+    }
+    
+    pub fn new_without_maintenance(config: &CacheConfig) -> Self {
+        Self::new_with_maintenance(config, false)
+    }
+    
+    fn new_with_maintenance(config: &CacheConfig, start_maintenance: bool) -> Self {
         // Determine cache implementation based on config and available features
         #[cfg(feature = "moka-cache")]
         let use_moka = matches!(config.eviction_policy, crate::config::EvictionPolicy::Moka | crate::config::EvictionPolicy::Lru);
@@ -243,22 +262,17 @@ impl CacheManager {
                 let write_cache = Arc::new(MokaCacheAdapter::new(config.write_cache_size_bytes));
                 let read_cache = Arc::new(MokaCacheAdapter::new(config.read_cache_size_bytes));
                 
-                // Spawn maintenance tasks for both caches
-                let write_cache_clone = write_cache.clone();
-                let read_cache_clone = read_cache.clone();
-                tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(Duration::from_secs(60));
-                    loop {
-                        interval.tick().await;
-                        write_cache_clone.inner.run_pending_tasks().await;
-                        read_cache_clone.inner.run_pending_tasks().await;
-                    }
-                });
-                
-                return Self {
+                let manager = Self {
                     write_cache,
                     read_cache,
+                    maintenance_handle: parking_lot::Mutex::new(None),
                 };
+                
+                if start_maintenance {
+                    manager.start_maintenance();
+                }
+                
+                return manager;
             }
         }
         
@@ -266,7 +280,58 @@ impl CacheManager {
         Self {
             write_cache: Arc::new(LruCache::new(config.write_cache_size_bytes)),
             read_cache: Arc::new(LruCache::new(config.read_cache_size_bytes)),
+            #[cfg(feature = "moka-cache")]
+            maintenance_handle: parking_lot::Mutex::new(None),
         }
+    }
+    
+    #[cfg(feature = "moka-cache")]
+    pub fn start_maintenance(&self) {
+        let mut handle_guard = self.maintenance_handle.lock();
+        if handle_guard.is_some() {
+            return; // Already started
+        }
+        
+        // Only start maintenance if we have moka caches
+        if let (Some(write_moka), Some(read_moka)) = (
+            self.write_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()),
+            self.read_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>())
+        ) {
+            let write_cache_clone = write_moka.inner.clone();
+            let read_cache_clone = read_moka.inner.clone();
+            
+            let handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    write_cache_clone.run_pending_tasks().await;
+                    read_cache_clone.run_pending_tasks().await;
+                }
+            });
+            
+            *handle_guard = Some(handle);
+        }
+    }
+    
+    #[cfg(feature = "moka-cache")]
+    pub async fn run_maintenance(&self) {
+        // Manually trigger maintenance tasks if using moka cache
+        if let Some(write_moka) = self.write_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()) {
+            write_moka.inner.run_pending_tasks().await;
+        }
+        if let Some(read_moka) = self.read_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()) {
+            read_moka.inner.run_pending_tasks().await;
+        }
+    }
+    
+    #[cfg(not(feature = "moka-cache"))]
+    pub fn start_maintenance(&self) {
+        // No-op for LRU cache
+    }
+    
+    #[cfg(not(feature = "moka-cache"))]
+    pub async fn run_maintenance(&self) {
+        // No-op for LRU cache
     }
 
     pub async fn serve_read(&self, key: &str) -> Result<Option<Bytes>> {

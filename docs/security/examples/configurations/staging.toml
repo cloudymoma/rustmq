@@ -1,4 +1,6 @@
-# RustMQ Staging Environment Security Configuration
+# RustMQ Staging Environment Security Configuration - v2.0
+# Compatible with RustMQ 1.0.0+ Performance and Security Features
+# Updated: August 2025 - Enhanced for staging environment testing
 # This configuration provides production-like security for testing
 
 [security]
@@ -21,10 +23,16 @@ cipher_suites = "modern"
 verify_client_cert = true
 allow_self_signed = false  # Production-like behavior
 
-# Certificate chain validation
+# Certificate chain validation - RustMQ 1.0.0+ Enhanced
 validate_certificate_chain = true
 check_certificate_expiry = true
 certificate_expiry_warning_days = 14
+
+# RustMQ 1.0.0+ Certificate features (staging environment)
+certificate_infrastructure_version = "1.0.0+"
+enforce_proper_signing_chains = true
+validate_ca_signed_certificates = true
+certificate_validation_performance_target = "500μs average"
 
 # mTLS Configuration
 [security.mtls]

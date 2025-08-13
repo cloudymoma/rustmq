@@ -596,12 +596,12 @@ mod tests {
             partition: 0,
         };
 
-        let record = Record {
-            key: Some(b"key1".to_vec()),
-            value: b"value1".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
+        let record = Record::new(
+            Some(b"key1".to_vec()),
+            b"value1".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        );
 
         let offset = storage_engine
             .append(topic_partition.clone(), record.clone())
@@ -614,7 +614,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].value, b"value1");
+        assert_eq!(records[0].value.as_ref(), b"value1");
     }
 
     #[tokio::test]
@@ -833,12 +833,12 @@ mod tests {
 
         // Write many records to simulate a large WAL
         for i in 0..100 {
-            let record = Record {
-                key: Some(format!("key-{}", i).into_bytes()),
-                value: format!("value-{}", i).into_bytes(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
+            let record = Record::new(
+                Some(format!("key-{}", i).into_bytes()),
+                format!("value-{}", i).into_bytes(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            );
 
             storage_engine
                 .append(topic_partition.clone(), record)

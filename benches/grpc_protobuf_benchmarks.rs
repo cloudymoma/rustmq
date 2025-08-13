@@ -10,12 +10,16 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
 use rustmq::{
     types::*,
-    proto::{common, broker, controller},
+    common,
+    proto_broker as broker,
+    proto_controller as controller,
     proto_convert,
+    error::RustMqError,
 };
 use chrono::Utc;
 use std::time::Duration;
 use rand::{Rng, thread_rng};
+use prost_types;
 
 // ============================================================================
 // Benchmark Data Generators
@@ -26,14 +30,14 @@ fn generate_test_record(key_size: usize, value_size: usize, header_count: usize)
     
     Record {
         key: if key_size > 0 {
-            Some((0..key_size).map(|_| rng.gen()).collect())
+            Some(((0..key_size).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into())
         } else {
             None
         },
-        value: (0..value_size).map(|_| rng.gen()).collect(),
+        value: ((0..value_size).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into(),
         headers: (0..header_count).map(|i| Header {
             key: format!("header-{}", i),
-            value: (0..20).map(|_| rng.gen()).collect(),
+            value: ((0..20).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into(),
         }).collect(),
         timestamp: Utc::now().timestamp_millis(),
     }
@@ -47,7 +51,7 @@ fn generate_wal_record_batch(count: usize, record_size: usize) -> Vec<WalRecord>
         },
         offset: i as u64,
         record: generate_test_record(50, record_size, 3),
-        crc32: thread_rng().gen(),
+        crc32: thread_rng().r#gen::<u32>(),
     }).collect()
 }
 
@@ -56,13 +60,13 @@ fn generate_log_entries(count: usize, data_size: usize) -> Vec<controller::LogEn
         index: i as u64,
         term: 1,
         r#type: controller::LogEntryType::BrokerMetadata as i32,
-        data: (0..data_size).map(|_| thread_rng().gen()).collect(),
+        data: ((0..data_size).map(|_| thread_rng().r#gen::<u8>()).collect::<Vec<u8>>()).into(),
         timestamp: Some(prost_types::Timestamp {
             seconds: Utc::now().timestamp(),
             nanos: 0,
         }),
         node_id: "benchmark-node".to_string(),
-        checksum: thread_rng().gen(),
+        checksum: thread_rng().r#gen::<u32>(),
         data_size: data_size as u32,
         correlation_id: format!("bench-{}", i),
         priority: 0,
@@ -163,7 +167,7 @@ fn bench_broker_info_conversion(c: &mut Criterion) {
         host: "very-long-hostname.subdomain.domain.com".to_string(),
         port_quic: 9092,
         port_rpc: 9093,
-        rack_id: Some("rack-with-very-long-descriptive-name".to_string()),
+        rack_id: "rack-with-very-long-descriptive-name".to_string(),
     };
     
     c.bench_function("broker_info_roundtrip", |b| {
@@ -292,7 +296,7 @@ fn bench_error_code_mapping(c: &mut Criterion) {
         RustMqError::TopicAlreadyExists("existing-topic".to_string()),
         RustMqError::ResourceExhausted("memory".to_string()),
         RustMqError::PermissionDenied("access denied".to_string()),
-        RustMqError::Timeout,
+        RustMqError::OperationTimeout,
     ];
     
     c.bench_function("error_code_mapping", |b| {
@@ -318,19 +322,30 @@ fn bench_timestamp_conversion(c: &mut Criterion) {
     group.bench_function("to_proto", |b| {
         b.iter(|| {
             for &timestamp in &timestamps {
-                let _proto = proto_convert::timestamp_to_proto(black_box(timestamp)).unwrap();
+                // Convert milliseconds to protobuf Timestamp
+                let seconds = timestamp / 1000;
+                let nanos = ((timestamp % 1000) * 1_000_000) as i32;
+                let _proto = prost_types::Timestamp {
+                    seconds,
+                    nanos,
+                };
             }
         });
     });
     
     let proto_timestamps: Vec<_> = timestamps.iter()
-        .map(|&ts| proto_convert::timestamp_to_proto(ts).unwrap())
+        .map(|&ts| {
+            let seconds = ts / 1000;
+            let nanos = ((ts % 1000) * 1_000_000) as i32;
+            prost_types::Timestamp { seconds, nanos }
+        })
         .collect();
     
     group.bench_function("from_proto", |b| {
         b.iter(|| {
             for proto_ts in &proto_timestamps {
-                let _millis = proto_convert::timestamp_from_proto(black_box(proto_ts.clone())).unwrap();
+                // Convert protobuf Timestamp to milliseconds
+                let _millis = black_box(proto_ts.seconds * 1000 + (proto_ts.nanos / 1_000_000) as i64);
             }
         });
     });
@@ -474,17 +489,17 @@ fn bench_compression_impact(c: &mut Criterion) {
     // Create highly compressible data (repeated patterns)
     let compressible_data = vec![0u8; 10000];
     let compressible_record = Record {
-        key: Some(compressible_data.clone()),
-        value: compressible_data,
+        key: Some(compressible_data.clone().into()),
+        value: compressible_data.into(),
         headers: vec![],
         timestamp: Utc::now().timestamp_millis(),
     };
     
     // Create incompressible data (random)
-    let random_data: Vec<u8> = (0..10000).map(|_| thread_rng().gen()).collect();
+    let random_data: Vec<u8> = (0..10000).map(|_| thread_rng().r#gen::<u8>()).collect();
     let random_record = Record {
-        key: Some(random_data.clone()),
-        value: random_data,
+        key: Some(random_data.clone().into()),
+        value: random_data.into(),
         headers: vec![],
         timestamp: Utc::now().timestamp_millis(),
     };

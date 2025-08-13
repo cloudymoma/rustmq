@@ -1,5 +1,48 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use std::fmt;
+use bytes::Bytes;
+
+// Custom serde implementations for Bytes to maintain serialization compatibility
+mod bytes_serde {
+    use super::*;
+    
+    pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(bytes)
+    }
+    
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<u8> = Vec::deserialize(deserializer)?;
+        Ok(Bytes::from(vec))
+    }
+}
+
+mod option_bytes_serde {
+    use super::*;
+    
+    pub fn serialize<S>(opt_bytes: &Option<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match opt_bytes {
+            Some(bytes) => serializer.serialize_some(bytes.as_ref()),
+            None => serializer.serialize_none(),
+        }
+    }
+    
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Bytes>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt_vec: Option<Vec<u8>> = Option::deserialize(deserializer)?;
+        Ok(opt_vec.map(Bytes::from))
+    }
+}
 
 pub type BrokerId = String;
 pub type TopicName = String;
@@ -21,16 +64,79 @@ impl fmt::Display for TopicPartition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
-    pub key: Option<Vec<u8>>,
-    pub value: Vec<u8>,
+    #[serde(with = "option_bytes_serde")]
+    pub key: Option<Bytes>,
+    #[serde(with = "bytes_serde")]
+    pub value: Bytes,
     pub headers: Vec<Header>,
     pub timestamp: i64,
+}
+
+impl Record {
+    /// Create a new Record with Vec<u8> data (will be converted to Bytes)
+    pub fn new(key: Option<Vec<u8>>, value: Vec<u8>, headers: Vec<Header>, timestamp: i64) -> Self {
+        Self {
+            key: key.map(Bytes::from),
+            value: Bytes::from(value),
+            headers,
+            timestamp,
+        }
+    }
+    
+    /// Create a new Record with Bytes data (zero-copy)
+    pub fn from_bytes(key: Option<Bytes>, value: Bytes, headers: Vec<Header>, timestamp: i64) -> Self {
+        Self {
+            key,
+            value,
+            headers,
+            timestamp,
+        }
+    }
+    
+    /// Get the key as a Vec<u8> (copies data)
+    pub fn key_as_vec(&self) -> Option<Vec<u8>> {
+        self.key.as_ref().map(|k| k.to_vec())
+    }
+    
+    /// Get the value as a Vec<u8> (copies data)
+    pub fn value_as_vec(&self) -> Vec<u8> {
+        self.value.to_vec()
+    }
+    
+    /// Get a zero-copy slice of the value
+    pub fn value_slice(&self, range: std::ops::Range<usize>) -> Bytes {
+        self.value.slice(range)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
     pub key: String,
-    pub value: Vec<u8>,
+    #[serde(with = "bytes_serde")]
+    pub value: Bytes,
+}
+
+impl Header {
+    /// Create a new Header with Vec<u8> value (will be converted to Bytes)
+    pub fn new(key: String, value: Vec<u8>) -> Self {
+        Self {
+            key,
+            value: Bytes::from(value),
+        }
+    }
+    
+    /// Create a new Header with Bytes value (zero-copy)
+    pub fn from_bytes(key: String, value: Bytes) -> Self {
+        Self {
+            key,
+            value,
+        }
+    }
+    
+    /// Get the value as a Vec<u8> (copies data)
+    pub fn value_as_vec(&self) -> Vec<u8> {
+        self.value.to_vec()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

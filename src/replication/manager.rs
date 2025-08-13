@@ -1,4 +1,5 @@
 use crate::{Result, types::*, config::ReplicationConfig, storage::WriteAheadLog, replication::traits::ReplicationManager as ReplicationManagerTrait};
+use bytes::Bytes;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -594,12 +595,12 @@ mod tests {
                 partition: 0,
             },
             offset: 0,
-            record: crate::types::Record {
-                key: Some(b"key1".to_vec()),
-                value: b"value1".to_vec(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            },
+            record: crate::types::Record::new(
+                Some(b"key1".to_vec()),
+                b"value1".to_vec(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            ),
             crc32: 0,
         };
 
@@ -664,12 +665,12 @@ mod tests {
                 partition: 0,
             },
             offset: 0,
-            record: crate::types::Record {
-                key: Some(b"key1".to_vec()),
-                value: b"value1".to_vec(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            },
+            record: crate::types::Record::new(
+                Some(b"key1".to_vec()),
+                b"value1".to_vec(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            ),
             crc32: 0,
         };
 
@@ -750,12 +751,12 @@ mod tests {
                 partition: 0,
             },
             offset: 0,
-            record: crate::types::Record {
-                key: Some(b"key1".to_vec()),
-                value: b"value1".to_vec(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            },
+            record: crate::types::Record::new(
+                Some(b"key1".to_vec()),
+                b"value1".to_vec(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            ),
             crc32: 0,
         };
 

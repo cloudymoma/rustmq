@@ -62,8 +62,8 @@ impl ProduceHandler for BrokerHandler {
             let produce_record = ProduceRecord {
                 topic: topic.clone(),
                 partition: Some(partition_id),
-                key: record.key,
-                value: record.value,
+                key: record.key.map(|k| k.to_vec()), // Convert Bytes to Vec<u8>
+                value: record.value.to_vec(), // Convert Bytes to Vec<u8>
                 headers: record.headers,
                 acks: acks.clone(),
                 timeout_ms,

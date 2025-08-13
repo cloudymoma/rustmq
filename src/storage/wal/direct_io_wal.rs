@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
+use bytes::Bytes;
 
 #[cfg(feature = "io-uring")]
 use tokio_uring::fs::File as UringFile;
@@ -589,12 +590,12 @@ mod tests {
                 partition: 0,
             },
             offset: 0,
-            record: Record {
-                key: Some(b"key1".to_vec()),
-                value: b"value1".to_vec(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            },
+            record: Record::new(
+                Some(b"key1".to_vec()),
+                b"value1".to_vec(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            ),
             crc32: 0,
         };
 
@@ -629,12 +630,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: format!("value{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    format!("value{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             wal.append(record).await.unwrap();
@@ -678,12 +679,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: vec![0u8; 200], // Large value to trigger size limit
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    vec![0u8; 200], // Large value to trigger size limit
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             wal.append(record).await.unwrap();
@@ -770,12 +771,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: vec![0u8; 200], // Large value to trigger size limit quickly
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    vec![0u8; 200], // Large value to trigger size limit quickly
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             _expected_end_offset = wal.append(record).await.unwrap() + 1;
@@ -827,12 +828,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: format!("value{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    format!("value{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             wal.append(record).await.unwrap();
@@ -888,12 +889,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: vec![0u8; 300], // Large value to trigger size limit
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    vec![0u8; 300], // Large value to trigger size limit
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             wal.append(record).await.unwrap();
@@ -939,12 +940,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: format!("value{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    format!("value{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             wal.append(record).await.unwrap();
@@ -959,12 +960,12 @@ mod tests {
                     partition: 0,
                 },
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: format!("value{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    format!("value{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             
@@ -1005,12 +1006,12 @@ mod tests {
             let record = WalRecord {
                 topic_partition: topic_partition.clone(),
                 offset: i, // Will be set by append
-                record: Record {
-                    key: Some(format!("key-{}", i).into_bytes()),
-                    value: format!("value-{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key-{}", i).into_bytes()),
+                    format!("value-{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             
@@ -1031,8 +1032,8 @@ mod tests {
         // Verify the records are correct
         for (i, record) in range_records.iter().enumerate() {
             assert_eq!(record.offset, 3 + i as u64);
-            assert_eq!(record.record.key, Some(format!("key-{}", 3 + i).into_bytes()));
-            assert_eq!(record.record.value, format!("value-{}", 3 + i).into_bytes());
+            assert_eq!(record.record.key.as_ref().map(|k| k.as_ref()), Some(format!("key-{}", 3 + i).into_bytes().as_slice()));
+            assert_eq!(record.record.value.as_ref(), format!("value-{}", 3 + i).into_bytes().as_slice());
         }
 
         // Test reading a smaller range (just offset 5)
@@ -1094,12 +1095,12 @@ mod tests {
                             partition: 0,
                         },
                         offset: i,
-                        record: Record {
-                            key: Some(format!("thread-{}-key-{}", thread_id, i).into_bytes()),
-                            value: vec![0u8; 150], // Large enough to trigger size-based uploads
-                            headers: vec![],
-                            timestamp: chrono::Utc::now().timestamp_millis(),
-                        },
+                        record: Record::new(
+                            Some(format!("thread-{}-key-{}", thread_id, i).into_bytes()),
+                            vec![0u8; 150], // Large enough to trigger size-based uploads
+                            vec![],
+                            chrono::Utc::now().timestamp_millis(),
+                        ),
                         crc32: 0,
                     };
                     
@@ -1203,12 +1204,12 @@ mod tests {
                             partition: 0,
                         },
                         offset: i,
-                        record: Record {
-                            key: Some(format!("stress-key-{}", i).into_bytes()),
-                            value: vec![0u8; 100], // Large enough to trigger uploads
-                            headers: vec![],
-                            timestamp: chrono::Utc::now().timestamp_millis(),
-                        },
+                        record: Record::new(
+                            Some(format!("stress-key-{}", i).into_bytes()),
+                            vec![0u8; 100], // Large enough to trigger uploads
+                            vec![],
+                            chrono::Utc::now().timestamp_millis(),
+                        ),
                         crc32: 0,
                     };
                     

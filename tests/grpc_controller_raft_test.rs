@@ -462,7 +462,7 @@ async fn test_append_entries_with_logs() {
         index: 1,
         term: 1,
         r#type: controller::LogEntryType::BrokerMetadata as i32,
-        data: b"test-broker-metadata".to_vec(),
+        data: b"test-broker-metadata".to_vec().into(),
         timestamp: Some(current_timestamp()),
         node_id: "leader-1".to_string(),
         checksum: 12345,
@@ -510,7 +510,7 @@ async fn test_install_snapshot_success() {
         last_included_index: 100,
         last_included_term: 1,
         offset: 0,
-        data: snapshot_data.to_vec(),
+        data: snapshot_data.to_vec().into(),
         done: false, // More chunks to come
         metadata: None,
         snapshot_size_bytes: 1024,

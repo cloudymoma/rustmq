@@ -37,7 +37,7 @@ fn generate_test_offsets(n: usize, scenario: &str) -> Vec<u64> {
         }
         "worst_case" => {
             // All offsets are different (worst case for heap operations)
-            for _ in 0..n {
+            for i in 0..n {
                 offsets.push((n - i) as u64);
             }
         }

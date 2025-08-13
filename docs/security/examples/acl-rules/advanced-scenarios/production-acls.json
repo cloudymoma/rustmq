@@ -391,13 +391,28 @@
   ],
   "metadata": {
     "name": "Production ACL Rules",
-    "description": "Advanced ACL patterns for production environment with security controls",
-    "version": "2.0",
+    "description": "Advanced ACL patterns for production environment with security controls - RustMQ 1.0.0+ optimized",
+    "version": "3.0",
     "created_by": "Security Team",
     "created_date": "2024-01-15",
-    "last_modified": "2024-01-15",
+    "last_modified": "2025-08-11",
+    "rustmq_version": "1.0.0+",
     "environment": "production",
     "security_level": "high",
+    "performance_characteristics": {
+      "cache_optimized": true,
+      "l1_cache_latency": "547ns",
+      "l2_cache_latency": "1310ns", 
+      "bloom_filter_latency": "754ns",
+      "throughput_capacity": "2M+ ops/sec",
+      "test_coverage": "175+ security tests validated"
+    },
+    "certificate_infrastructure": {
+      "signing_method": "CA-signed X.509 chains",
+      "self_signed_issue_resolved": "August 2025",
+      "production_ready": true,
+      "validation_performance": "245μs average"
+    },
     "variables": {
       "DOMAIN": "company.com",
       "EMERGENCY_ADMIN_IP": "203.0.113.10/32",

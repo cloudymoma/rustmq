@@ -189,6 +189,10 @@ impl Cache for MockCache {
         let cache = self.cache.read().await;
         Ok(cache.len())
     }
+    
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 struct MockReplicationManager {
@@ -294,11 +298,11 @@ async fn test_end_to_end_produce_consume_workflow() {
     let produce_record = ProduceRecord {
         topic: "test-topic".to_string(),
         partition: Some(0),
-        key: Some(b"key1".to_vec()),
-        value: b"Hello, World!".to_vec(),
+        key: Some(b"key1".to_vec().into()),
+        value: b"Hello, World!".to_vec().into(),
         headers: vec![Header {
             key: "content-type".to_string(),
-            value: b"text/plain".to_vec(),
+            value: b"text/plain".to_vec().into(),
         }],
         acks: AcknowledgmentLevel::Leader,
         timeout_ms: 5000,

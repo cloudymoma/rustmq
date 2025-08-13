@@ -20,6 +20,7 @@ use chrono::Utc;
 use async_trait::async_trait;
 use rand::{Rng, thread_rng};
 use tempfile::TempDir;
+use bytes::Bytes;
 
 // ============================================================================
 // Test Data Factories
@@ -42,17 +43,17 @@ impl TestDataFactory {
         value: Option<Vec<u8>>,
         header_count: usize,
     ) -> Record {
-        let headers = (0..header_count).map(|i| Header {
-            key: format!("header-{}", i),
-            value: format!("value-{}", i).into_bytes(),
-        }).collect();
+        let headers = (0..header_count).map(|i| Header::new(
+            format!("header-{}", i),
+            format!("value-{}", i).into_bytes(),
+        )).collect();
 
-        Record {
+        Record::new(
             key,
-            value: value.unwrap_or_else(|| b"test-value".to_vec()),
+            value.unwrap_or_else(|| b"test-value".to_vec()),
             headers,
-            timestamp: Utc::now().timestamp_millis(),
-        }
+            Utc::now().timestamp_millis(),
+        )
     }
 
     /// Generate a WAL record with specified offset
@@ -143,7 +144,7 @@ impl TestDataFactory {
             term,
             r#type: entry_type as i32,
             data_size: data.len() as u32,
-            data,
+            data: data.into(),
             timestamp: Some(prost_types::Timestamp {
                 seconds: Utc::now().timestamp(),
                 nanos: 0,

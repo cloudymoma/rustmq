@@ -1,4 +1,6 @@
-# RustMQ Compliance Security Configuration
+# RustMQ Compliance Security Configuration - v2.0
+# Compatible with RustMQ 1.0.0+ Enterprise Security Features
+# Updated: August 2025 - Enhanced for regulatory compliance  
 # This configuration provides maximum compliance for regulated industries
 
 [security]
@@ -26,13 +28,21 @@ cipher_suites = "fips"  # FIPS-approved cipher suites only
 fips_approved_curves = ["prime256v1", "secp384r1", "secp521r1"]
 require_fips_approved_algorithms = true
 
-# Certificate validation (strict compliance)
+# Certificate validation (strict compliance) - RustMQ 1.0.0+ Enhanced
 validate_certificate_chain = true
 check_certificate_expiry = true
 certificate_expiry_warning_days = 45
 certificate_expiry_critical_days = 14
 require_certificate_transparency = true
 check_certificate_pinning = true
+
+# RustMQ 1.0.0+ Compliance Features  
+certificate_infrastructure_version = "1.0.0+"
+enforce_proper_signing_chains = true
+validate_ca_signed_certificates = true
+reject_self_signed_end_entities = true
+certificate_validation_performance_target = "100μs average"  # Strict for compliance
+compliance_certificate_audit_enabled = true
 
 # mTLS Configuration (mandatory for compliance)
 [security.mtls]

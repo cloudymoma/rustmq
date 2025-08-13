@@ -39,6 +39,26 @@ rustmq-admin certs health-check       # Certificate validation
 rustmq-admin acl test                 # Permission testing
 ```
 
+### ✅ Resolved Issues (August 2025)
+
+#### Certificate Signing Issue - FIXED
+
+**Issue**: Authentication tests failing with "Invalid certificate signature" errors
+**Root Cause**: All certificates (including end-entity certificates) were being created as self-signed instead of being properly signed by their issuing CA
+**Resolution**: Implemented proper certificate signing chains in the certificate manager
+
+**Symptoms (Previously Seen)**:
+- Authentication tests failing with certificate validation errors
+- mTLS connections failing with signature verification errors
+- Certificate chain validation errors in logs
+
+**If You Encounter Similar Issues**:
+1. Verify certificate chain structure: `openssl verify -CAfile ca.pem cert.pem`
+2. Check certificate issuer: `openssl x509 -in cert.pem -noout -issuer`
+3. Validate certificate signature: `openssl verify -verbose -CAfile ca.pem cert.pem`
+
+**Current Status**: ✅ All security tests passing - certificate signing working correctly
+
 ## General Diagnostic Approach
 
 ### Security Health Assessment

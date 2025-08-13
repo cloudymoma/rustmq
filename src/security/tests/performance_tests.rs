@@ -116,7 +116,7 @@ mod tests {
             ..Default::default()
         };
         
-        let _ca_cert = security_manager.certificate_manager()
+        let ca_cert = security_manager.certificate_manager()
             .generate_root_ca(ca_params).await.unwrap();
         
         // Generate test certificates
@@ -133,7 +133,7 @@ mod tests {
                 validity_days: Some(365),
                 key_type: Some(KeyType::Ecdsa),
                 key_size: Some(256),
-                issuer_id: None,
+                issuer_id: Some(ca_cert.id.clone()),
             };
             
             let client_cert = security_manager.certificate_manager()

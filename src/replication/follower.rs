@@ -1,4 +1,5 @@
 use crate::{Result, types::*, error::RustMqError, storage::WriteAheadLog};
+use bytes::Bytes;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::RwLock;
@@ -407,12 +408,12 @@ mod tests {
         let test_record = WalRecord {
             topic_partition: topic_partition.clone(),
             offset: 0,
-            record: Record {
-                key: Some(b"test-key".to_vec()),
-                value: b"test-value".to_vec(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            },
+            record: Record::new(
+                Some(b"test-key".to_vec()),
+                b"test-value".to_vec(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            ),
             crc32: 0,
         };
 

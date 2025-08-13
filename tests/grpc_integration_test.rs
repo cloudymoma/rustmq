@@ -34,11 +34,11 @@ fn create_test_record(offset: u64) -> common::WalRecord {
         topic_partition: Some(create_test_topic_partition()),
         offset,
         record: Some(common::Record {
-            key: format!("key-{}", offset).into_bytes(),
-            value: format!("value-{}", offset).into_bytes(),
+            key: format!("key-{}", offset).into_bytes().into(),
+            value: format!("value-{}", offset).into_bytes().into(),
             headers: vec![common::Header {
                 key: "test".to_string(),
-                value: "integration".as_bytes().to_vec(),
+                value: "integration".as_bytes().to_vec().into(),
             }],
             timestamp: Some(prost_types::Timestamp {
                 seconds: Utc::now().timestamp(),

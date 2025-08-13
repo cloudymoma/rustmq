@@ -7,6 +7,7 @@ use rustmq::types::*;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_replication_manager_basic_replication() {
@@ -58,12 +59,12 @@ async fn test_replication_manager_basic_replication() {
     let record = WalRecord {
         topic_partition: topic_partition.clone(),
         offset: 0,
-        record: Record {
-            key: Some(b"key1".to_vec()),
-            value: b"value1".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        },
+        record: Record::new(
+            Some(b"key1".to_vec()),
+            b"value1".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        ),
         crc32: 0,
     };
 
@@ -387,12 +388,12 @@ async fn test_replication_timeout_handling() {
     let record = WalRecord {
         topic_partition,
         offset: 0,
-        record: Record {
-            key: Some(b"key1".to_vec()),
-            value: b"value1".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        },
+        record: Record::new(
+            Some(b"key1".to_vec()),
+            b"value1".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        ),
         crc32: 0,
     };
 
@@ -456,12 +457,12 @@ async fn test_concurrent_replication_operations() {
             let record = WalRecord {
                 topic_partition: tp,
                 offset: i,
-                record: Record {
-                    key: Some(format!("key{}", i).into_bytes()),
-                    value: format!("value{}", i).into_bytes(),
-                    headers: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(format!("key{}", i).into_bytes()),
+                    format!("value{}", i).into_bytes(),
+                    vec![],
+                    chrono::Utc::now().timestamp_millis(),
+                ),
                 crc32: 0,
             };
             manager.replicate_record(record).await

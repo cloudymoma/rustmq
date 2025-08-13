@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use tokio::sync::{RwLock, Semaphore};
 use std::time::{Duration, Instant};
 use parking_lot::Mutex;
+use bytes::Bytes;
 
 
 /// ETL processor that manages WebAssembly modules for real-time data processing
@@ -348,7 +349,7 @@ impl EtlProcessor {
 
             let request = EtlRequest {
                 module_id: module_id.clone(),
-                input_data: record.value.clone(),
+                input_data: record.value.to_vec(), // Convert Bytes to Vec<u8> for ETL processing
                 context,
             };
 
@@ -356,7 +357,7 @@ impl EtlProcessor {
                 Ok(response) => {
                     if response.success {
                         if let Some(output_data) = response.output_data {
-                            record.value = output_data;
+                            record.value = Bytes::from(output_data); // Convert Vec<u8> back to Bytes
                             processing_metadata.transformations_count += 1;
                         }
                         processing_metadata.modules_applied.push(module_id);
@@ -688,12 +689,12 @@ mod tests {
         assert_eq!(modules[0].id, module_id);
 
         // Test record processing
-        let record = Record {
-            key: Some(b"test-key".to_vec()),
-            value: b"test-value".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
+        let record = Record::new(
+            Some(b"test-key".to_vec()),
+            b"test-value".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        );
 
         let result = processor.process_record(record.clone(), vec![module_id.clone()]).await.unwrap();
         assert_eq!(result.original.value, record.value);

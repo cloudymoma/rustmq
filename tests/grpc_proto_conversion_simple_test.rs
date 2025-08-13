@@ -13,6 +13,7 @@ use rustmq::{
     error::RustMqError,
 };
 use chrono::{Utc, TimeZone};
+use bytes::Bytes;
 use prost_types::Timestamp;
 use rand::Rng;
 
@@ -60,21 +61,15 @@ fn test_topic_partition_edge_cases() {
 
 #[test]
 fn test_record_roundtrip_success() {
-    let original = Record {
-        key: Some(b"test-key".to_vec()),
-        value: b"test-value".to_vec(),
-        headers: vec![
-            Header {
-                key: "header1".to_string(),
-                value: b"value1".to_vec(),
-            },
-            Header {
-                key: "header2".to_string(),
-                value: b"value2".to_vec(),
-            },
+    let original = Record::new(
+        Some(b"test-key".to_vec()),
+        b"test-value".to_vec(),
+        vec![
+            Header::new("header1".to_string(), b"value1".to_vec()),
+            Header::new("header2".to_string(), b"value2".to_vec()),
         ],
-        timestamp: Utc::now().timestamp_millis(),
-    };
+        Utc::now().timestamp_millis(),
+    );
     
     // Internal -> Proto -> Internal
     let proto: common::Record = original.clone().try_into().unwrap();
@@ -91,29 +86,29 @@ fn test_record_roundtrip_success() {
 fn test_record_edge_cases() {
     let test_cases = vec![
         // Empty key
-        Record {
-            key: None,
-            value: b"value".to_vec(),
-            headers: vec![],
-            timestamp: 0,
-        },
+        Record::new(
+            None,
+            b"value".to_vec(),
+            vec![],
+            0,
+        ),
         // Empty value
-        Record {
-            key: Some(b"key".to_vec()),
-            value: vec![],
-            headers: vec![],
-            timestamp: i64::MAX,
-        },
+        Record::new(
+            Some(b"key".to_vec()),
+            vec![],
+            vec![],
+            i64::MAX,
+        ),
         // Large data
-        Record {
-            key: Some(vec![0u8; 1000]),
-            value: vec![1u8; 10000],
-            headers: (0..10).map(|i| Header {
-                key: format!("header-{}", i),
-                value: vec![i as u8; 10],
-            }).collect(),
-            timestamp: Utc::now().timestamp_millis(),
-        },
+        Record::new(
+            Some(vec![0u8; 1000]),
+            vec![1u8; 10000],
+            (0..10).map(|i| Header::new(
+                format!("header-{}", i),
+                vec![i as u8; 10],
+            )).collect(),
+            Utc::now().timestamp_millis(),
+        ),
     ];
 
     for original in test_cases {
@@ -128,7 +123,7 @@ fn test_record_edge_cases() {
         
         // Verify key handling (None -> empty vec -> None)
         if original.key.is_none() {
-            assert!(back_to_internal.key.is_none() || back_to_internal.key == Some(vec![]));
+            assert!(back_to_internal.key.is_none() || back_to_internal.key == Some(vec![].into()));
         } else {
             assert_eq!(original.key, back_to_internal.key);
         }
@@ -146,12 +141,12 @@ fn test_wal_record_roundtrip() {
             partition: 5,
         },
         offset: 12345,
-        record: Record {
-            key: Some(b"wal-key".to_vec()),
-            value: b"wal-value".to_vec(),
-            headers: vec![],
-            timestamp: Utc::now().timestamp_millis(),
-        },
+        record: Record::new(
+            Some(b"wal-key".to_vec()),
+            b"wal-value".to_vec(),
+            vec![],
+            Utc::now().timestamp_millis(),
+        ),
         crc32: 98765,
     };
     
@@ -170,8 +165,8 @@ fn test_wal_record_missing_fields() {
         topic_partition: None,
         offset: 100,
         record: Some(common::Record {
-            key: b"key".to_vec(),
-            value: b"value".to_vec(),
+            key: b"key".to_vec().into(),
+            value: b"value".to_vec().into(),
             headers: vec![],
             timestamp: Some(Timestamp { seconds: 0, nanos: 0 }),
         }),
@@ -402,12 +397,12 @@ fn test_replicate_data_request_roundtrip() {
                     partition: 3,
                 },
                 offset: 100,
-                record: Record {
-                    key: Some(b"key1".to_vec()),
-                    value: b"value1".to_vec(),
-                    headers: vec![],
-                    timestamp: Utc::now().timestamp_millis(),
-                },
+                record: Record::new(
+                    Some(b"key1".to_vec()),
+                    b"value1".to_vec(),
+                    vec![],
+                    Utc::now().timestamp_millis(),
+                ),
                 crc32: 12345,
             },
         ],
@@ -550,12 +545,12 @@ fn test_timestamp_conversion_edge_cases() {
 
     for millis in test_timestamps {
         // Test timestamp conversion through Record conversion
-        let record = Record {
-            key: None,
-            value: vec![],
-            headers: vec![],
-            timestamp: millis,
-        };
+        let record = Record::new(
+            None,
+            vec![],
+            vec![],
+            millis,
+        );
         let proto_record: common::Record = record.try_into().unwrap();
         let back_record: Record = proto_record.try_into().unwrap();
         
@@ -571,12 +566,12 @@ fn test_timestamp_precision() {
     let base_time = Utc::now().timestamp_millis();
     for i in 0..100 {
         let test_time = base_time + i;
-        let record = Record {
-            key: None,
-            value: vec![],
-            headers: vec![],
-            timestamp: test_time,
-        };
+        let record = Record::new(
+            None,
+            vec![],
+            vec![],
+            test_time,
+        );
         let proto_record: common::Record = record.try_into().unwrap();
         let back_record: Record = proto_record.try_into().unwrap();
         
@@ -593,15 +588,15 @@ fn test_timestamp_precision() {
 #[test]
 fn test_large_data_conversion() {
     // Test conversion with large data structures
-    let large_record = Record {
-        key: Some(vec![0u8; 10_000]), // 10KB key
-        value: vec![1u8; 100_000],    // 100KB value
-        headers: (0..100).map(|i| Header {
-            key: format!("header-{}", i),
-            value: vec![i as u8; 10],
-        }).collect(),
-        timestamp: Utc::now().timestamp_millis(),
-    };
+    let large_record = Record::new(
+        Some(vec![0u8; 10_000]), // 10KB key
+        vec![1u8; 100_000],    // 100KB value
+        (0..100).map(|i| Header::new(
+            format!("header-{}", i),
+            vec![i as u8; 10],
+        )).collect(),
+        Utc::now().timestamp_millis(),
+    );
 
     let start = std::time::Instant::now();
     let proto_result: Result<common::Record, ConversionError> = large_record.clone().try_into();
@@ -630,19 +625,19 @@ fn test_random_data_resilience() {
         let value_len = rng.gen_range(0..1000);
         let header_count = rng.gen_range(0..10);
         
-        let record = Record {
-            key: if key_len > 0 { 
+        let record = Record::new(
+            if key_len > 0 { 
                 Some((0..key_len).map(|_| rng.r#gen()).collect()) 
             } else { 
                 None 
             },
-            value: (0..value_len).map(|_| rng.r#gen()).collect(),
-            headers: (0..header_count).map(|i| Header {
-                key: format!("header-{}", i),
-                value: (0..rng.gen_range(0..10)).map(|_| rng.r#gen()).collect(),
-            }).collect(),
-            timestamp: rng.gen_range(0..i64::MAX / 1000),
-        };
+            (0..value_len).map(|_| rng.r#gen()).collect(),
+            (0..header_count).map(|i| Header::new(
+                format!("header-{}", i),
+                (0..rng.gen_range(0..10)).map(|_| rng.r#gen()).collect(),
+            )).collect(),
+            rng.gen_range(0..i64::MAX / 1000),
+        );
 
         // Should not panic on any random data
         let proto_result: Result<common::Record, ConversionError> = record.try_into();

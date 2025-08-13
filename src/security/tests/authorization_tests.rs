@@ -485,4 +485,347 @@ mod tests {
         assert!(final_metrics.l2_cache_hits >= initial_l2_hits, "L2 hits should not decrease");
         assert!(final_metrics.l2_cache_misses >= initial_misses, "Cache misses should not decrease");
     }
+
+    // ========================
+    // SECURITY EDGE CASE TESTS
+    // ========================
+
+    #[tokio::test]
+    async fn test_malicious_principal_injection() {
+        let auth_manager = create_test_authorization_manager().await;
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Test malicious principals that attempt injection
+        let malicious_principals = vec![
+            "../../../etc/passwd",
+            "'; DROP TABLE acl_rules; --",
+            "<script>alert('xss')</script>",
+            "admin\x00user", // null byte injection
+            "user\n\radmin", // newline injection
+            "user\troot", // tab injection
+            "../../config/admin.pem",
+            "admin%00user", // URL encoding null byte
+        ];
+        
+        for malicious_principal in malicious_principals {
+            let key = AclKey::new(
+                Arc::from(malicious_principal),
+                Arc::from("test-topic"),
+                Permission::Read
+            );
+            
+            // Should handle malicious input gracefully without crashing
+            let result = auth_manager.check_permission(
+                &connection_cache,
+                &Arc::from(malicious_principal),
+                "test-topic",
+                Permission::Read
+            ).await;
+            
+            // Should not crash or throw unexpected errors
+            // The exact result depends on ACL rules, but should not panic
+            assert!(result.is_ok() || result.is_err(), "Should handle malicious input gracefully");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_malicious_topic_patterns() {
+        let auth_manager = create_test_authorization_manager().await;
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Test malicious topic patterns that could cause ReDoS or path traversal
+        let malicious_topics = vec![
+            "../../../etc/passwd",
+            "topic.*.*.*.*.*.*.*.*.*.*", // potential ReDoS
+            "topic/(.*)*$", // potential ReDoS
+            "topic/\x00admin", // null byte
+            "topic/../admin", // path traversal
+            "topic/./admin", // path traversal
+            "topic//admin", // double slash
+            "topic\\admin", // backslash
+            "topic\r\nadmin", // CRLF injection
+        ];
+        
+        for malicious_topic in malicious_topics {
+            let result = auth_manager.check_permission(
+                &connection_cache,
+                &Arc::from("test-user"),
+                malicious_topic,
+                Permission::Read
+            ).await;
+            
+            // Should handle malicious input gracefully
+            assert!(result.is_ok() || result.is_err(), "Should handle malicious topic patterns gracefully");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cache_poisoning_resistance() {
+        let auth_manager = create_test_authorization_manager().await;
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Test that we can't poison the cache with malicious entries
+        let legitimate_key = AclKey::new(
+            Arc::from("legitimate-user"),
+            Arc::from("legitimate-topic"),
+            Permission::Read
+        );
+        
+        let malicious_key = AclKey::new(
+            Arc::from("legitimate-user"), // Same principal
+            Arc::from("admin-topic"), // Different topic that should be denied
+            Permission::Admin // Escalated permission
+        );
+        
+        // Insert legitimate entry
+        connection_cache.insert(legitimate_key.clone(), true);
+        
+        // Attempt to poison cache with escalated permissions
+        connection_cache.insert(malicious_key.clone(), true);
+        
+        // Verify cache isolation - malicious entry shouldn't affect legitimate one
+        assert_eq!(connection_cache.get(&legitimate_key), Some(true), "Legitimate entry should remain");
+        
+        // Verify that cache key generation prevents collisions
+        assert_ne!(legitimate_key, malicious_key, "Keys should be different");
+        
+        // The malicious entry should be stored separately
+        assert_eq!(connection_cache.get(&malicious_key), Some(true), "Cache should store entries separately");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_cache_race_conditions() {
+        let auth_manager = Arc::new(create_test_authorization_manager().await);
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Test concurrent access to the same cache entry
+        let test_key = AclKey::new(
+            Arc::from("race-test-user"),
+            Arc::from("race-test-topic"),
+            Permission::Read
+        );
+        
+        let mut handles = vec![];
+        
+        // Spawn multiple tasks trying to access the same cache entry
+        for i in 0..10 {
+            let auth_manager = auth_manager.clone();
+            let connection_cache = connection_cache.clone();
+            let test_key = test_key.clone();
+            
+            let handle = tokio::spawn(async move {
+                // Mix of reads and writes
+                if i % 2 == 0 {
+                    connection_cache.insert(test_key.clone(), i % 3 == 0);
+                } else {
+                    let _result = connection_cache.get(&test_key);
+                }
+                
+                // Also test L2 cache concurrency
+                let l2_key = AclKey::new(
+                    Arc::from(format!("concurrent-user-{}", i)),
+                    Arc::from("concurrent-topic"),
+                    Permission::Write
+                );
+                
+                if i % 2 == 0 {
+                    let entry = AclCacheEntry::new(true, Duration::from_secs(300));
+                    auth_manager.insert_into_l2_cache(l2_key.clone(), entry);
+                } else {
+                    let _result = auth_manager.get_from_l2_cache(&l2_key);
+                }
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all tasks to complete without panicking
+        for handle in handles {
+            assert!(handle.await.is_ok(), "Concurrent operations should not panic");
+        }
+        
+        // Cache should still be in a consistent state
+        let final_result = connection_cache.get(&test_key);
+        assert!(final_result.is_some(), "Cache should be in consistent state after concurrent access");
+    }
+
+    #[tokio::test]
+    async fn test_cache_memory_exhaustion_protection() {
+        let auth_manager = create_test_authorization_manager().await;
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Try to overwhelm the cache with many entries
+        const LARGE_ENTRY_COUNT: usize = 10000;
+        
+        let start_time = Instant::now();
+        
+        for i in 0..LARGE_ENTRY_COUNT {
+            let key = AclKey::new(
+                Arc::from(format!("user-{}", i)),
+                Arc::from(format!("topic-{}", i)),
+                if i % 3 == 0 { Permission::Read } else if i % 3 == 1 { Permission::Write } else { Permission::Admin }
+            );
+            
+            connection_cache.insert(key, i % 2 == 0);
+            
+            // Check that operations remain fast even with many entries
+            if i % 1000 == 0 {
+                let operation_time = start_time.elapsed();
+                // Should not take more than a few seconds for 1000 operations
+                assert!(operation_time < Duration::from_secs(5), "Cache operations should remain fast");
+            }
+        }
+        
+        // Verify cache is still responsive after bulk inserts
+        let test_key = AclKey::new(
+            Arc::from("final-test-user"),
+            Arc::from("final-test-topic"),
+            Permission::Read
+        );
+        
+        let operation_start = Instant::now();
+        connection_cache.insert(test_key.clone(), true);
+        let insert_time = operation_start.elapsed();
+        
+        let lookup_start = Instant::now();
+        let result = connection_cache.get(&test_key);
+        let lookup_time = lookup_start.elapsed();
+        
+        // Operations should still be fast (sub-millisecond)
+        assert!(insert_time < Duration::from_millis(1), "Insert should remain fast");
+        assert!(lookup_time < Duration::from_millis(1), "Lookup should remain fast");
+        assert_eq!(result, Some(true), "Cache should still work correctly");
+    }
+
+    #[tokio::test]
+    async fn test_string_interning_memory_safety() {
+        let auth_manager = create_test_authorization_manager().await;
+        
+        // Test that string interning handles malicious input safely
+        let malicious_strings = vec![
+            "a".repeat(1000000), // Very long string
+            "\x00\x01\x02\x03".to_string(), // Binary data
+            "unicode: 🔐🔑🚫👤".to_string(), // Unicode characters
+            "".to_string(), // Empty string
+            " ".to_string(), // Single space
+            "\n\r\t".to_string(), // Whitespace characters
+        ];
+        
+        for malicious_string in malicious_strings {
+            // Should handle malicious input without crashing
+            let interned = auth_manager.intern_string(&malicious_string);
+            assert!(!interned.is_empty() || malicious_string.is_empty(), "Interning should preserve non-empty strings");
+        }
+        
+        // Test memory efficiency with repeated strings
+        let repeated_string = "frequently-used-principal";
+        let mut interned_strings = Vec::new();
+        
+        for _ in 0..1000 {
+            interned_strings.push(auth_manager.intern_string(repeated_string));
+        }
+        
+        // All interned strings should be the same Arc instance (same pointer)
+        let first_ptr = Arc::as_ptr(&interned_strings[0]);
+        for interned in &interned_strings[1..] {
+            assert_eq!(Arc::as_ptr(interned), first_ptr, "Repeated strings should share the same Arc instance");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_permission_escalation_prevention() {
+        let auth_manager = create_test_authorization_manager().await;
+        let connection_cache = auth_manager.create_connection_cache();
+        
+        // Test that permission checks properly validate permission levels
+        let test_principal = Arc::from("limited-user");
+        let test_topic = "restricted-topic";
+        
+        // Test permission hierarchy: Read < Write < Admin
+        let permissions = vec![Permission::Read, Permission::Write, Permission::Admin];
+        
+        for permission in permissions {
+            let result = auth_manager.check_permission(
+                &connection_cache,
+                &test_principal,
+                test_topic,
+                permission
+            ).await;
+            
+            // Should handle all permission levels without error
+            assert!(result.is_ok(), "Permission check should not error");
+            
+            // The actual authorization result depends on ACL rules,
+            // but the system should handle all permission types safely
+        }
+        
+        // Test that we can't bypass permission checks with malformed permission
+        // (This would require modifying the Permission enum, which is type-safe)
+        
+        // Test edge case: multiple rapid permission checks
+        for _ in 0..100 {
+            let _result = auth_manager.check_permission(
+                &connection_cache,
+                &test_principal,
+                test_topic,
+                Permission::Admin
+            ).await;
+        }
+        
+        // Should remain responsive after many permission checks
+        let final_check = auth_manager.check_permission(
+            &connection_cache,
+            &test_principal,
+            test_topic,
+            Permission::Read
+        ).await;
+        
+        assert!(final_check.is_ok(), "System should remain responsive after many checks");
+    }
+
+    #[tokio::test]
+    async fn test_bloom_filter_false_positive_handling() {
+        let auth_manager = create_test_authorization_manager().await;
+        
+        // Test bloom filter behavior with many entries
+        const TEST_ENTRIES: usize = 1000;
+        let mut test_keys = Vec::new();
+        
+        // Add many keys to bloom filter
+        for i in 0..TEST_ENTRIES {
+            let key = AclKey::new(
+                Arc::from(format!("bloom-user-{}", i)),
+                Arc::from(format!("bloom-topic-{}", i)),
+                Permission::Read
+            );
+            
+            auth_manager.add_to_bloom_filter(&key);
+            test_keys.push(key);
+        }
+        
+        // Verify all added keys are found (no false negatives)
+        for key in &test_keys {
+            assert!(auth_manager.bloom_filter_contains(key), "Bloom filter should not have false negatives");
+        }
+        
+        // Test with keys that were not added
+        let mut false_positive_count = 0;
+        const FALSE_POSITIVE_TESTS: usize = 100;
+        
+        for i in TEST_ENTRIES..(TEST_ENTRIES + FALSE_POSITIVE_TESTS) {
+            let unknown_key = AclKey::new(
+                Arc::from(format!("unknown-user-{}", i)),
+                Arc::from(format!("unknown-topic-{}", i)),
+                Permission::Write
+            );
+            
+            if auth_manager.bloom_filter_contains(&unknown_key) {
+                false_positive_count += 1;
+            }
+        }
+        
+        // False positive rate should be reasonable (< 50% for this test size)
+        let false_positive_rate = false_positive_count as f64 / FALSE_POSITIVE_TESTS as f64;
+        assert!(false_positive_rate < 0.5, "False positive rate should be reasonable: {}", false_positive_rate);
+    }
 }

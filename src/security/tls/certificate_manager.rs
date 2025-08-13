@@ -23,6 +23,7 @@ use x509_parser::prelude::*;
 use uuid::Uuid;
 use tracing::{info, warn, error, debug};
 use tokio::sync::Mutex;
+use base64::{Engine, engine::general_purpose};
 
 /// Serde-compatible wrapper for SanType since rcgen::SanType doesn't implement Deserialize
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -558,12 +559,34 @@ impl CertificateManager {
         
         cert_params.key_pair = Some(key_pair);
         
+        // Create the certificate parameters first
         let certificate = RcgenCertificate::from_params(cert_params)
             .map_err(|e| RustMqError::CertificateGeneration { 
-                reason: format!("Failed to generate intermediate CA: {}", e) 
+                reason: format!("Failed to create intermediate CA params: {}", e) 
             })?;
         
-        let cert_info = self.store_certificate(certificate, CertificateRole::IntermediateCa, Some(issuer_id.to_string()), "system").await?;
+        // Get the issuer CA certificate for signing
+        let issuer_cert = self.reconstruct_rcgen_certificate(issuer_id).await?;
+        
+        // Sign the intermediate CA certificate with the issuer
+        let signed_der = certificate.serialize_der_with_signer(&issuer_cert)
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: format!("Failed to sign intermediate CA certificate: {}", e),
+            })?;
+        
+        // Convert signed DER back to PEM for storage
+        let signed_pem = format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            general_purpose::STANDARD.encode(&signed_der)
+        );
+        
+        let cert_info = self.store_signed_certificate(
+            signed_pem,
+            certificate.serialize_private_key_pem(),
+            CertificateRole::IntermediateCa, 
+            Some(issuer_id.to_string()), 
+            "system"
+        ).await?;
         
         self.audit_log("generate_intermediate_ca", Some(&cert_info.id), &params.common_name, "SUCCESS", HashMap::new()).await;
         info!("Generated intermediate CA certificate: {}", cert_info.id);
@@ -629,12 +652,42 @@ impl CertificateManager {
         
         cert_params.key_pair = Some(key_pair);
         
+        // Create the certificate parameters first
         let certificate = RcgenCertificate::from_params(cert_params)
             .map_err(|e| RustMqError::CertificateGeneration { 
-                reason: format!("Failed to generate certificate: {}", e) 
+                reason: format!("Failed to create certificate params: {}", e) 
             })?;
         
-        let cert_info = self.store_certificate(certificate, request.role, request.issuer_id, "user").await?;
+        let cert_info = if let Some(ref issuer_id) = request.issuer_id {
+            // This is a CA-signed certificate (end-entity or intermediate)
+            let issuer_cert = self.reconstruct_rcgen_certificate(issuer_id).await?;
+            
+            // Sign the certificate with the issuer
+            let signed_der = certificate.serialize_der_with_signer(&issuer_cert)
+                .map_err(|e| RustMqError::CertificateGeneration {
+                    reason: format!("Failed to sign certificate: {}", e),
+                })?;
+            
+            // Convert signed DER back to PEM for storage
+            let signed_pem = format!(
+                "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                general_purpose::STANDARD.encode(&signed_der)
+            );
+            
+            self.store_signed_certificate(
+                signed_pem,
+                certificate.serialize_private_key_pem(),
+                request.role,
+                request.issuer_id.clone(),
+                "user"
+            ).await?
+        } else {
+            // This is a self-signed certificate (should only be root CA)
+            if request.role != CertificateRole::RootCa {
+                warn!("Creating self-signed certificate for non-root CA role: {:?}", request.role);
+            }
+            self.store_certificate(certificate, request.role, None, "user").await?
+        };
         
         self.audit_log("issue_certificate", Some(&cert_info.id), &subject_cn, "SUCCESS", HashMap::new()).await;
         info!("Issued certificate: {}", cert_info.id);
@@ -900,26 +953,205 @@ impl CertificateManager {
             RustMqError::Storage("Failed to acquire certificate lock for CA chain".to_string())
         })?;
         
-        let ca_certs: Vec<Certificate> = certificates.values()
-            .filter(|cert_metadata| cert_metadata.info.is_ca && cert_metadata.info.status == CertificateStatus::Active)
-            .map(|cert_metadata| {
-                // Parse PEM to Certificate
-                let pem_bytes = cert_metadata.pem_data.as_bytes();
-                let certs = rustls_pemfile::certs(&mut pem_bytes.clone())
-                    .map_err(|e| RustMqError::InvalidCertificate {
-                        reason: format!("Failed to parse CA certificate: {}", e),
-                    })
-                    .unwrap_or_default();
-                
-                certs.into_iter().map(Certificate).collect::<Vec<_>>()
-            })
-            .flatten()
-            .collect();
+        let mut ca_certs: Vec<Certificate> = Vec::new();
+        
+        for cert_metadata in certificates.values()
+            .filter(|cert_metadata| cert_metadata.info.is_ca && cert_metadata.info.status == CertificateStatus::Active) {
+            
+            // Parse PEM to Certificate
+            let pem_bytes = cert_metadata.pem_data.as_bytes();
+            let certs = rustls_pemfile::certs(&mut pem_bytes.clone())
+                .map_err(|e| RustMqError::InvalidCertificate {
+                    reason: format!("Failed to parse CA certificate: {}", e),
+                })?;
+            
+            for cert_der in certs {
+                ca_certs.push(Certificate(cert_der));
+            }
+        }
         
         Ok(ca_certs)
     }
     
     // ===== Private Helper Methods =====
+    
+    /// Reconstruct an RcgenCertificate from stored PEM data (needed for signing)
+    async fn reconstruct_rcgen_certificate(&self, cert_id: &str) -> Result<RcgenCertificate> {
+        let cert_metadata = {
+            let certificates = self.certificates.read().map_err(|_| {
+                RustMqError::Storage("Failed to acquire certificate lock for reconstruction".to_string())
+            })?;
+            
+            certificates.get(cert_id)
+                .ok_or_else(|| RustMqError::CertificateNotFound { 
+                    identifier: cert_id.to_string() 
+                })?
+                .clone()
+        };
+        
+        // Get the private key PEM - either from memory or from storage
+        let private_key_pem = if let Some(ref pem) = cert_metadata.info.private_key_pem {
+            pem.clone()
+        } else if let Some(ref key_path) = cert_metadata.private_key_path {
+            // Load from storage
+            let key_data = self.storage.get(key_path).await
+                .map_err(|e| RustMqError::Storage(format!("Failed to load private key: {}", e)))?;
+            String::from_utf8(key_data.to_vec())
+                .map_err(|e| RustMqError::InvalidCertificate {
+                    reason: format!("Invalid UTF-8 in private key: {}", e),
+                })?
+        } else {
+            return Err(RustMqError::InvalidCertificate {
+                reason: "No private key available for certificate".to_string(),
+            });
+        };
+        
+        // Parse the private key
+        let key_pair = KeyPair::from_pem(&private_key_pem)
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Failed to parse private key: {}", e),
+            })?;
+        
+        // Parse the certificate to extract parameters
+        let cert_pem = &cert_metadata.pem_data;
+        let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Failed to parse certificate PEM: {}", e),
+            })?
+            .into_iter()
+            .next()
+            .ok_or_else(|| RustMqError::InvalidCertificate {
+                reason: "No certificate found in PEM data".to_string(),
+            })?;
+        
+        let (_, parsed_cert) = X509Certificate::from_der(&cert_der)
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Failed to parse certificate DER: {}", e),
+            })?;
+        
+        // Reconstruct certificate parameters
+        let mut cert_params = CertificateParams::new(cert_metadata.info.san_entries.clone());
+        
+        // Set the distinguished name
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(rcgen::DnType::CommonName, 
+            parsed_cert.subject().iter_common_name().next()
+                .and_then(|cn| cn.as_str().ok())
+                .unwrap_or("Unknown")
+                .to_string());
+        
+        // Add other DN components if needed
+        for attr in parsed_cert.subject().iter_organization() {
+            if let Ok(org) = attr.as_str() {
+                distinguished_name.push(rcgen::DnType::OrganizationName, org.to_string());
+            }
+        }
+        
+        cert_params.distinguished_name = distinguished_name;
+        
+        // Extract and set key usage from the original certificate
+        let mut key_usages = Vec::new();
+        let mut extended_key_usages = Vec::new();
+        let mut basic_constraints = rcgen::BasicConstraints::Unconstrained;
+        
+        // Parse certificate extensions to extract usage information
+        for extension in parsed_cert.extensions() {
+            match extension.oid.to_string().as_str() {
+                // Key Usage extension (2.5.29.15)
+                "2.5.29.15" => {
+                    if let x509_parser::extensions::ParsedExtension::KeyUsage(usage) = extension.parsed_extension() {
+                        if usage.digital_signature() {
+                            key_usages.push(rcgen::KeyUsagePurpose::DigitalSignature);
+                        }
+                        if usage.key_encipherment() {
+                            key_usages.push(rcgen::KeyUsagePurpose::KeyEncipherment);
+                        }
+                        if usage.data_encipherment() {
+                            key_usages.push(rcgen::KeyUsagePurpose::DataEncipherment);
+                        }
+                        if usage.key_agreement() {
+                            key_usages.push(rcgen::KeyUsagePurpose::KeyAgreement);
+                        }
+                        if usage.key_cert_sign() {
+                            key_usages.push(rcgen::KeyUsagePurpose::KeyCertSign);
+                        }
+                        if usage.crl_sign() {
+                            key_usages.push(rcgen::KeyUsagePurpose::CrlSign);
+                        }
+                    }
+                },
+                // Extended Key Usage extension (2.5.29.37)
+                "2.5.29.37" => {
+                    if let x509_parser::extensions::ParsedExtension::ExtendedKeyUsage(usage) = extension.parsed_extension() {
+                        if usage.server_auth {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
+                        }
+                        if usage.client_auth {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
+                        }
+                        if usage.code_signing {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::CodeSigning);
+                        }
+                        if usage.email_protection {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
+                        }
+                        if usage.time_stamping {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::TimeStamping);
+                        }
+                        if usage.ocsp_signing {
+                            extended_key_usages.push(rcgen::ExtendedKeyUsagePurpose::OcspSigning);
+                        }
+                    }
+                },
+                // Basic Constraints extension (2.5.29.19)
+                "2.5.29.19" => {
+                    if let x509_parser::extensions::ParsedExtension::BasicConstraints(constraints) = extension.parsed_extension() {
+                        if constraints.ca {
+                            basic_constraints = match constraints.path_len_constraint {
+                                Some(len) => rcgen::BasicConstraints::Constrained(len as u8),
+                                None => rcgen::BasicConstraints::Unconstrained,
+                            };
+                        }
+                    }
+                },
+                _ => {} // Skip other extensions
+            }
+        }
+        
+        // Set certificate type and constraints
+        cert_params.is_ca = if cert_metadata.info.is_ca {
+            rcgen::IsCa::Ca(basic_constraints)
+        } else {
+            rcgen::IsCa::NoCa
+        };
+        
+        // Set key usage and extended key usage
+        cert_params.key_usages = key_usages;
+        cert_params.extended_key_usages = extended_key_usages;
+        
+        // Set validity period
+        cert_params.not_before = ::time::OffsetDateTime::from_unix_timestamp(
+            cert_metadata.info.not_before.duration_since(UNIX_EPOCH)
+                .unwrap_or_default().as_secs() as i64
+        ).map_err(|e| RustMqError::InvalidCertificate {
+            reason: format!("Invalid not_before time: {}", e),
+        })?;
+        
+        cert_params.not_after = ::time::OffsetDateTime::from_unix_timestamp(
+            cert_metadata.info.not_after.duration_since(UNIX_EPOCH)
+                .unwrap_or_default().as_secs() as i64
+        ).map_err(|e| RustMqError::InvalidCertificate {
+            reason: format!("Invalid not_after time: {}", e),
+        })?;
+        
+        cert_params.key_pair = Some(key_pair);
+        
+        // Create the certificate from params
+        RcgenCertificate::from_params(cert_params)
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Failed to reconstruct certificate: {}", e),
+            })
+    }
     
     /// Generate a key pair for certificate generation
     fn generate_key_pair(&self, key_type: KeyType, key_size: u32) -> Result<KeyPair> {
@@ -1034,6 +1266,111 @@ impl CertificateManager {
         let metadata = CertificateMetadata {
             info: cert_info.clone(),
             pem_data,
+            private_key_path,
+            created_by: created_by.to_string(),
+            storage_version: 1,
+        };
+        
+        // Store in memory
+        {
+            let mut certificates = self.certificates.write().map_err(|_| {
+                RustMqError::Storage("Failed to acquire certificate lock for storage".to_string())
+            })?;
+            certificates.insert(cert_id.clone(), metadata);
+        }
+        
+        // Persist to storage
+        self.persist_certificates().await?;
+        
+        Ok(cert_info)
+    }
+    
+    /// Store a signed certificate with metadata (used for CA-signed certificates)
+    async fn store_signed_certificate(
+        &self,
+        certificate_pem: String,
+        private_key_pem: String,
+        role: CertificateRole,
+        issuer_id: Option<String>,
+        created_by: &str,
+    ) -> Result<CertificateInfo> {
+        let cert_id = Uuid::new_v4().to_string();
+        
+        // Parse certificate to extract metadata
+        let der_data = rustls_pemfile::certs(&mut certificate_pem.as_bytes())
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: format!("Failed to parse signed certificate PEM: {}", e),
+            })?
+            .into_iter()
+            .next()
+            .ok_or_else(|| RustMqError::CertificateGeneration {
+                reason: "No certificates found in signed PEM data".to_string(),
+            })?;
+        
+        let (_, parsed_cert) = X509Certificate::from_der(&der_data)
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: format!("Failed to parse signed certificate: {}", e),
+            })?;
+        
+        let not_before = UNIX_EPOCH + Duration::from_secs(parsed_cert.validity().not_before.timestamp() as u64);
+        let not_after = UNIX_EPOCH + Duration::from_secs(parsed_cert.validity().not_after.timestamp() as u64);
+        let renewal_threshold = not_after - Duration::from_secs(self.config.basic.auto_renew_before_expiry_days as u64 * 86400);
+        
+        let san_entries: Vec<String> = parsed_cert.extensions()
+            .iter()
+            .find(|ext| ext.oid == oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME)
+            .and_then(|ext| {
+                if let Ok((_, san)) = SubjectAlternativeName::from_der(&ext.value) {
+                    Some(san.general_names.iter().filter_map(|gn| {
+                        match gn {
+                            GeneralName::DNSName(name) => Some(name.to_string()),
+                            GeneralName::IPAddress(ip) => Some(format!("{:?}", ip)),
+                            _ => None,
+                        }
+                    }).collect())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        
+        let cert_info = CertificateInfo {
+            id: cert_id.clone(),
+            subject: parsed_cert.subject().to_string(),
+            issuer: parsed_cert.issuer().to_string(),
+            serial_number: hex::encode(parsed_cert.serial.to_bytes_be()),
+            not_before,
+            not_after,
+            fingerprint: self.calculate_fingerprint(&der_data),
+            role,
+            status: CertificateStatus::Active,
+            created_at: SystemTime::now(),
+            last_used: None,
+            renewal_threshold,
+            key_type: KeyType::Ecdsa, // TODO: Detect from certificate
+            key_size: 256, // TODO: Extract from certificate
+            is_ca: matches!(role, CertificateRole::RootCa | CertificateRole::IntermediateCa),
+            issuer_id,
+            revocation_reason: None,
+            san_entries,
+            certificate_pem: Some(certificate_pem.clone()),
+            private_key_pem: if self.config.key_encryption_enabled {
+                Some(private_key_pem.clone())
+            } else {
+                None
+            },
+        };
+        
+        // Store private key securely
+        let private_key_path = if self.config.key_encryption_enabled {
+            Some(self.store_private_key(&cert_id, &private_key_pem).await?)
+        } else {
+            None
+        };
+        
+        let metadata = CertificateMetadata {
+            info: cert_info.clone(),
+            pem_data: certificate_pem,
             private_key_path,
             created_by: created_by.to_string(),
             storage_version: 1,

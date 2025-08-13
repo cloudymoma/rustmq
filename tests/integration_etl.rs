@@ -3,6 +3,7 @@ use rustmq::config::{EtlConfig, EtlInstancePoolConfig};
 use rustmq::types::Record;
 use std::collections::HashMap;
 use tokio::time::{timeout, Duration};
+use bytes::Bytes;
 
 fn create_test_etl_config() -> EtlConfig {
     EtlConfig {
@@ -60,12 +61,12 @@ async fn test_mock_etl_processor_full_workflow() {
     assert_eq!(modules[0].name, "mock-module");
 
     // Test record processing
-    let record = Record {
-        key: Some(b"test-key".to_vec()),
-        value: b"test-value".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let record = Record::new(
+        Some(b"test-key".to_vec()),
+        b"test-value".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     let result = processor.process_record(record.clone(), vec![module_id.clone()]).await.unwrap();
     assert_eq!(result.original.value, record.value);
@@ -174,12 +175,12 @@ async fn test_etl_request_handling() {
 
     // Process the request - this would normally call execute_module
     // but since we're using mock processor, we'll test the data flow
-    let record = Record {
-        key: Some(b"test-key".to_vec()),
-        value: request.input_data.clone(),
-        headers: vec![],
-        timestamp: request.context.timestamp,
-    };
+    let record = Record::new(
+        Some(b"test-key".to_vec()),
+        request.input_data.clone(),
+        vec![],
+        request.context.timestamp,
+    );
 
     let result = processor.process_record(record, vec![module_id]).await.unwrap();
     assert!(result.processing_metadata.total_execution_time_ms > 0);
@@ -209,12 +210,12 @@ async fn test_concurrent_etl_processing() {
         let processor_clone = processor.clone();
         let module_id_clone = module_id.clone();
         tasks.push(tokio::spawn(async move {
-            let record = Record {
-                key: Some(format!("key-{}", i).into_bytes()),
-                value: format!("value-{}", i).into_bytes(),
-                headers: vec![],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
+            let record = Record::new(
+                Some(format!("key-{}", i).into_bytes()),
+                format!("value-{}", i).into_bytes(),
+                vec![],
+                chrono::Utc::now().timestamp_millis(),
+            );
             processor_clone.process_record(record, vec![module_id_clone]).await
         }));
     }
@@ -237,12 +238,12 @@ async fn test_etl_error_handling() {
     let processor = MockEtlProcessor::new(config);
 
     // Test processing with non-existent module
-    let record = Record {
-        key: Some(b"test-key".to_vec()),
-        value: b"test-value".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let record = Record::new(
+        Some(b"test-key".to_vec()),
+        b"test-value".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     let result = processor.process_record(record, vec!["non-existent-module".to_string()]).await;
     // Mock processor should handle this gracefully (might succeed with no transformation)
@@ -311,12 +312,12 @@ async fn test_etl_pipeline_chaining() {
     let module3 = processor.load_module(b"module3".to_vec(), module_config).await.unwrap();
 
     // Process record through multiple modules (pipeline)
-    let record = Record {
-        key: Some(b"pipeline-test".to_vec()),
-        value: b"initial-data".to_vec(),
-        headers: vec![],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    };
+    let record = Record::new(
+        Some(b"pipeline-test".to_vec()),
+        b"initial-data".to_vec(),
+        vec![],
+        chrono::Utc::now().timestamp_millis(),
+    );
 
     let modules = vec![module1, module2, module3];
     let result = processor.process_record(record.clone(), modules.clone()).await.unwrap();

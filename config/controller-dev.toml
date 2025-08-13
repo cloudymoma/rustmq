@@ -1,0 +1,27 @@
+# RustMQ Controller Development Configuration
+
+[controller]
+controller_id = "controller-01"
+host = "127.0.0.1"
+port = 9094
+raft_port = 9095
+http_port = 9642
+
+[raft]
+data_dir = "./data/raft"
+heartbeat_interval_ms = 500
+election_timeout_ms = 2000
+max_append_entries_size = 1000
+
+[cluster]
+initial_cluster = ["controller-01=127.0.0.1:9095"]
+
+[security]
+enabled = true
+tls_cert_path = "./certs/server.pem"
+tls_key_path = "./certs/server.key"
+ca_cert_path = "./certs/ca.pem"
+
+[logging]
+level = "debug"
+file = "./logs/controller.log"

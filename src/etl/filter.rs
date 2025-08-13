@@ -6,6 +6,7 @@ use regex::Regex;
 use glob::Pattern as GlobPattern;
 use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
+use bytes::Bytes;
 
 /// High-performance topic filter engine with optimized matching strategies
 pub struct TopicFilterEngine {
@@ -377,7 +378,7 @@ impl ConditionalRuleEngine {
     fn extract_header_value(&self, record: &Record, field_path: &str) -> JsonValue {
         for header in &record.headers {
             if header.key == field_path {
-                if let Ok(string_value) = String::from_utf8(header.value.clone()) {
+                if let Ok(string_value) = String::from_utf8(header.value.to_vec()) { // Convert Bytes to Vec<u8>
                     return JsonValue::String(string_value);
                 }
             }
@@ -635,17 +636,17 @@ mod tests {
 
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
-        let record = Record {
-            key: Some(b"test".to_vec()),
-            value: b"{}".to_vec(),
-            headers: vec![
-                Header {
-                    key: "content-type".to_string(),
-                    value: b"application/json".to_vec(),
-                },
+        let record = Record::new(
+            Some(b"test".to_vec()),
+            b"{}".to_vec(),
+            vec![
+                Header::new(
+                    "content-type".to_string(),
+                    b"application/json".to_vec(),
+                ),
             ],
-            timestamp: 1234567890,
-        };
+            1234567890,
+        );
 
         assert!(engine.evaluate_record(&record, "test.topic").unwrap());
     }
@@ -665,12 +666,12 @@ mod tests {
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
         let payload = r#"{"user": {"id": "user123", "name": "John"}}"#;
-        let record = Record {
-            key: Some(b"test".to_vec()),
-            value: payload.as_bytes().to_vec(),
-            headers: vec![],
-            timestamp: 1234567890,
-        };
+        let record = Record::new(
+            Some(b"test".to_vec()),
+            payload.as_bytes().to_vec(),
+            vec![],
+            1234567890,
+        );
 
         assert!(engine.evaluate_record(&record, "test.topic").unwrap());
     }
@@ -689,12 +690,12 @@ mod tests {
 
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
-        let record = Record {
-            key: Some(b"test".to_vec()),
-            value: b"this is a long message".to_vec(),
-            headers: vec![],
-            timestamp: 1234567890,
-        };
+        let record = Record::new(
+            Some(b"test".to_vec()),
+            b"this is a long message".to_vec(),
+            vec![],
+            1234567890,
+        );
 
         assert!(engine.evaluate_record(&record, "test.topic").unwrap());
     }

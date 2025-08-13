@@ -325,630 +325,954 @@ if err == nil {
 }
 ```
 
-## Security
+## 🔐 Security Guide
 
-The RustMQ Go SDK provides enterprise-grade security features including multiple authentication methods, fine-grained authorization, comprehensive certificate management, and security monitoring.
+The RustMQ Go SDK provides enterprise-grade security features with comprehensive support for both development and production environments. This guide covers security setup, configuration, and best practices for secure Go client applications.
 
-### Security Architecture
+### 🚀 Environment-Based Security Setup
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 RustMQ Go SDK Security                     │
-├─────────────────────────────────────────────────────────────┤
-│  Authentication Layer                                       │
-│  ├── mTLS (Client Certificates)                             │
-│  ├── JWT (Token-based)                                      │
-│  └── SASL (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)            │
-├─────────────────────────────────────────────────────────────┤
-│  Authorization Layer                                        │
-│  ├── ACL-based Permissions                                  │
-│  ├── Topic Access Control                                   │
-│  ├── Admin Operation Control                                │
-│  └── Client-side Permission Caching                         │
-├─────────────────────────────────────────────────────────────┤
-│  Transport Security                                         │
-│  ├── TLS 1.2/1.3 Encryption                                │
-│  ├── Certificate Validation                                 │
-│  ├── Revocation Checking (CRL/OCSP)                         │
-│  └── Cipher Suite Control                                   │
-├─────────────────────────────────────────────────────────────┤
-│  Security Monitoring                                        │
-│  ├── Authentication Metrics                                 │
-│  ├── Authorization Analytics                                │
-│  ├── Certificate Lifecycle Tracking                         │
-│  └── Security Event Logging                                 │
-└─────────────────────────────────────────────────────────────┘
+Choose your security setup based on your environment:
+
+#### 🛠️ Development Environment Setup
+
+For local development, use the automated development setup:
+
+```bash
+# Set up complete development environment with certificates
+cd ../../  # Go to RustMQ project root  
+./generate-certs.sh develop
+
+# This creates:
+# - certs/ca.pem           (Root CA certificate)
+# - certs/client.pem       (Client certificate)
+# - certs/client.key       (Client private key)
+# - config/client-dev.toml (Development client config)
 ```
 
-### Security Configuration Overview
+**Development Client Configuration:**
 
 ```go
-config := &rustmq.ClientConfig{
-    Brokers:   []string{"rustmq.example.com:9092"},
-    ClientID:  "secure-client",
-    Security: &rustmq.SecurityConfig{
-        // Authentication configuration
-        Auth: &rustmq.AuthenticationConfig{
-            Method:   rustmq.AuthMethodMTLS, // or JWT, SASL
-            Username: "user",
-            Password: "pass",
-            Token:    "jwt-token",
+package main
+
+import (
+    "io/ioutil"
+    "log"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Development configuration with self-signed certificates
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"localhost:9092"},
+        ClientID: "go-dev-client",
+        
+        // Development TLS configuration
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:             "../../certs/ca.pem",
+            ClientCert:         "../../certs/client.pem",
+            ClientKey:          "../../certs/client.key",
+            ServerName:         "localhost",
+            InsecureSkipVerify: false, // Still validate certificates in dev
         },
-        // TLS/mTLS configuration
-        TLS: &rustmq.TLSSecurityConfig{
-            Mode:       rustmq.TLSModeMutualAuth,
-            CACert:     "ca-certificate-pem",
-            ClientCert: "client-certificate-pem", 
-            ClientKey:  "client-private-key-pem",
+        
+        // Development-friendly timeouts
+        ConnectTimeout:    10 * time.Second,
+        RequestTimeout:    30 * time.Second,
+        KeepAliveInterval: 30 * time.Second,
+        
+        // Development retry configuration
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 3,
+            BaseDelay:  200 * time.Millisecond,
+            MaxDelay:   5 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
         },
-        // ACL authorization
-        ACL: &rustmq.ACLConfig{
-            Enabled: true,
-            ControllerEndpoints: []string{"controller:9094"},
-        },
-        // Security metrics
-        Metrics: &rustmq.SecurityMetricsConfig{
-            Enabled: true,
-            Detailed: true,
-        },
-    },
+    }
+    
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatalf("Failed to create development client: %v", err)
+    }
+    defer client.Close()
+    
+    log.Println("✅ Connected to RustMQ with development mTLS")
 }
 ```
 
-### Authentication Methods
-
-#### 1. mTLS (Mutual TLS) Authentication
-
-mTLS provides strong cryptographic authentication using client certificates:
+**Quick Development Example:**
 
 ```go
-config := &rustmq.ClientConfig{
-    Brokers:   []string{"rustmq.example.com:9092"},
-    ClientID:  "mtls-client",
-    Security: &rustmq.SecurityConfig{
-        Auth: &rustmq.AuthenticationConfig{
-            Method: rustmq.AuthMethodMTLS,
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Load development configuration
+    config := rustmq.LoadDevelopmentConfig()
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+    
+    // Create secure producer
+    producer, err := client.CreateProducer("dev-topic")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer producer.Close()
+    
+    message := rustmq.NewMessage().
+        Topic("dev-topic").
+        PayloadString("Development message").
+        Header("environment", "development").
+        Build()
+    
+    result, err := producer.Send(context.Background(), message)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("✅ Message sent with mTLS: offset=%d\n", result.Offset)
+}
+```
+
+#### 🏭 Production Environment Setup
+
+For production, use proper CA-signed certificates and production configuration:
+
+```bash
+# Generate production setup guidance
+./generate-certs.sh production
+
+# Or use RustMQ Admin CLI for certificate management:
+./target/release/rustmq-admin ca init --cn "MyCompany RustMQ Root CA" --org "MyCompany"
+./target/release/rustmq-admin certs issue \
+  --principal "client@mycompany.com" \
+  --role client \
+  --validity-days 90
+```
+
+**Production Client Configuration:**
+
+```go
+package main
+
+import (
+    "crypto/tls"
+    "io/ioutil"
+    "log"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Production configuration with CA-signed certificates
+    config := &rustmq.ClientConfig{
+        Brokers: []string{
+            "rustmq-broker-01.mycompany.com:9092",
+            "rustmq-broker-02.mycompany.com:9092", 
+            "rustmq-broker-03.mycompany.com:9092",
         },
-        TLS: &rustmq.TLSSecurityConfig{
-            Mode:               rustmq.TLSModeMutualAuth,
-            CACert:             readFile("/etc/ssl/certs/ca.pem"),
-            ClientCert:         readFile("/etc/ssl/certs/client.pem"),
-            ClientKey:          readFile("/etc/ssl/private/client.key"),
-            ServerName:         "rustmq.example.com",
+        ClientID: "production-go-client",
+        
+        // Production TLS configuration
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:             "/etc/ssl/certs/rustmq-ca.pem",
+            ClientCert:         "/etc/ssl/certs/client.pem",
+            ClientKey:          "/etc/ssl/private/client.key",
+            ServerName:         "rustmq.mycompany.com",
             InsecureSkipVerify: false,
             MinVersion:         tls.VersionTLS12,
             MaxVersion:         tls.VersionTLS13,
-            // Certificate validation settings
-            Validation: &rustmq.CertificateValidationSettings{
-                ValidateChain:   true,
-                CheckExpiration: true,
-                CheckRevocation: false, // Enable for production
+            CipherSuites: []uint16{
+                tls.TLS_AES_256_GCM_SHA384,
+                tls.TLS_CHACHA20_POLY1305_SHA256,
+                tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
             },
         },
-        // Certificate validation rules
-        CertValidation: &rustmq.CertificateValidationConfig{
-            Enabled: true,
-            Rules: []rustmq.CertificateValidationRule{
-                {
-                    Type: "key_usage",
-                    Parameters: map[string]interface{}{
-                        "usage": "client_auth",
-                    },
-                },
-                {
-                    Type: "subject_pattern",
-                    Parameters: map[string]interface{}{
-                        "pattern": "CN=.*client.*",
-                    },
-                },
-            },
+        
+        // Production timeouts and retry configuration
+        ConnectTimeout:    30 * time.Second,
+        RequestTimeout:    60 * time.Second,
+        KeepAliveInterval: 30 * time.Second,
+        RetryConfig: &rustmq.RetryConfig{
+            MaxRetries: 5,
+            BaseDelay:  100 * time.Millisecond,
+            MaxDelay:   30 * time.Second,
+            Multiplier: 2.0,
+            Jitter:     true,
         },
-        // Principal extraction from certificate
-        PrincipalExtraction: &rustmq.PrincipalExtractionConfig{
-            UseCommonName:     true,
-            UseSubjectAltName: false,
-            Normalize:         true,
-            CustomRules: []rustmq.PrincipalExtractionRule{
-                {
-                    Type:     "subject_attribute", 
-                    Pattern:  "CN",
-                    Priority: 100,
-                },
-            },
-        },
-    },
+        
+        // Connection pooling for production load
+        MaxConnections: 20,
+    }
+    
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatalf("Failed to create production client: %v", err)
+    }
+    defer client.Close()
+    
+    log.Println("✅ Connected to RustMQ with production mTLS")
 }
-
-client, err := rustmq.NewClient(config)
-if err != nil {
-    log.Fatalf("Failed to create secure client: %v", err)
-}
-defer client.Close()
-
-// Verify authentication
-securityContext := client.SecurityContext()
-fmt.Printf("Authenticated as: %s\n", securityContext.Principal)
-fmt.Printf("Certificate expires: %s\n", securityContext.ExpiresAt)
 ```
 
-#### 2. JWT (JSON Web Token) Authentication
+### 🔒 Authentication Methods
 
-JWT provides stateless token-based authentication with automatic refresh:
+#### mTLS (Mutual TLS) Authentication
+
+**Recommended for production environments:**
 
 ```go
-config := &rustmq.ClientConfig{
-    Brokers:   []string{"rustmq.example.com:9092"},
-    ClientID:  "jwt-client",
-    Security: &rustmq.SecurityConfig{
-        Auth: &rustmq.AuthenticationConfig{
-            Method: rustmq.AuthMethodJWT,
-            Token:  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+package main
+
+import (
+    "context"
+    "crypto/tls"
+    "fmt"
+    "io/ioutil"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Read certificate files
+    caCert, err := ioutil.ReadFile("/etc/ssl/certs/rustmq-ca.pem")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    clientCert, err := ioutil.ReadFile("/etc/ssl/certs/client.pem")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    clientKey, err := ioutil.ReadFile("/etc/ssl/private/client.key")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Create mTLS configuration
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"rustmq.mycompany.com:9092"},
+        ClientID: "mtls-client",
+        
+        // mTLS configuration
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACertData:         caCert,        // CA certificate data
+            ClientCertData:     clientCert,    // Client certificate data
+            ClientKeyData:      clientKey,     // Client private key data
+            ServerName:         "rustmq.mycompany.com",
+            InsecureSkipVerify: false,
+            MinVersion:         tls.VersionTLS12,
+            
+            // Certificate validation
+            ValidateCertificateChain: true,
+            CheckCertificateExpiry:   true,
+            RequireClientCertificate: true,
+        },
+        
+        // Authentication method
+        AuthMethod: rustmq.AuthMethodMTLS,
+    }
+    
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatalf("Failed to create mTLS client: %v", err)
+    }
+    defer client.Close()
+    
+    // Verify client authentication status
+    if authInfo := client.GetAuthenticationInfo(); authInfo != nil {
+        fmt.Printf("✅ Authenticated as: %s\n", authInfo.Principal)
+        fmt.Printf("📋 Certificate expires: %s\n", authInfo.ExpiresAt)
+        fmt.Printf("🔐 Authentication method: %s\n", authInfo.Method)
+    } else {
+        log.Fatal("❌ Authentication failed")
+    }
+}
+```
+
+#### JWT Token Authentication
+
+**Suitable for service-to-service authentication:**
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // JWT token configuration
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"rustmq.mycompany.com:9092"},
+        ClientID: "jwt-client",
+        
+        // JWT authentication
+        AuthMethod: rustmq.AuthMethodJWT,
+        AuthConfig: &rustmq.AuthConfig{
+            JWTToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...", // JWT token
+            
             // Automatic token refresh
             TokenRefresh: &rustmq.TokenRefreshConfig{
                 Enabled:          true,
                 RefreshThreshold: 5 * time.Minute,
-                RefreshEndpoint:  "https://auth.example.com/token/refresh",
+                RefreshEndpoint:  "https://auth.mycompany.com/token/refresh",
                 RefreshCredentials: map[string]string{
                     "client_id":     "rustmq-client",
                     "client_secret": "secret",
                 },
             },
         },
-        TLS: &rustmq.TLSSecurityConfig{
-            Mode:       rustmq.TLSModeEnabled, // Server-side TLS only
-            ServerName: "rustmq.example.com",
-        },
-    },
-}
-
-client, err := rustmq.NewClient(config)
-if err != nil {
-    log.Fatalf("Failed to create JWT client: %v", err)
-}
-defer client.Close()
-
-// Monitor token expiration
-go func() {
-    ticker := time.NewTicker(1 * time.Minute)
-    defer ticker.Stop()
-    
-    for range ticker.C {
-        securityContext := client.SecurityContext()
-        timeToExpiry := time.Until(securityContext.ExpiresAt)
         
-        if timeToExpiry < 10*time.Minute {
-            log.Printf("Token expires in %v, refreshing...", timeToExpiry)
-            if err := client.RefreshSecurityContext(); err != nil {
-                log.Printf("Token refresh failed: %v", err)
-            } else {
-                log.Println("Token refreshed successfully")
+        // TLS for transport encryption (server-side only)
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            ServerName:         "rustmq.mycompany.com",
+            InsecureSkipVerify: false,
+        },
+    }
+    
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatalf("Failed to create JWT client: %v", err)
+    }
+    defer client.Close()
+    
+    // Monitor token expiration
+    go func() {
+        ticker := time.NewTicker(1 * time.Minute)
+        defer ticker.Stop()
+        
+        for range ticker.C {
+            if authInfo := client.GetAuthenticationInfo(); authInfo != nil {
+                timeToExpiry := time.Until(authInfo.ExpiresAt)
+                
+                if timeToExpiry < 10*time.Minute {
+                    log.Printf("🔄 Token expires in %v, refreshing...", timeToExpiry)
+                    if err := client.RefreshToken(); err != nil {
+                        log.Printf("❌ Token refresh failed: %v", err)
+                    } else {
+                        log.Println("✅ Token refreshed successfully")
+                    }
+                }
             }
         }
+    }()
+    
+    log.Println("✅ Connected with JWT authentication")
+}
+```
+
+#### Environment Variable Configuration
+
+**Secure configuration through environment variables:**
+
+```go
+package main
+
+import (
+    "os"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Set environment variables
+    os.Setenv("RUSTMQ_BROKERS", "rustmq.mycompany.com:9092")
+    os.Setenv("RUSTMQ_CA_CERT", "/etc/ssl/certs/rustmq-ca.pem")
+    os.Setenv("RUSTMQ_CLIENT_CERT", "/etc/ssl/certs/client.pem")
+    os.Setenv("RUSTMQ_CLIENT_KEY", "/etc/ssl/private/client.key")
+    os.Setenv("RUSTMQ_SERVER_NAME", "rustmq.mycompany.com")
+    
+    // Load configuration from environment
+    config := rustmq.NewClientConfigFromEnv()
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatal(err)
     }
-}()
+    defer client.Close()
+    
+    log.Println("✅ Connected using environment configuration")
+}
 ```
 
-#### 3. SASL Authentication
+### 🛡️ Authorization & Access Control
 
-SASL provides traditional username/password authentication with multiple mechanisms:
+#### ACL-Based Authorization
 
 ```go
-// SASL SCRAM-SHA-256 (recommended)
-config := &rustmq.ClientConfig{
-    Brokers:   []string{"rustmq.example.com:9092"},
-    ClientID:  "sasl-client",
-    Security: &rustmq.SecurityConfig{
-        Auth: &rustmq.AuthenticationConfig{
-            Method:   rustmq.AuthMethodSASLScram256,
-            Username: "admin-user",
-            Password: "secure-password",
-            Properties: map[string]string{
-                "sasl.mechanism": "SCRAM-SHA-256",
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"rustmq.mycompany.com:9092"},
+        ClientID: "acl-client",
+        
+        // Enable ACL authorization
+        EnableACL: true,
+        ACLConfig: &rustmq.ACLConfig{
+            ControllerEndpoints: []string{
+                "controller-01.mycompany.com:9094",
+                "controller-02.mycompany.com:9094",
             },
-        },
-        TLS: &rustmq.TLSSecurityConfig{
-            Mode:       rustmq.TLSModeEnabled,
-            ServerName: "rustmq.example.com",
-        },
-    },
-}
-
-// SASL PLAIN (use only with TLS)
-plainConfig := &rustmq.SecurityConfig{
-    Auth: &rustmq.AuthenticationConfig{
-        Method:   rustmq.AuthMethodSASLPlain,
-        Username: "user",
-        Password: "password",
-    },
-    TLS: &rustmq.TLSSecurityConfig{
-        Mode: rustmq.TLSModeEnabled, // Required for PLAIN
-    },
-}
-```
-
-### Authorization (ACL)
-
-The SDK provides fine-grained access control with client-side caching:
-
-#### ACL Configuration
-
-```go
-config := &rustmq.ClientConfig{
-    Security: &rustmq.SecurityConfig{
-        ACL: &rustmq.ACLConfig{
-            Enabled:             true,
-            ControllerEndpoints: []string{"controller1:9094", "controller2:9094"},
-            RequestTimeout:      10 * time.Second,
+            RequestTimeout: 10 * time.Second,
             
             // Permission caching for performance
             Cache: &rustmq.ACLCacheConfig{
-                Size:                1000,              // Max cached principals
-                TTL:                 10 * time.Minute,  // Cache TTL
-                CleanupInterval:     1 * time.Minute,   // Cleanup frequency
-                EnableDeduplication: true,              // Prevent duplicate requests
+                Size:            1000,             // Max cached principals
+                TTL:             10 * time.Minute, // Cache TTL
+                CleanupInterval: 1 * time.Minute,  // Cleanup frequency
             },
             
             // Circuit breaker for resilience
             CircuitBreaker: &rustmq.CircuitBreakerConfig{
-                FailureThreshold: 5,               // Open after 5 failures
-                SuccessThreshold: 3,               // Close after 3 successes
+                FailureThreshold: 5,                // Open after 5 failures
+                SuccessThreshold: 3,                // Close after 3 successes
                 Timeout:          30 * time.Second, // Recovery timeout
             },
         },
-    },
-}
-
-client, err := rustmq.NewClient(config)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Check permissions before operations
-if !client.CanReadTopic("sensitive-topic") {
-    log.Fatal("Permission denied: cannot read from sensitive-topic")
-}
-
-if !client.CanWriteTopic("logs-topic") {
-    log.Fatal("Permission denied: cannot write to logs-topic") 
-}
-
-if !client.CanPerformAdminOperation("cluster.health") {
-    log.Fatal("Permission denied: cannot perform admin operations")
+        
+        // mTLS authentication
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:     "/etc/ssl/certs/rustmq-ca.pem",
+            ClientCert: "/etc/ssl/certs/client.pem",
+            ClientKey:  "/etc/ssl/private/client.key",
+            ServerName: "rustmq.mycompany.com",
+        },
+    }
+    
+    client, err := rustmq.NewClient(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+    
+    // Check permissions before operations
+    if !client.CanWriteTopic("sensitive-financial-data") {
+        log.Fatal("❌ Permission denied: cannot write to sensitive-financial-data")
+    }
+    
+    if !client.CanReadTopic("audit-logs") {
+        log.Fatal("❌ Permission denied: cannot read from audit-logs")
+    }
+    
+    if !client.CanJoinConsumerGroup("financial-processors") {
+        log.Fatal("❌ Permission denied: cannot join consumer group financial-processors")
+    }
+    
+    // Proceed with operations
+    producer, err := client.CreateProducer("sensitive-financial-data")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer producer.Close()
+    
+    consumer, err := client.CreateConsumer("audit-logs", "financial-processors")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer consumer.Close()
+    
+    fmt.Println("✅ All permission checks passed")
 }
 ```
 
-#### Permission Patterns
-
-ACL supports flexible permission patterns:
+#### Pattern-Based Access Control
 
 ```go
-// Example permissions returned by ACL server
-permissions := &rustmq.PermissionSet{
-    ReadTopics:      []string{"logs.*", "events.user.*", "metrics.system"},
-    WriteTopics:     []string{"events.user.*", "notifications.*"},
-    AdminOperations: []string{"cluster.health", "topic.describe.*"},
-}
+// Check pattern-based permissions
+permissions := client.GetPermissions()
+
+// Example permission patterns
+fmt.Println("📋 Current permissions:")
+fmt.Printf("  Read topics: %v\n", permissions.ReadTopics)      // ["logs.*", "events.user.*"]
+fmt.Printf("  Write topics: %v\n", permissions.WriteTopics)    // ["events.user.*", "notifications.*"]
+fmt.Printf("  Admin ops: %v\n", permissions.AdminOperations)  // ["cluster.health", "topic.describe.*"]
 
 // Pattern matching examples
-permissions.CanReadTopic("logs.application")     // true (logs.*)
-permissions.CanReadTopic("events.user.123")     // true (events.user.*)
-permissions.CanReadTopic("admin.sensitive")     // false (no match)
+canRead := permissions.CanReadTopic("logs.application")      // true (logs.*)
+canRead = permissions.CanReadTopic("events.user.123")       // true (events.user.*)
+canRead = permissions.CanReadTopic("admin.sensitive")       // false (no match)
 
-permissions.CanWriteTopic("events.user.456")    // true (events.user.*)
-permissions.CanWriteTopic("logs.debug")         // false (not in write list)
+canWrite := permissions.CanWriteTopic("events.user.456")    // true (events.user.*)
+canWrite = permissions.CanWriteTopic("logs.debug")         // false (not in write list)
 
-permissions.CanPerformAdminOperation("cluster.health")      // true (exact match)
-permissions.CanPerformAdminOperation("topic.describe.test") // true (topic.describe.*)
-permissions.CanPerformAdminOperation("topic.create")        // false (no match)
+canAdmin := permissions.CanPerformAdminOperation("cluster.health")      // true (exact match)
+canAdmin = permissions.CanPerformAdminOperation("topic.describe.test") // true (topic.describe.*)
+canAdmin = permissions.CanPerformAdminOperation("topic.create")        // false (no match)
 ```
 
-### Certificate Management
+### 📋 Certificate Management
 
-Advanced certificate validation and lifecycle management:
+#### Development Certificate Setup
 
-#### Certificate Validation Rules
+The development environment provides automatic certificate generation:
 
-```go
-config := &rustmq.SecurityConfig{
-    CertValidation: &rustmq.CertificateValidationConfig{
-        Enabled: true,
-        Rules: []rustmq.CertificateValidationRule{
-            // Validate key usage
-            {
-                Type: "key_usage",
-                Parameters: map[string]interface{}{
-                    "usage": "client_auth",
-                },
-            },
-            // Validate subject pattern
-            {
-                Type: "subject_pattern", 
-                Parameters: map[string]interface{}{
-                    "pattern": "CN=.*\\.example\\.com",
-                },
-            },
-            // Validate certificate issuer
-            {
-                Type: "issuer_pattern",
-                Parameters: map[string]interface{}{
-                    "pattern": "CN=Example CA.*",
-                },
-            },
-        },
-        // Certificate revocation checking
-        RevocationCheck: &rustmq.RevocationCheckConfig{
-            EnableCRL:     true,
-            EnableOCSP:    true,
-            CRLCacheTTL:   24 * time.Hour,
-            OCSPTimeout:   5 * time.Second,
-        },
-    },
-}
+```bash
+# Development setup creates these certificates:
+ls -la certs/
+# ca.pem      - Self-signed root CA (valid for 1 year)
+# client.pem  - Client certificate signed by CA (valid for 90 days)
+# client.key  - Client private key (2048-bit RSA)
+# server.pem  - Server certificate for localhost (valid for 90 days)
+# server.key  - Server private key (2048-bit RSA)
 ```
 
-#### Principal Extraction
-
-Configure how user identity is extracted from certificates:
+**Certificate Validation in Development:**
 
 ```go
-config := &rustmq.SecurityConfig{
-    PrincipalExtraction: &rustmq.PrincipalExtractionConfig{
-        UseCommonName:     true,  // Extract from CN
-        UseSubjectAltName: false, // Extract from SAN
-        Normalize:         true,  // Lowercase and trim
-        
-        // Custom extraction rules (evaluated by priority)
-        CustomRules: []rustmq.PrincipalExtractionRule{
-            {
-                Type:     "subject_attribute",
-                Pattern:  "OU",          // Use Organizational Unit
-                Priority: 100,
-            },
-            {
-                Type:     "subject_pattern", 
-                Pattern:  `CN=([^,]+)`, // Regex to extract CN value
-                Priority: 90,
-            },
-            {
-                Type:     "san_email",
-                Pattern:  `([^@]+)@.*`, // Extract username from email SAN
-                Priority: 80,
-            },
-        },
-    },
-}
-```
+package main
 
-### Security Monitoring
-
-Comprehensive security metrics and monitoring:
-
-#### Security Metrics Configuration
-
-```go
-config := &rustmq.SecurityConfig{
-    Metrics: &rustmq.SecurityMetricsConfig{
-        Enabled:            true,
-        CollectionInterval: 30 * time.Second,
-        Detailed:           true,
-        
-        // Export metrics to external systems
-        Export: &rustmq.MetricsExportConfig{
-            Format:   "json",
-            Endpoint: "http://metrics.example.com/security",
-            Interval: 1 * time.Minute,
-        },
-    },
-}
-
-client, err := rustmq.NewClient(config)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Access security metrics
-securityManager := client.SecurityManager()
-metrics := securityManager.Metrics().GetMetrics()
-
-// Authentication metrics
-for method, authMetrics := range metrics.AuthMetrics {
-    fmt.Printf("Auth method %s:\n", method)
-    fmt.Printf("  Attempts: %d\n", authMetrics.Attempts)
-    fmt.Printf("  Success rate: %.2f%%\n", authMetrics.GetSuccessRate()*100)
+import (
+    "fmt"
+    "log"
     
-    if authMetrics.Duration != nil {
-        fmt.Printf("  Average duration: %s\n", authMetrics.Duration.Average)
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Validate development certificates
+    validator := rustmq.NewCertificateValidator()
+    
+    result, err := validator.ValidateCertificateChain(
+        "../../certs/client.pem",
+        "../../certs/ca.pem",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    if result.IsValid {
+        fmt.Println("✅ Certificate chain is valid")
+        fmt.Printf("📅 Expires: %s\n", result.ExpiryDate)
+        fmt.Printf("🔐 Subject: %s\n", result.Subject)
+        fmt.Printf("🏛️ Issuer: %s\n", result.Issuer)
+    } else {
+        fmt.Println("❌ Certificate validation failed:")
+        for _, err := range result.Errors {
+            fmt.Printf("  - %s\n", err)
+        }
     }
 }
+```
 
-// Authorization metrics
-if metrics.ACLMetrics != nil {
-    fmt.Printf("ACL Performance:\n")
-    fmt.Printf("  Cache hit rate: %.2f%%\n", metrics.ACLMetrics.GetCacheHitRate()*100)
-    fmt.Printf("  Total requests: %d\n", metrics.ACLMetrics.Requests)
-    fmt.Printf("  Errors: %d\n", metrics.ACLMetrics.Errors)
-}
+#### Production Certificate Management
 
-// Certificate metrics
-if metrics.CertificateMetrics != nil {
-    fmt.Printf("Certificate Validation:\n")
-    fmt.Printf("  Validations: %d\n", metrics.CertificateMetrics.Validations)
-    fmt.Printf("  Error rate: %.2f%%\n", metrics.CertificateMetrics.GetErrorRate()*100)
-    fmt.Printf("  Expiring certificates: %d\n", metrics.CertificateMetrics.Expiring)
-}
+For production environments, integrate with your certificate management system:
 
-// TLS connection metrics
-if metrics.TLSMetrics != nil {
-    fmt.Printf("TLS Connections:\n")
-    fmt.Printf("  Total connections: %d\n", metrics.TLSMetrics.Connections)
-    fmt.Printf("  Handshake error rate: %.2f%%\n", metrics.TLSMetrics.GetHandshakeErrorRate()*100)
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Certificate lifecycle management
+    certManager := rustmq.NewCertificateManager()
+    
+    // Monitor certificate expiry
+    expiryInfo, err := certManager.CheckCertificateExpiry("/etc/ssl/certs/client.pem")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    if expiryInfo.ExpiresWithinDays(30) {
+        fmt.Printf("⚠️  Certificate expires in %d days\n", expiryInfo.DaysUntilExpiry)
+        
+        // Trigger certificate renewal
+        renewalRequest := &rustmq.CertificateRenewal{
+            CertificatePath:     "/etc/ssl/certs/client.pem",
+            PrivateKeyPath:      "/etc/ssl/private/client.key",
+            CAEndpoint:          "https://ca.mycompany.com/api/v1/certificates",
+            RenewalThresholdDays: 30,
+        }
+        
+        if err := certManager.ScheduleRenewal(context.Background(), renewalRequest); err != nil {
+            log.Printf("❌ Failed to schedule certificate renewal: %v", err)
+        } else {
+            fmt.Println("✅ Certificate renewal scheduled")
+        }
+    }
 }
 ```
+
+### 🔧 Security Configuration Examples
+
+#### High-Security Production Configuration
+
+```go
+package main
+
+import (
+    "crypto/tls"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // High-security production configuration
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"rustmq.mycompany.com:9092"},
+        ClientID: "high-security-client",
+        
+        // Strict TLS configuration
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:             "/etc/ssl/certs/rustmq-ca.pem",
+            ClientCert:         "/etc/ssl/certs/client.pem",
+            ClientKey:          "/etc/ssl/private/client.key",
+            ServerName:         "rustmq.mycompany.com",
+            InsecureSkipVerify: false,
+            MinVersion:         tls.VersionTLS13, // Require TLS 1.3
+            MaxVersion:         tls.VersionTLS13,
+            CipherSuites: []uint16{
+                tls.TLS_AES_256_GCM_SHA384,       // Strong encryption
+                tls.TLS_CHACHA20_POLY1305_SHA256,
+            },
+            
+            // Strict certificate validation
+            ValidateCertificateChain:   true,
+            CheckCertificateExpiry:     true,
+            CheckCertificateRevocation: true,  // Enable OCSP/CRL checking
+            RequireClientCertificate:   true,
+        },
+        
+        // Comprehensive authentication
+        AuthMethod: rustmq.AuthMethodMTLS,
+        AuthConfig: &rustmq.AuthConfig{
+            StrictValidation: &rustmq.AuthValidationConfig{
+                CheckCertificateRevocation: true,
+                RequireValidCertificateChain: true,
+                ValidateCertificatePurpose: true,
+                EnforceCertificateExpiry: true,
+            },
+        },
+        
+        // Security monitoring
+        SecurityMonitoring: &rustmq.SecurityMonitoringConfig{
+            LogAuthenticationAttempts:    true,
+            LogAuthorizationDecisions:    true,
+            AlertOnFailedAuth:            true,
+            TrackSecurityContextChanges:  true,
+        },
+        
+        // Strict timeouts
+        ConnectTimeout: 15 * time.Second,
+        RequestTimeout: 30 * time.Second,
+    }
+    
+    // Additional security validation would be implemented here
+}
+```
+
+#### Development Security Configuration
+
+```go
+package main
+
+import (
+    "crypto/tls"
+    "time"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Development configuration (still secure, but development-friendly)
+    config := &rustmq.ClientConfig{
+        Brokers:  []string{"localhost:9092"},
+        ClientID: "dev-client",
+        
+        // Development TLS (still secure, but development-friendly)
+        EnableTLS: true,
+        TLSConfig: &rustmq.TLSConfig{
+            CACert:                       "../../certs/ca.pem",
+            ClientCert:                   "../../certs/client.pem",
+            ClientKey:                    "../../certs/client.key",
+            ServerName:                   "localhost",
+            InsecureSkipVerify:           false, // Still validate certificates
+            MinVersion:                   tls.VersionTLS12,
+            AllowSelfSignedCertificates:  true, // Allow for development
+            ValidateCertificateChain:     true,
+            CheckCertificateExpiry:       true,
+            CheckCertificateRevocation:   false, // Disable for development
+        },
+        
+        // Development authentication
+        AuthMethod: rustmq.AuthMethodMTLS,
+        
+        // More permissive timeouts for debugging
+        ConnectTimeout: 30 * time.Second,
+        RequestTimeout: 60 * time.Second,
+    }
+    
+    // Development configuration would be used here
+}
+```
+
+### 🚨 Security Monitoring & Troubleshooting
 
 #### Security Event Monitoring
 
 ```go
-// Monitor security events in real-time
-go func() {
-    ticker := time.NewTicker(10 * time.Second)
-    defer ticker.Stop()
+package main
+
+import (
+    "fmt"
+    "log"
+    "time"
     
-    for range ticker.C {
-        metrics := securityManager.Metrics().GetMetrics()
-        
-        // Alert on authentication failures
-        for method, authMetrics := range metrics.AuthMetrics {
-            successRate := authMetrics.GetSuccessRate()
-            if successRate < 0.95 && authMetrics.Attempts > 10 {
-                log.Printf("SECURITY ALERT: Low success rate for %s: %.2f%%", 
-                    method, successRate*100)
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    client := createSecureClient() // Implementation from above examples
+    defer client.Close()
+    
+    // Monitor security events
+    securityMonitor := client.GetSecurityMonitor()
+    eventChan := securityMonitor.Subscribe()
+    
+    go func() {
+        for event := range eventChan {
+            switch event.Type {
+            case rustmq.SecurityEventAuthSuccess:
+                fmt.Printf("✅ Authentication successful: %s at %s\n", 
+                    event.Principal, event.Timestamp)
+                
+            case rustmq.SecurityEventAuthFailure:
+                fmt.Printf("❌ Authentication failed: %s from %s at %s\n", 
+                    event.Reason, event.RemoteAddr, event.Timestamp)
+                
+            case rustmq.SecurityEventAuthzDenied:
+                fmt.Printf("🚫 Authorization denied: %s tried %s on %s at %s\n", 
+                    event.Principal, event.Operation, event.Resource, event.Timestamp)
+                
+            case rustmq.SecurityEventCertExpiring:
+                fmt.Printf("⚠️  Certificate expiring: %s in %d days\n", 
+                    event.CertificatePath, event.DaysUntilExpiry)
+                
+            case rustmq.SecurityEventSecurityContextChange:
+                fmt.Printf("🔄 Security context changed: %s -> %s at %s\n", 
+                    event.OldPrincipal, event.NewPrincipal, event.Timestamp)
             }
         }
-        
-        // Alert on ACL errors
-        if metrics.ACLMetrics != nil && metrics.ACLMetrics.Errors > 0 {
-            errorRate := float64(metrics.ACLMetrics.Errors) / float64(metrics.ACLMetrics.Requests)
-            if errorRate > 0.05 { // 5% error threshold
-                log.Printf("SECURITY ALERT: High ACL error rate: %.2f%%", errorRate*100)
-            }
-        }
-        
-        // Alert on certificate issues
-        if metrics.CertificateMetrics != nil {
-            if metrics.CertificateMetrics.Expiring > 0 {
-                log.Printf("SECURITY WARNING: %d certificates expiring soon", 
-                    metrics.CertificateMetrics.Expiring)
-            }
-            
-            errorRate := metrics.CertificateMetrics.GetErrorRate()
-            if errorRate > 0.1 { // 10% error threshold
-                log.Printf("SECURITY ALERT: High certificate error rate: %.2f%%", errorRate*100)
-            }
-        }
-    }
-}()
+    }()
+    
+    // Keep monitoring
+    select {}
+}
+
+func createSecureClient() *rustmq.Client {
+    // Implementation from previous examples
+    return nil
+}
 ```
 
-### Security Error Handling
+#### Common Security Issues & Solutions
 
-Comprehensive error handling for security operations:
-
-#### Security Error Types
+**Certificate Validation Failures:**
 
 ```go
-// Check for specific security error types
-_, err := client.CreateProducer("secured-topic")
-if err != nil {
-    if rustmq.IsAuthenticationError(err) {
-        log.Println("Authentication failed - check credentials")
-    } else if rustmq.IsAuthorizationError(err) {
-        log.Println("Authorization failed - insufficient permissions")
-    } else if rustmq.IsCertificateError(err) {
-        log.Println("Certificate error - check certificate validity")
-    } else if rustmq.IsTLSError(err) {
-        log.Println("TLS error - check TLS configuration")
-    } else if rustmq.IsConfigurationError(err) {
-        log.Println("Configuration error - check security settings")
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Issue: Certificate validation failed
+    // Error: "certificate has expired"
+    
+    // Solution: Check certificate expiry and renewal
+    certValidator := rustmq.NewCertificateValidator()
+    certInfo, err := certValidator.GetCertificateInfo("client.pem")
+    if err != nil {
+        log.Fatal(err)
     }
     
-    // Get detailed error information
-    if secErr, ok := rustmq.AsSecurityError(err); ok {
-        fmt.Printf("Error type: %s\n", secErr.Type)
-        fmt.Printf("Error message: %s\n", secErr.Message)
-        fmt.Printf("Error code: %s\n", secErr.Code)
+    if certInfo.IsExpired() {
+        fmt.Printf("❌ Certificate expired on: %s\n", certInfo.NotAfter)
+        fmt.Println("💡 Renew certificate using:")
+        fmt.Println("   ./target/release/rustmq-admin certs renew cert_id")
+        return
+    }
+    
+    if certInfo.ExpiresWithinDays(7) {
+        fmt.Printf("⚠️  Certificate expires in %d days\n", certInfo.DaysUntilExpiry())
+        // Schedule renewal
+    }
+}
+```
+
+**Connection Security Issues:**
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Issue: TLS handshake failures
+    // Error: "tls: handshake failure"
+    
+    // Solution: Debug TLS configuration
+    tlsConfig := &rustmq.TLSConfig{
+        // Enable TLS debugging
+        Debug:              true,
+        LogTLSKeys:         true, // Development only!
+        CACert:             "certs/ca.pem",
+        VerifyConfiguration: true,
+    }
+    
+    // Test TLS connection
+    testResult, err := rustmq.TestTLSConnection("localhost:9092", tlsConfig)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    if !testResult.Success {
+        fmt.Println("❌ TLS test failed:")
+        for _, err := range testResult.Errors {
+            fmt.Printf("   - %s\n", err)
+        }
         
-        for key, value := range secErr.Details {
-            fmt.Printf("%s: %v\n", key, value)
+        fmt.Println("💡 Common solutions:")
+        fmt.Println("   - Check server certificate matches server_name")
+        fmt.Println("   - Verify CA certificate is correct")
+        fmt.Println("   - Ensure client certificate is valid")
+    }
+}
+```
+
+**Authorization Failures:**
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/rustmq/rustmq/sdk/go/rustmq"
+)
+
+func main() {
+    // Issue: Authorization denied
+    // Error: "insufficient permissions for topic 'secure-topic'"
+    
+    client := createSecureClient() // Implementation from previous examples
+    defer client.Close()
+    
+    // Solution: Check and update ACL permissions
+    if authInfo := client.GetAuthenticationInfo(); authInfo != nil {
+        fmt.Printf("🔍 Current permissions for %s:\n", authInfo.Principal)
+        
+        permissions := client.GetPermissions()
+        fmt.Printf("   Read topics: %v\n", permissions.ReadTopics)
+        fmt.Printf("   Write topics: %v\n", permissions.WriteTopics)
+        fmt.Printf("   Admin operations: %v\n", permissions.AdminOperations)
+        
+        // Check specific permission
+        if !permissions.CanWriteTopic("secure-topic") {
+            fmt.Println("❌ Missing WRITE permission for 'secure-topic'")
+            fmt.Println("💡 Request access using:")
+            fmt.Printf("   ./target/release/rustmq-admin acl create \\\n")
+            fmt.Printf("     --principal '%s' \\\n", authInfo.Principal)
+            fmt.Printf("     --resource 'topic.secure-topic' \\\n")
+            fmt.Printf("     --permissions write \\\n")
+            fmt.Printf("     --effect allow\n")
         }
     }
 }
 ```
 
-#### Security Error Recovery
+### 📚 Security Examples
 
-```go
-// Implement security error recovery strategies
-func handleSecurityError(err error) error {
-    if rustmq.IsAuthenticationError(err) {
-        // Refresh authentication credentials
-        return client.RefreshSecurityContext()
-    } else if rustmq.IsAuthorizationError(err) {
-        // Request updated permissions
-        return requestPermissionUpdate()
-    } else if rustmq.IsCertificateError(err) {
-        // Renew certificate
-        return renewCertificate()
-    }
-    return err
-}
-```
+The SDK includes comprehensive security examples:
 
-### Security Best Practices
+- [`examples/secure_producer_mtls.go`](examples/secure_producer_mtls.go) - mTLS producer with certificate authentication
+- [`examples/secure_consumer_jwt.go`](examples/secure_consumer_jwt.go) - JWT consumer with ACL authorization
+- [`examples/secure_admin_sasl.go`](examples/secure_admin_sasl.go) - SASL authentication for admin operations
+- [`examples/certificate_management.go`](examples/certificate_management.go) - Certificate lifecycle management
+- [`examples/security_monitoring.go`](examples/security_monitoring.go) - Security event monitoring
 
-#### Production Security Checklist
+### 🔒 Security Best Practices
 
-- ✅ **Always use TLS in production** - Never send credentials over unencrypted connections
-- ✅ **Prefer mTLS for service-to-service** - Strongest authentication for backend services  
-- ✅ **Use JWT for user authentication** - Stateless and scalable for user-facing applications
-- ✅ **Enable ACL authorization** - Implement principle of least privilege
-- ✅ **Monitor certificate expiration** - Set up alerts for certificate renewal
-- ✅ **Enable security metrics** - Monitor authentication and authorization patterns
-- ✅ **Validate all certificates** - Enable chain validation and revocation checking
-- ✅ **Use strong cipher suites** - Configure TLS 1.2+ with secure ciphers
-- ✅ **Implement proper error handling** - Don't leak sensitive information in errors
-- ✅ **Regular security audits** - Review permissions and access patterns
+#### Development Environment
+- ✅ Use automated certificate setup: `./generate-certs.sh develop`
+- ✅ Enable certificate validation even with self-signed certificates
+- ✅ Use development-specific ACL rules with restricted permissions
+- ✅ Monitor authentication and authorization events
+- ⚠️ Never use `InsecureSkipVerify: true` even in development
 
-#### Development vs Production
+#### Production Environment
+- ✅ Use CA-signed certificates with proper certificate chains
+- ✅ Enable strict TLS validation and hostname verification
+- ✅ Implement certificate monitoring and automatic renewal
+- ✅ Use fine-grained ACL permissions with least privilege principle
+- ✅ Enable comprehensive security event logging and monitoring
+- ✅ Regular security audits and certificate rotation
+- ❌ Never disable certificate validation in production
+- ❌ Never store private keys in application code or logs
 
-```go
-// Development configuration (relaxed security)
-devConfig := &rustmq.SecurityConfig{
-    TLS: &rustmq.TLSSecurityConfig{
-        Mode:               rustmq.TLSModeEnabled,
-        InsecureSkipVerify: true, // Only for development!
-    },
-    Metrics: &rustmq.SecurityMetricsConfig{
-        Enabled: true,
-        Detailed: true, // Enable detailed metrics for debugging
-    },
-}
+#### Certificate Management
+- 🔄 Rotate certificates every 90 days maximum
+- 📊 Monitor certificate expiry and automate renewal
+- 🔐 Store private keys securely (HSM for production)
+- 📝 Maintain certificate inventory and lifecycle tracking
+- 🚨 Implement immediate revocation capabilities
 
-// Production configuration (strict security)
-prodConfig := &rustmq.SecurityConfig{
-    Auth: &rustmq.AuthenticationConfig{
-        Method: rustmq.AuthMethodMTLS,
-    },
-    TLS: &rustmq.TLSSecurityConfig{
-        Mode:               rustmq.TLSModeMutualAuth,
-        CACert:             loadCACert(),
-        ClientCert:         loadClientCert(),
-        ClientKey:          loadClientKey(),
-        InsecureSkipVerify: false,
-        MinVersion:         tls.VersionTLS12,
-        Validation: &rustmq.CertificateValidationSettings{
-            ValidateChain:   true,
-            CheckExpiration: true,
-            CheckRevocation: true,
-        },
-    },
-    ACL: &rustmq.ACLConfig{
-        Enabled: true,
-        ControllerEndpoints: []string{"controller:9094"},
-        Cache: &rustmq.ACLCacheConfig{
-            Size: 1000,
-            TTL:  5 * time.Minute, // Shorter TTL for production
-        },
-    },
-    Metrics: &rustmq.SecurityMetricsConfig{
-        Enabled: true,
-        Export: &rustmq.MetricsExportConfig{
-            Format:   "json",
-            Endpoint: "https://metrics.company.com/security",
-            Interval: 30 * time.Second,
-        },
-    },
-}
-```
+For complete security documentation, configuration examples, and advanced security features, see [`../../docs/security/`](../../docs/security/).
 
 ## Quick Start
 

@@ -1774,132 +1774,607 @@ async fn health_monitor(client: &RustMqClient) {
 }
 ```
 
-## Security Guide
+## 🔐 Security Guide
 
-The RustMQ Rust SDK provides comprehensive security features for enterprise deployments. For detailed security documentation, see [`docs/security.md`](docs/security.md).
+The RustMQ Rust SDK provides enterprise-grade security features with comprehensive support for both development and production environments. This guide covers security setup, configuration, and best practices for secure client applications.
 
-### Quick Security Setup
+### 🚀 Environment-Based Security Setup
 
-#### mTLS Authentication
+Choose your security setup based on your environment:
+
+#### 🛠️ Development Environment Setup
+
+For local development, use the automated development setup:
+
+```bash
+# Set up complete development environment with certificates
+cd ../../  # Go to RustMQ project root
+./generate-certs.sh develop
+
+# This creates:
+# - certs/ca.pem           (Root CA certificate)
+# - certs/client.pem       (Client certificate)  
+# - certs/client.key       (Client private key)
+# - config/client-dev.toml (Development client config)
+```
+
+**Development Client Configuration:**
 
 ```rust
 use rustmq_client::{ClientConfig, TlsConfig, AuthConfig};
 
-// Create secure mTLS configuration
-let auth_config = AuthConfig::mtls_config(
-    std::fs::read_to_string("/path/to/ca.pem")?,
-    std::fs::read_to_string("/path/to/client.pem")?,
-    std::fs::read_to_string("/path/to/client.key")?,
-    Some("rustmq.example.com".to_string()),
-);
-
-let tls_config = TlsConfig::secure_config(
-    std::fs::read_to_string("/path/to/ca.pem")?,
-    Some(std::fs::read_to_string("/path/to/client.pem")?),
-    Some(std::fs::read_to_string("/path/to/client.key")?),
-    "rustmq.example.com".to_string(),
-);
-
+// Development configuration with self-signed certificates
 let client_config = ClientConfig {
-    brokers: vec!["rustmq.example.com:9092".to_string()],
-    tls_config: Some(tls_config),
-    auth: Some(auth_config),
+    brokers: vec!["localhost:9092".to_string()],
+    
+    // Development TLS configuration
+    tls_config: Some(TlsConfig {
+        ca_cert: Some("../../certs/ca.pem".to_string()),
+        client_cert: Some("../../certs/client.pem".to_string()),
+        client_key: Some("../../certs/client.key".to_string()),
+        server_name: Some("localhost".to_string()),
+        insecure_skip_verify: false, // Still validate certificates in dev
+        ..Default::default()
+    }),
+    
+    // mTLS authentication for development
+    auth: Some(AuthConfig::mtls_development()),
+    
+    // Development-friendly timeouts
+    connect_timeout: Duration::from_secs(10),
+    request_timeout: Duration::from_secs(30),
+    
     ..Default::default()
 };
 
 let client = RustMqClient::new(client_config).await?;
+```
 
-// Verify security is enabled
-if let Some(connection) = client.get_connection().await {
-    assert!(connection.is_security_enabled());
+**Quick Development Example:**
+
+```rust
+use rustmq_client::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Load development configuration
+    let config = ClientConfig::from_development_env()?;
+    let client = RustMqClient::new(config).await?;
     
-    if let Some(context) = connection.get_security_context().await {
-        println!("Authenticated as: {}", context.principal);
-        println!("Permissions: {:?}", context.permissions);
-    }
+    // Create secure producer
+    let producer = client.create_producer("dev-topic").await?;
+    
+    let message = Message::builder()
+        .topic("dev-topic")
+        .payload("Development message")
+        .header("environment", "development")
+        .build()?;
+    
+    let result = producer.send(message).await?;
+    println!("✅ Message sent with mTLS: offset={}", result.offset);
+    
+    Ok(())
+}
+```
+
+#### 🏭 Production Environment Setup
+
+For production, use proper CA-signed certificates and production configuration:
+
+```bash
+# Generate production setup guidance
+./generate-certs.sh production
+
+# Or use RustMQ Admin CLI for certificate management:
+./target/release/rustmq-admin ca init --cn "MyCompany RustMQ Root CA" --org "MyCompany"
+./target/release/rustmq-admin certs issue \
+  --principal "client@mycompany.com" \
+  --role client \
+  --validity-days 90
+```
+
+**Production Client Configuration:**
+
+```rust
+use rustmq_client::{ClientConfig, TlsConfig, AuthConfig};
+
+// Production configuration with CA-signed certificates
+let client_config = ClientConfig {
+    brokers: vec![
+        "rustmq-broker-01.mycompany.com:9092".to_string(),
+        "rustmq-broker-02.mycompany.com:9092".to_string(),
+        "rustmq-broker-03.mycompany.com:9092".to_string(),
+    ],
+    
+    // Production TLS configuration
+    tls_config: Some(TlsConfig {
+        ca_cert: Some("/etc/ssl/certs/rustmq-ca.pem".to_string()),
+        client_cert: Some("/etc/ssl/certs/client.pem".to_string()),
+        client_key: Some("/etc/ssl/private/client.key".to_string()),
+        server_name: Some("rustmq.mycompany.com".to_string()),
+        insecure_skip_verify: false,
+        verify_hostname: true,
+        min_tls_version: TlsVersion::TLS12,
+        cipher_suites: vec![
+            "TLS_AES_256_GCM_SHA384".to_string(),
+            "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+        ],
+    }),
+    
+    // Production mTLS authentication
+    auth: Some(AuthConfig::mtls_production(
+        "/etc/ssl/certs/rustmq-ca.pem".to_string(),
+        "/etc/ssl/certs/client.pem".to_string(),
+        "/etc/ssl/private/client.key".to_string(),
+        "rustmq.mycompany.com".to_string(),
+    )),
+    
+    // Production timeouts and retry configuration
+    connect_timeout: Duration::from_secs(30),
+    request_timeout: Duration::from_secs(60),
+    retry_config: RetryConfig {
+        max_retries: 5,
+        base_delay: Duration::from_millis(100),
+        max_delay: Duration::from_secs(30),
+        multiplier: 2.0,
+        jitter: true,
+    },
+    
+    // Connection pooling for production load
+    max_connections: 20,
+    keep_alive_interval: Duration::from_secs(30),
+    
+    ..Default::default()
+};
+
+let client = RustMqClient::new(client_config).await?;
+```
+
+### 🔒 Authentication Methods
+
+#### mTLS (Mutual TLS) Authentication
+
+**Recommended for production environments:**
+
+```rust
+// Create mTLS configuration with CA-signed certificates
+let auth_config = AuthConfig::mtls_config(
+    "/etc/ssl/certs/rustmq-ca.pem".to_string(),      // CA certificate
+    "/etc/ssl/certs/client.pem".to_string(),         // Client certificate
+    "/etc/ssl/private/client.key".to_string(),       // Client private key
+    Some("rustmq.mycompany.com".to_string()),        // Server name verification
+);
+
+// Verify client authentication status
+let client = RustMqClient::new(client_config).await?;
+if let Some(security_context) = client.get_security_context().await? {
+    println!("✅ Authenticated as: {}", security_context.principal);
+    println!("📋 Permissions: {:?}", security_context.permissions);
+} else {
+    return Err(ClientError::AuthenticationFailed("No security context".to_string()));
 }
 ```
 
 #### JWT Token Authentication
 
-```rust
-// Create token-based authentication
-let auth_config = AuthConfig::token_config(
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...".to_string()
-);
+**Suitable for service-to-service authentication:**
 
-let tls_config = TlsConfig::secure_config(
-    ca_cert,
-    None, // No client certificate for token auth
-    None,
-    "rustmq.example.com".to_string(),
+```rust
+// Create JWT token configuration
+let auth_config = AuthConfig::jwt_config(
+    "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...".to_string(), // JWT token
+    Some("/etc/ssl/certs/jwt-public-key.pem".to_string()),    // Token verification key
 );
 
 let client_config = ClientConfig {
-    tls_config: Some(tls_config),
     auth: Some(auth_config),
+    // Still use TLS for transport encryption
+    tls_config: Some(TlsConfig::server_tls_only(
+        "/etc/ssl/certs/rustmq-ca.pem".to_string(),
+        "rustmq.mycompany.com".to_string(),
+    )),
     ..Default::default()
 };
 ```
 
+#### Environment Variable Configuration
+
+**Secure configuration through environment variables:**
+
+```rust
+// Load configuration from environment variables
+std::env::set_var("RUSTMQ_CA_CERT", "/etc/ssl/certs/rustmq-ca.pem");
+std::env::set_var("RUSTMQ_CLIENT_CERT", "/etc/ssl/certs/client.pem");
+std::env::set_var("RUSTMQ_CLIENT_KEY", "/etc/ssl/private/client.key");
+std::env::set_var("RUSTMQ_SERVER_NAME", "rustmq.mycompany.com");
+
+let client_config = ClientConfig::from_env()?;
+let client = RustMqClient::new(client_config).await?;
+```
+
+### 🛡️ Authorization & Access Control
+
 #### ACL-Based Authorization
 
 ```rust
-// Check permissions before operations
-if let Some(context) = connection.get_security_context().await {
-    let permissions = &context.permissions;
+// Check permissions before performing operations
+async fn secure_message_operations() -> Result<()> {
+    let client = create_secure_client().await?;
     
-    // Check topic permissions
-    if !permissions.can_write_topic("sensitive-data") {
-        return Err(ClientError::AuthorizationDenied(
-            "No write permission for sensitive-data topic".to_string()
-        ));
+    // Verify topic write permissions
+    if let Some(context) = client.get_security_context().await? {
+        let permissions = &context.permissions;
+        
+        // Check specific topic permissions
+        if !permissions.can_write_topic("sensitive-financial-data") {
+            return Err(ClientError::AuthorizationDenied {
+                operation: "WRITE".to_string(),
+                resource: "topic:sensitive-financial-data".to_string(),
+                principal: context.principal.clone(),
+            });
+        }
+        
+        // Check consumer group permissions
+        if !permissions.can_join_consumer_group("financial-processors") {
+            return Err(ClientError::AuthorizationDenied {
+                operation: "JOIN_GROUP".to_string(),
+                resource: "consumer-group:financial-processors".to_string(),
+                principal: context.principal.clone(),
+            });
+        }
     }
     
-    // Proceed with operation
-    producer.send(message).await?;
+    // Proceed with operations
+    let producer = client.create_producer("sensitive-financial-data").await?;
+    let consumer = client.create_consumer("sensitive-financial-data", "financial-processors").await?;
+    
+    Ok(())
 }
 ```
 
-### Security Examples
+#### Pattern-Based Access Control
+
+```rust
+// Configure pattern-based permissions
+let auth_config = AuthConfig::mtls_config_with_permissions(
+    ca_cert,
+    client_cert,
+    client_key,
+    server_name,
+    vec![
+        Permission::new("topic.events.*", vec!["READ", "WRITE"]),
+        Permission::new("topic.logs.application.*", vec!["READ"]),
+        Permission::new("consumer-group.analytics-*", vec!["JOIN"]),
+    ],
+);
+```
+
+### 📋 Certificate Management
+
+#### Development Certificate Setup
+
+The development environment provides automatic certificate generation:
+
+```bash
+# Development setup creates these certificates:
+ls -la certs/
+# ca.pem      - Self-signed root CA (valid for 1 year)
+# client.pem  - Client certificate signed by CA (valid for 90 days)
+# client.key  - Client private key (2048-bit RSA)
+# server.pem  - Server certificate for localhost (valid for 90 days)
+# server.key  - Server private key (2048-bit RSA)
+```
+
+**Certificate Validation in Development:**
+
+```rust
+use rustmq_client::security::CertificateValidator;
+
+// Validate development certificates
+let validator = CertificateValidator::new();
+let validation_result = validator.validate_certificate_chain(
+    "certs/client.pem",
+    "certs/ca.pem",
+).await?;
+
+if validation_result.is_valid {
+    println!("✅ Certificate chain is valid");
+    println!("📅 Expires: {}", validation_result.expiry_date);
+} else {
+    println!("❌ Certificate validation failed: {:?}", validation_result.errors);
+}
+```
+
+#### Production Certificate Management
+
+For production environments, integrate with your certificate management system:
+
+```rust
+// Certificate lifecycle management
+use rustmq_client::security::{CertificateManager, CertificateRenewal};
+
+let cert_manager = CertificateManager::new()?;
+
+// Monitor certificate expiry
+let expiry_check = cert_manager.check_certificate_expiry(
+    "/etc/ssl/certs/client.pem"
+).await?;
+
+if expiry_check.expires_within_days(30) {
+    println!("⚠️  Certificate expires in {} days", expiry_check.days_until_expiry);
+    
+    // Trigger certificate renewal
+    let renewal_request = CertificateRenewal::builder()
+        .certificate_path("/etc/ssl/certs/client.pem")
+        .private_key_path("/etc/ssl/private/client.key")
+        .ca_endpoint("https://ca.mycompany.com/api/v1/certificates")
+        .renewal_threshold_days(30)
+        .build();
+    
+    cert_manager.schedule_renewal(renewal_request).await?;
+}
+```
+
+### 🔧 Security Configuration Examples
+
+#### High-Security Production Configuration
+
+```rust
+let high_security_config = ClientConfig {
+    brokers: vec!["rustmq.mycompany.com:9092".to_string()],
+    
+    // Strict TLS configuration
+    tls_config: Some(TlsConfig {
+        ca_cert: Some("/etc/ssl/certs/rustmq-ca.pem".to_string()),
+        client_cert: Some("/etc/ssl/certs/client.pem".to_string()),
+        client_key: Some("/etc/ssl/private/client.key".to_string()),
+        server_name: Some("rustmq.mycompany.com".to_string()),
+        insecure_skip_verify: false,
+        verify_hostname: true,
+        min_tls_version: TlsVersion::TLS13, // Require TLS 1.3
+        max_tls_version: TlsVersion::TLS13,
+        cipher_suites: vec![
+            "TLS_AES_256_GCM_SHA384".to_string(),     // Strong encryption
+            "TLS_CHACHA20_POLY1305_SHA256".to_string(),
+        ],
+        certificate_validation: CertificateValidation::Strict,
+        ocsp_stapling: true,                          // Certificate revocation checking
+        session_resumption: false,                    // Disable for maximum security
+    }),
+    
+    // Comprehensive authentication
+    auth: Some(AuthConfig::mtls_with_strict_validation(
+        "/etc/ssl/certs/rustmq-ca.pem".to_string(),
+        "/etc/ssl/certs/client.pem".to_string(),
+        "/etc/ssl/private/client.key".to_string(),
+        "rustmq.mycompany.com".to_string(),
+        AuthValidation::Strict {
+            check_certificate_revocation: true,
+            require_valid_certificate_chain: true,
+            validate_certificate_purpose: true,
+            enforce_certificate_expiry: true,
+        },
+    )),
+    
+    // Security monitoring
+    security_monitoring: Some(SecurityMonitoring {
+        log_authentication_attempts: true,
+        log_authorization_decisions: true,
+        alert_on_failed_auth: true,
+        track_security_context_changes: true,
+    }),
+    
+    ..Default::default()
+};
+```
+
+#### Development Security Configuration
+
+```rust
+let development_config = ClientConfig {
+    brokers: vec!["localhost:9092".to_string()],
+    
+    // Development TLS (still secure, but development-friendly)
+    tls_config: Some(TlsConfig {
+        ca_cert: Some("../../certs/ca.pem".to_string()),
+        client_cert: Some("../../certs/client.pem".to_string()),
+        client_key: Some("../../certs/client.key".to_string()),
+        server_name: Some("localhost".to_string()),
+        insecure_skip_verify: false,      // Still validate certificates
+        verify_hostname: true,
+        min_tls_version: TlsVersion::TLS12,
+        certificate_validation: CertificateValidation::Development,
+        allow_self_signed_certificates: true, // Allow for development
+    }),
+    
+    // Development authentication
+    auth: Some(AuthConfig::mtls_development()),
+    
+    // More permissive timeouts for debugging
+    connect_timeout: Duration::from_secs(30),
+    request_timeout: Duration::from_secs(60),
+    
+    ..Default::default()
+};
+```
+
+### 🚨 Security Monitoring & Troubleshooting
+
+#### Security Event Monitoring
+
+```rust
+use rustmq_client::security::{SecurityEvent, SecurityMonitor};
+
+// Monitor security events
+let security_monitor = SecurityMonitor::new();
+let mut event_stream = security_monitor.subscribe_to_events().await?;
+
+while let Some(event) = event_stream.next().await {
+    match event {
+        SecurityEvent::AuthenticationSuccess { principal, timestamp } => {
+            println!("✅ Authentication successful: {} at {}", principal, timestamp);
+        }
+        SecurityEvent::AuthenticationFailure { reason, timestamp, remote_addr } => {
+            println!("❌ Authentication failed: {} from {} at {}", reason, remote_addr, timestamp);
+        }
+        SecurityEvent::AuthorizationDenied { principal, resource, operation, timestamp } => {
+            println!("🚫 Authorization denied: {} tried {} on {} at {}", 
+                     principal, operation, resource, timestamp);
+        }
+        SecurityEvent::CertificateExpiring { certificate_path, days_until_expiry } => {
+            println!("⚠️  Certificate expiring: {} in {} days", certificate_path, days_until_expiry);
+        }
+        SecurityEvent::SecurityContextChanged { old_principal, new_principal, timestamp } => {
+            println!("🔄 Security context changed: {} -> {} at {}", 
+                     old_principal, new_principal, timestamp);
+        }
+    }
+}
+```
+
+#### Common Security Issues & Solutions
+
+**Certificate Validation Failures:**
+
+```rust
+// Issue: Certificate validation failed
+// Error: CertificateValidationError("certificate has expired")
+
+// Solution: Check certificate expiry and renewal
+async fn handle_certificate_validation_error() -> Result<()> {
+    let cert_info = CertificateValidator::get_certificate_info("client.pem").await?;
+    
+    if cert_info.is_expired() {
+        println!("❌ Certificate expired on: {}", cert_info.not_after);
+        println!("💡 Renew certificate using:");
+        println!("   ./target/release/rustmq-admin certs renew cert_id");
+        return Err(ClientError::CertificateExpired(cert_info.not_after));
+    }
+    
+    if cert_info.expires_within_days(7) {
+        println!("⚠️  Certificate expires in {} days", cert_info.days_until_expiry());
+        // Schedule renewal
+    }
+    
+    Ok(())
+}
+```
+
+**Connection Security Issues:**
+
+```rust
+// Issue: TLS handshake failures
+// Error: TlsError("handshake failure")
+
+// Solution: Debug TLS configuration
+async fn debug_tls_connection() -> Result<()> {
+    let tls_config = TlsConfig {
+        // Enable TLS debugging
+        debug_tls: true,
+        log_tls_keys: true, // Development only!
+        
+        // Verify configuration
+        ca_cert: Some("certs/ca.pem".to_string()),
+        verify_configuration: true,
+        
+        ..Default::default()
+    };
+    
+    // Test TLS connection
+    let test_result = TlsConfig::test_connection(
+        "localhost:9092",
+        &tls_config,
+    ).await?;
+    
+    if !test_result.success {
+        println!("❌ TLS test failed:");
+        for error in test_result.errors {
+            println!("   - {}", error);
+        }
+        
+        println!("💡 Common solutions:");
+        println!("   - Check server certificate matches server_name");
+        println!("   - Verify CA certificate is correct");
+        println!("   - Ensure client certificate is valid");
+    }
+    
+    Ok(())
+}
+```
+
+**Authorization Failures:**
+
+```rust
+// Issue: Authorization denied
+// Error: AuthorizationDenied("insufficient permissions for topic 'secure-topic'")
+
+// Solution: Check and update ACL permissions
+async fn handle_authorization_error() -> Result<()> {
+    let client = create_secure_client().await?;
+    
+    if let Some(context) = client.get_security_context().await? {
+        println!("🔍 Current permissions for {}:", context.principal);
+        
+        for permission in &context.permissions {
+            println!("   {} on {}: {:?}", 
+                     permission.resource, 
+                     permission.operations, 
+                     permission.effect);
+        }
+        
+        // Check specific permission
+        if !context.permissions.can_write_topic("secure-topic") {
+            println!("❌ Missing WRITE permission for 'secure-topic'");
+            println!("💡 Request access using:");
+            println!("   ./target/release/rustmq-admin acl create \\");
+            println!("     --principal '{}' \\", context.principal);
+            println!("     --resource 'topic.secure-topic' \\");
+            println!("     --permissions write \\");
+            println!("     --effect allow");
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### 📚 Security Examples
 
 The SDK includes comprehensive security examples:
 
 - [`examples/secure_producer.rs`](examples/secure_producer.rs) - mTLS producer with certificate authentication
-- [`examples/secure_consumer.rs`](examples/secure_consumer.rs) - mTLS consumer with ACL authorization
+- [`examples/secure_consumer.rs`](examples/secure_consumer.rs) - mTLS consumer with ACL authorization  
 - [`examples/token_authentication.rs`](examples/token_authentication.rs) - JWT token-based authentication
+- [`examples/certificate_management.rs`](examples/certificate_management.rs) - Certificate lifecycle management
+- [`examples/security_monitoring.rs`](examples/security_monitoring.rs) - Security event monitoring
 
-### Security Features
+### 🔒 Security Best Practices
 
-✅ **Transport Security**
-- TLS 1.2/1.3 with QUIC protocol
-- Certificate validation and chain verification
-- ALPN protocol negotiation
+#### Development Environment
+- ✅ Use automated certificate setup: `./generate-certs.sh develop`
+- ✅ Enable certificate validation even with self-signed certificates
+- ✅ Use development-specific ACL rules with restricted permissions
+- ✅ Monitor authentication and authorization events
+- ⚠️ Never use `insecure_skip_verify: true` even in development
 
-✅ **Authentication Methods**
-- **mTLS**: Mutual TLS with client certificates
-- **JWT Tokens**: Bearer token authentication
-- **SASL**: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+#### Production Environment
+- ✅ Use CA-signed certificates with proper certificate chains
+- ✅ Enable strict TLS validation and hostname verification
+- ✅ Implement certificate monitoring and automatic renewal
+- ✅ Use fine-grained ACL permissions with least privilege principle
+- ✅ Enable comprehensive security event logging and monitoring
+- ✅ Regular security audits and certificate rotation
+- ❌ Never disable certificate validation in production
+- ❌ Never store private keys in application code or logs
 
-✅ **Authorization & ACL**
-- Fine-grained topic permissions
-- Pattern-based access control
-- Client-side permission caching
-- Principal extraction from certificates
+#### Certificate Management
+- 🔄 Rotate certificates every 90 days maximum
+- 📊 Monitor certificate expiry and automate renewal
+- 🔐 Store private keys securely (HSM for production)
+- 📝 Maintain certificate inventory and lifecycle tracking
+- 🚨 Implement immediate revocation capabilities
 
-✅ **Certificate Management**
-- Automatic certificate validation
-- Certificate lifecycle management
-- CA certificate trust chains
-- Certificate renewal workflows
-
-✅ **Security Monitoring**
-- Authentication attempt tracking
-- Authorization decision logging
-- Security context metrics
-- Failed access monitoring
-
-For complete security documentation, configuration examples, and best practices, see [`docs/security.md`](docs/security.md).
+For complete security documentation, configuration examples, and advanced security features, see [`../../docs/security/`](../../docs/security/).
 
 ## API Reference
 

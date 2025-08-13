@@ -1,5 +1,7 @@
 #!/bin/bash
-# Production Security Setup Script for RustMQ
+# Production Security Setup Script for RustMQ - v2.0
+# Compatible with RustMQ 1.0.0+ Security Infrastructure
+# Updated: August 2025 - Enhanced for production certificate chains
 # This script sets up complete production security environment
 
 set -euo pipefail
@@ -64,6 +66,20 @@ validate_environment() {
     local available_space=$(df /etc | awk 'NR==2 {print $4}')
     if [[ $available_space -lt 1048576 ]]; then  # 1GB in KB
         error "Insufficient disk space. At least 1GB required in /etc"
+    fi
+    
+    # Validate RustMQ 1.0.0+ compatibility
+    info "Checking RustMQ 1.0.0+ compatibility requirements"
+    
+    # Check for proper certificate infrastructure
+    if command -v rustmq-admin &> /dev/null; then
+        local rustmq_version=$(rustmq-admin --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$rustmq_version" ]]; then
+            info "RustMQ version detected: $rustmq_version"
+            if [[ "$rustmq_version" < "1.0.0" ]]; then
+                warn "RustMQ version $rustmq_version may not support all 1.0.0+ security features"
+            fi
+        fi
     fi
     
     log "Environment validation completed"

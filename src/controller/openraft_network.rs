@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use tonic::{transport::{Channel, Endpoint}, Request, Response, Status};
 use tracing::{debug, error, info, warn};
 use bincode;
+use bytes::Bytes;
 
 use crate::controller::openraft_storage::{NodeId, RustMqTypeConfig, RustMqNode, RustMqSnapshotData};
 use crate::proto::controller::{
@@ -339,8 +340,8 @@ impl RustMqNetwork {
         Ok(SimpleAppendEntriesRequest {
             term: 0, // Simplified for now
             leader_id: self.node_id,
-            prev_log_id: prev_log_id_bytes.unwrap_or_default(),
-            entries: entries_bytes,
+            prev_log_id: Bytes::from(prev_log_id_bytes.unwrap_or_default()), // Convert Vec<u8> to Bytes
+            entries: Bytes::from(entries_bytes), // Convert Vec<u8> to Bytes
             leader_commit: req.leader_commit.map(|id| id.index).unwrap_or(0),
         })
     }
@@ -428,7 +429,7 @@ impl RustMqNetwork {
         Ok(SimpleVoteRequest {
             term: 0, // Simplified for now
             candidate_id: self.node_id,
-            last_log_id: last_log_id_bytes.unwrap_or_default(),
+            last_log_id: Bytes::from(last_log_id_bytes.unwrap_or_default()), // Convert Vec<u8> to Bytes
         })
     }
 
@@ -493,9 +494,9 @@ impl RustMqNetwork {
         Ok(SimpleInstallSnapshotRequest {
             term: 0, // Simplified for now
             leader_id: self.node_id,
-            meta: meta_bytes,
+            meta: Bytes::from(meta_bytes), // Convert Vec<u8> to Bytes
             offset: req.offset,
-            data: req.data.clone(),
+            data: Bytes::from(req.data.clone()), // Convert Vec<u8> to Bytes
             done: req.done,
         })
     }

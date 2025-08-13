@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use std::cmp::Ordering;
 use futures::future::join_all;
 use tracing::{info, warn, error, debug};
+use bytes::Bytes;
 
 /// Priority-based ETL pipeline orchestrator with optimized execution
 pub struct EtlPipelineOrchestrator {
@@ -622,7 +623,7 @@ impl EtlPipelineOrchestrator {
             .execute("transform", &record.value).await {
             Ok(output) => {
                 // Apply transformation to record
-                record.value = output;
+                record.value = Bytes::from(output); // Convert Vec<u8> back to Bytes
                 
                 // Return instance to pool
                 checkout.return_handle.return_instance(checkout.instance).await?;
@@ -838,12 +839,12 @@ mod tests {
             50,
         ).unwrap();
 
-        let record = Record {
-            key: Some(b"test-key".to_vec()),
-            value: b"test-value".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
+        let record = Record::new(
+            Some(b"test-key".to_vec()),
+            b"test-value".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        );
 
         let results = orchestrator.execute_pipelines(record, "test.topic").await.unwrap();
         assert_eq!(results.len(), 1);
@@ -907,12 +908,12 @@ mod tests {
             50,
         ).unwrap();
 
-        let record = Record {
-            key: Some(b"test-key".to_vec()),
-            value: b"test-value".to_vec(),
-            headers: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
+        let record = Record::new(
+            Some(b"test-key".to_vec()),
+            b"test-value".to_vec(),
+            vec![],
+            chrono::Utc::now().timestamp_millis(),
+        );
 
         // Should match events.user
         let results = orchestrator.execute_pipelines(record.clone(), "events.user").await.unwrap();

@@ -255,7 +255,7 @@ mod tests {
             ..Default::default()
         };
         
-        let _ca_cert = security_manager.certificate_manager()
+        let ca_cert = security_manager.certificate_manager()
             .generate_root_ca(ca_params).await.unwrap();
             
         // Load CA certificates into authentication manager
@@ -271,7 +271,7 @@ mod tests {
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
             key_size: Some(256),
-            issuer_id: None,
+            issuer_id: Some(ca_cert.id.clone()),
         };
         
         let client_cert = security_manager.certificate_manager()
@@ -475,7 +475,7 @@ mod tests {
             ..Default::default()
         };
         
-        let _ca_cert = security_manager.certificate_manager()
+        let ca_cert = security_manager.certificate_manager()
             .generate_root_ca(ca_params).await.unwrap();
         
         // System should still function with updated configuration
@@ -521,7 +521,7 @@ mod tests {
             ..Default::default()
         };
         
-        let _ca_cert = security_manager.certificate_manager()
+        let ca_cert = security_manager.certificate_manager()
             .generate_root_ca(ca_params).await.unwrap();
         
         let mut subject = rcgen::DistinguishedName::new();
@@ -534,7 +534,7 @@ mod tests {
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
             key_size: Some(256),
-            issuer_id: None,
+            issuer_id: Some(ca_cert.id.clone()),
         };
         
         let client_cert = security_manager.certificate_manager()
@@ -560,28 +560,28 @@ mod tests {
     async fn test_concurrent_security_operations() {
         let security_manager = Arc::new(create_integrated_security_system().await.0);
         
+        // Create CA certificate first
+        let ca_params = CaGenerationParams {
+            common_name: "Concurrent Test CA".to_string(),
+            is_root: true,
+            ..Default::default()
+        };
+        
+        let ca_cert = security_manager.certificate_manager()
+            .generate_root_ca(ca_params).await.unwrap();
+            
+        // Load CA certificates into authentication manager
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+        
         // Test concurrent certificate operations
         let mut cert_handles = Vec::new();
+        let ca_cert_id = ca_cert.id.clone();
         
         for i in 0..20 {
             let security_manager = security_manager.clone();
+            let ca_cert_id = ca_cert_id.clone();
             
             let handle = tokio::spawn(async move {
-                // Create CA if this is the first iteration
-                if i == 0 {
-                    let ca_params = CaGenerationParams {
-                        common_name: "Concurrent Test CA".to_string(),
-                        is_root: true,
-                        ..Default::default()
-                    };
-                    
-                    let _ca_cert = security_manager.certificate_manager()
-                        .generate_root_ca(ca_params).await.unwrap();
-                        
-                    // Load CA certificates into authentication manager
-                    security_manager.authentication().refresh_ca_chain().await.unwrap();
-                }
-                
                 // Issue certificate
                 let mut subject = rcgen::DistinguishedName::new();
                 subject.push(rcgen::DnType::CommonName, format!("concurrent-client-{}", i));
@@ -593,7 +593,7 @@ mod tests {
                     validity_days: Some(365),
                     key_type: Some(KeyType::Ecdsa),
                     key_size: Some(256),
-                    issuer_id: None,
+                    issuer_id: Some(ca_cert_id.clone()),
                 };
                 
                 let client_cert = security_manager.certificate_manager()

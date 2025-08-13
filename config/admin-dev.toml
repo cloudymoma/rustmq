@@ -1,0 +1,16 @@
+# RustMQ Admin Development Configuration
+
+[admin]
+controller_endpoint = "https://127.0.0.1:9642"
+timeout_seconds = 30
+
+[security]
+enabled = true
+client_cert_path = "./certs/admin.pem"
+client_key_path = "./certs/admin.key"
+ca_cert_path = "./certs/ca.pem"
+verify_server_cert = true
+
+[output]
+format = "json"
+pretty = true

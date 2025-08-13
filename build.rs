@@ -42,6 +42,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir(src_proto_dir)
         .emit_rerun_if_changed(false); // We handle this manually above
     
+    // ZERO-COPY OPTIMIZATION: Enable bytes::Bytes for all protobuf bytes fields
+    // This eliminates allocations during deserialization by using reference-counted buffers
+    config = config.bytes(&[".rustmq", "."]); // Apply to all RustMQ messages
+    
     // Configure file descriptor sets for reflection support
     config = config
         .file_descriptor_set_path(out_dir.join("proto_descriptor.bin"))

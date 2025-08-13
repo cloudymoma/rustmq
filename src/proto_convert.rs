@@ -65,8 +65,8 @@ impl TryFrom<internal::Record> for common::Record {
         let timestamp = timestamp_to_proto(record.timestamp)?;
         
         Ok(Self {
-            key: record.key.unwrap_or_default(),
-            value: record.value,
+            key: record.key.unwrap_or_default(), // Zero-copy: Bytes -> Bytes (for protobuf)
+            value: record.value, // Zero-copy: Bytes -> Bytes (for protobuf)
             headers: record.headers.into_iter().map(Into::into).collect(),
             timestamp: Some(timestamp),
         })
@@ -83,8 +83,8 @@ impl TryFrom<common::Record> for internal::Record {
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
             
         Ok(Self {
-            key: if record.key.is_empty() { None } else { Some(record.key) },
-            value: record.value,
+            key: if record.key.is_empty() { None } else { Some(record.key) }, // Zero-copy: Bytes from protobuf
+            value: record.value, // Zero-copy: Bytes from protobuf (no allocation!)
             headers: record.headers.into_iter().map(Into::into).collect(),
             timestamp,
         })
@@ -95,7 +95,7 @@ impl From<internal::Header> for common::Header {
     fn from(header: internal::Header) -> Self {
         Self {
             key: header.key,
-            value: header.value,
+            value: header.value, // Zero-copy: Bytes -> Bytes (for protobuf)
         }
     }
 }
@@ -104,7 +104,7 @@ impl From<common::Header> for internal::Header {
     fn from(header: common::Header) -> Self {
         Self {
             key: header.key,
-            value: header.value,
+            value: header.value, // Zero-copy: Bytes from protobuf (no allocation!)
         }
     }
 }
@@ -869,15 +869,15 @@ mod tests {
 
     #[test]
     fn test_record_conversion() {
-        let internal_record = internal::Record {
-            key: Some(b"test-key".to_vec()),
-            value: b"test-value".to_vec(),
-            headers: vec![internal::Header {
-                key: "header1".to_string(),
-                value: b"header-value".to_vec(),
-            }],
-            timestamp: Utc::now().timestamp_millis(),
-        };
+        let internal_record = internal::Record::new(
+            Some(b"test-key".to_vec()),
+            b"test-value".to_vec(),
+            vec![internal::Header::new(
+                "header1".to_string(),
+                b"header-value".to_vec(),
+            )],
+            Utc::now().timestamp_millis(),
+        );
         
         let proto_record: common::Record = internal_record.clone().try_into().unwrap();
         assert_eq!(proto_record.key, b"test-key".to_vec());
@@ -886,8 +886,8 @@ mod tests {
         assert!(proto_record.timestamp.is_some());
         
         let back_to_internal: internal::Record = proto_record.try_into().unwrap();
-        assert_eq!(back_to_internal.key, Some(b"test-key".to_vec()));
-        assert_eq!(back_to_internal.value, b"test-value".to_vec());
+        assert_eq!(back_to_internal.key, Some(bytes::Bytes::from(b"test-key".to_vec())));
+        assert_eq!(back_to_internal.value, bytes::Bytes::from(b"test-value".to_vec()));
         assert_eq!(back_to_internal.headers.len(), 1);
     }
 
@@ -899,12 +899,12 @@ mod tests {
                 partition: 0,
             },
             offset: 1000,
-            record: internal::Record {
-                key: None,
-                value: b"data".to_vec(),
-                headers: vec![],
-                timestamp: Utc::now().timestamp_millis(),
-            },
+            record: internal::Record::new(
+                None,
+                b"data".to_vec(),
+                vec![],
+                Utc::now().timestamp_millis(),
+            ),
             crc32: 123456,
         };
         

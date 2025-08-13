@@ -13,6 +13,7 @@ use filter::{TopicFilterEngine, ConditionalRuleEngine};
 use instance_pool::WasmInstancePool;
 use std::time::Duration;
 use serde_json::json;
+use bytes::Bytes;
 
 /// Test basic pipeline orchestrator creation and configuration
 #[tokio::test]
@@ -196,25 +197,25 @@ async fn test_conditional_rule_evaluation() {
     ];
     let engine = ConditionalRuleEngine::new(header_rules).unwrap();
     
-    let record_with_header = Record {
-        key: Some(b"test".to_vec()),
-        value: b"{}".to_vec(),
-        headers: vec![
-            Header {
-                key: "content-type".to_string(),
-                value: b"application/json".to_vec(),
-            }
+    let record_with_header = Record::new(
+        Some(b"test".to_vec()),
+        b"{}".to_vec(),
+        vec![
+            Header::new(
+                "content-type".to_string(),
+                b"application/json".to_vec(),
+            )
         ],
-        timestamp: 1234567890,
-    };
+        1234567890,
+    );
     assert!(engine.evaluate_record(&record_with_header, "test.topic").unwrap());
 
-    let record_without_header = Record {
-        key: Some(b"test".to_vec()),
-        value: b"{}".to_vec(),
-        headers: vec![],
-        timestamp: 1234567890,
-    };
+    let record_without_header = Record::new(
+        Some(b"test".to_vec()),
+        b"{}".to_vec(),
+        vec![],
+        1234567890,
+    );
     assert!(!engine.evaluate_record(&record_without_header, "test.topic").unwrap());
 
     // Test payload field condition
@@ -230,12 +231,12 @@ async fn test_conditional_rule_evaluation() {
     let engine = ConditionalRuleEngine::new(payload_rules).unwrap();
     
     let payload = r#"{"user": {"id": "user123", "name": "John"}}"#;
-    let record_with_payload = Record {
-        key: Some(b"test".to_vec()),
-        value: payload.as_bytes().to_vec(),
-        headers: vec![],
-        timestamp: 1234567890,
-    };
+    let record_with_payload = Record::new(
+        Some(b"test".to_vec()),
+        payload.as_bytes().to_vec(),
+        vec![],
+        1234567890,
+    );
     assert!(engine.evaluate_record(&record_with_payload, "test.topic").unwrap());
 
     // Test message size condition
@@ -250,20 +251,20 @@ async fn test_conditional_rule_evaluation() {
     ];
     let engine = ConditionalRuleEngine::new(size_rules).unwrap();
     
-    let large_record = Record {
-        key: Some(b"test".to_vec()),
-        value: b"this is a large message payload".to_vec(),
-        headers: vec![],
-        timestamp: 1234567890,
-    };
+    let large_record = Record::new(
+        Some(b"test".to_vec()),
+        b"this is a large message payload".to_vec(),
+        vec![],
+        1234567890,
+    );
     assert!(engine.evaluate_record(&large_record, "test.topic").unwrap());
 
-    let small_record = Record {
-        key: Some(b"test".to_vec()),
-        value: b"small".to_vec(),
-        headers: vec![],
-        timestamp: 1234567890,
-    };
+    let small_record = Record::new(
+        Some(b"test".to_vec()),
+        b"small".to_vec(),
+        vec![],
+        1234567890,
+    );
     assert!(!engine.evaluate_record(&small_record, "test.topic").unwrap());
 }
 
@@ -597,15 +598,15 @@ fn create_test_instance_pool_config() -> EtlInstancePoolConfig {
 }
 
 fn create_test_record() -> Record {
-    Record {
-        key: Some(b"test-key".to_vec()),
-        value: b"test-value".to_vec(),
-        headers: vec![
-            Header {
-                key: "content-type".to_string(),
-                value: b"application/json".to_vec(),
-            }
+    Record::new(
+        Some(b"test-key".to_vec()),
+        b"test-value".to_vec(),
+        vec![
+            Header::new(
+                "content-type".to_string(),
+                b"application/json".to_vec(),
+            )
         ],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    }
+        chrono::Utc::now().timestamp_millis(),
+    )
 }

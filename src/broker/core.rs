@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use async_trait::async_trait;
+use bytes::Bytes;
 
 use crate::error::{RustMqError, Result};
 use crate::types::*;
@@ -325,8 +326,8 @@ where
         };
 
         let wal_record = Record {
-            key: record.key,
-            value: record.value,
+            key: record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
+            value: Bytes::from(record.value), // Convert Vec<u8> to Bytes
             headers: record.headers,
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
@@ -358,8 +359,8 @@ where
             };
 
             let wal_record = Record {
-                key: record.key,
-                value: record.value,
+                key: record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
+                value: Bytes::from(record.value), // Convert Vec<u8> to Bytes
                 headers: record.headers,
                 timestamp: chrono::Utc::now().timestamp_millis(),
             };
@@ -467,8 +468,8 @@ where
                         records.push(ConsumeRecord {
                             topic_partition: topic_partition.clone(),
                             offset: *current_offset + i as u64,
-                            key: record.key,
-                            value: record.value,
+                            key: record.key.map(|k| k.to_vec()), // Convert Bytes to Vec<u8>
+                            value: record.value.to_vec(), // Convert Bytes to Vec<u8>
                             headers: record.headers,
                             timestamp: record.timestamp,
                         });
@@ -641,6 +642,10 @@ mod tests {
 
         async fn size(&self) -> Result<usize> {
             Ok(0)
+        }
+        
+        fn as_any(&self) -> Option<&dyn std::any::Any> {
+            Some(self)
         }
     }
 

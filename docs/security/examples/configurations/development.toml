@@ -1,4 +1,6 @@
-# RustMQ Development Environment Security Configuration
+# RustMQ Development Environment Security Configuration - v2.0
+# Compatible with RustMQ 1.0.0+ Performance and Security Features  
+# Updated: August 2025 - Enhanced for modern development workflows
 # This configuration prioritizes ease of development while maintaining basic security
 
 [security]
@@ -20,6 +22,12 @@ tls_version_max = "TLS1.3"
 cipher_suites = "modern"  # Options: modern, intermediate, old
 verify_client_cert = false  # Relaxed for development
 allow_self_signed = true   # Allow self-signed certs in dev
+
+# RustMQ 1.0.0+ Certificate Features (development-friendly)
+certificate_infrastructure_version = "1.0.0+"
+enforce_proper_signing_chains = false  # Relaxed for development
+validate_ca_signed_certificates = false # Allow self-signed in dev
+certificate_validation_performance_target = "1000μs average"  # Relaxed for dev
 
 # mTLS Configuration (disabled by default in dev)
 [security.mtls]
@@ -63,13 +71,26 @@ enabled = true
 default_policy = "allow"  # Development default: allow
 acl_enabled = true
 
-# ACL Configuration
+# ACL Configuration - RustMQ 1.0.0+ Performance Features
 [security.acl]
 enabled = true
 cache_enabled = true
 cache_size = 10000
 cache_ttl_seconds = 300
 fetch_batch_size = 100
+
+# RustMQ 1.0.0+ Multi-Level Cache Performance (development tuned)
+ultra_fast_enabled = true
+l1_cache_size = 1024           # Smaller cache for development
+l1_cache_ttl_seconds = 300     # 5 minutes L1 TTL
+l2_shard_count = 8             # Fewer shards for development
+bloom_filter_size = 10000      # Smaller negative cache
+bloom_filter_fp_rate = 0.05    # 5% false positive rate (relaxed)
+
+# Performance targets (development friendly)
+max_l1_latency_ns = 2000       # Relaxed: <2μs
+max_l2_latency_ns = 10000      # Relaxed: <10μs  
+min_throughput_ops_per_sec = 100000  # Target: 100K+ ops/sec
 
 # Development ACL storage (file-based for simplicity)
 storage_type = "file"  # Options: file, database, consul, etcd

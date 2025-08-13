@@ -8,8 +8,8 @@ pub struct SimpleVoteRequest {
     #[prost(uint64, tag = "2")]
     pub candidate_id: u64,
     /// Serialized LogId
-    #[prost(bytes = "vec", tag = "3")]
-    pub last_log_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "3")]
+    pub last_log_id: ::prost::bytes::Bytes,
 }
 /// Simplified Vote response for OpenRaft compatibility
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -29,11 +29,11 @@ pub struct SimpleAppendEntriesRequest {
     #[prost(uint64, tag = "2")]
     pub leader_id: u64,
     /// Serialized LogId
-    #[prost(bytes = "vec", tag = "3")]
-    pub prev_log_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "3")]
+    pub prev_log_id: ::prost::bytes::Bytes,
     /// Serialized Vec<Entry>
-    #[prost(bytes = "vec", tag = "4")]
-    pub entries: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "4")]
+    pub entries: ::prost::bytes::Bytes,
     /// Log index
     #[prost(uint64, tag = "5")]
     pub leader_commit: u64,
@@ -47,8 +47,8 @@ pub struct SimpleAppendEntriesResponse {
     #[prost(bool, tag = "2")]
     pub success: bool,
     /// Serialized Option<LogId>
-    #[prost(bytes = "vec", tag = "3")]
-    pub conflict_log_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "3")]
+    pub conflict_log_id: ::prost::bytes::Bytes,
 }
 /// Simplified InstallSnapshot request for OpenRaft compatibility
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -59,12 +59,12 @@ pub struct SimpleInstallSnapshotRequest {
     #[prost(uint64, tag = "2")]
     pub leader_id: u64,
     /// Serialized SnapshotMeta
-    #[prost(bytes = "vec", tag = "3")]
-    pub meta: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "3")]
+    pub meta: ::prost::bytes::Bytes,
     #[prost(uint64, tag = "4")]
     pub offset: u64,
-    #[prost(bytes = "vec", tag = "5")]
-    pub data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "5")]
+    pub data: ::prost::bytes::Bytes,
     #[prost(bool, tag = "6")]
     pub done: bool,
 }
@@ -286,8 +286,8 @@ pub struct LogEntry {
     #[prost(enumeration = "LogEntryType", tag = "3")]
     pub r#type: i32,
     /// Entry payload data
-    #[prost(bytes = "vec", tag = "4")]
-    pub data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "4")]
+    pub data: ::prost::bytes::Bytes,
     /// Entry creation timestamp
     #[prost(message, optional, tag = "5")]
     pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
@@ -334,8 +334,8 @@ pub struct InstallSnapshotRequest {
     #[prost(uint64, tag = "5")]
     pub offset: u64,
     /// Chunk of snapshot data
-    #[prost(bytes = "vec", tag = "6")]
-    pub data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "bytes", tag = "6")]
+    pub data: ::prost::bytes::Bytes,
     /// Whether this is the last chunk
     #[prost(bool, tag = "7")]
     pub done: bool,

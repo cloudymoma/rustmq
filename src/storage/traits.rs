@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use crate::{Result, types::*};
 use std::ops::Range;
+use std::any::Any;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[async_trait]
@@ -44,6 +45,7 @@ pub trait Cache: Send + Sync {
     async fn remove(&self, key: &str) -> Result<()>;
     async fn clear(&self) -> Result<()>;
     async fn size(&self) -> Result<usize>;
+    fn as_any(&self) -> Option<&dyn Any>;
 }
 
 #[async_trait]

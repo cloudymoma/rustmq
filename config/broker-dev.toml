@@ -1,0 +1,39 @@
+# RustMQ Broker Development Configuration
+
+[broker]
+broker_id = "broker-01"
+host = "127.0.0.1"
+port = 9092
+grpc_port = 9093
+
+[cluster]
+controller_endpoints = ["127.0.0.1:9094"]
+
+[storage]
+wal_dir = "./data/wal"
+segment_size_mb = 64
+max_segments = 100
+
+[storage.object_storage]
+type = "local"
+base_path = "./data/segments"
+
+[storage.cache]
+enabled = true
+max_size_mb = 256
+eviction_policy = "Moka"
+
+[security]
+enabled = true
+tls_cert_path = "./certs/server.pem"
+tls_key_path = "./certs/server.key"
+ca_cert_path = "./certs/ca.pem"
+require_client_cert = true
+
+[logging]
+level = "debug"
+file = "./logs/broker.log"
+
+[metrics]
+enabled = true
+port = 8080

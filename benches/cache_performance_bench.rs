@@ -24,10 +24,25 @@ fn bench_cache_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_creation");
     
     for &size in &[1024, 10_240, 102_400, 1_048_576] {
+        // Test creation without maintenance tasks (for benchmarks)
         group.bench_with_input(
-            BenchmarkId::new("cache_manager_new", size),
+            BenchmarkId::new("cache_manager_new_no_maintenance", size),
             &size,
             |b, &size| {
+                let config = create_cache_config(size);
+                b.iter(|| {
+                    CacheManager::new_without_maintenance(&config)
+                });
+            },
+        );
+        
+        // Test creation with maintenance tasks (requires runtime)
+        group.bench_with_input(
+            BenchmarkId::new("cache_manager_new_with_maintenance", size),
+            &size,
+            |b, &size| {
+                let rt = Runtime::new().unwrap();
+                let _guard = rt.enter();  // Ensure runtime is active
                 let config = create_cache_config(size);
                 b.iter(|| {
                     CacheManager::new(&config)
@@ -42,7 +57,7 @@ fn bench_cache_creation(c: &mut Criterion) {
 fn bench_cache_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_cache_config(1_048_576); // 1MB cache
-    let cache_manager = Arc::new(CacheManager::new(&config));
+    let cache_manager = Arc::new(CacheManager::new_without_maintenance(&config));
     
     let mut group = c.benchmark_group("cache_operations");
     group.throughput(Throughput::Elements(1));
@@ -89,7 +104,7 @@ fn bench_cache_operations(c: &mut Criterion) {
 fn bench_concurrent_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_cache_config(10_485_760); // 10MB cache
-    let cache_manager = Arc::new(CacheManager::new(&config));
+    let cache_manager = Arc::new(CacheManager::new_without_maintenance(&config));
     
     let mut group = c.benchmark_group("concurrent_cache");
     
@@ -180,7 +195,7 @@ fn bench_cache_eviction(c: &mut Criterion) {
     
     // Small cache to trigger frequent evictions
     let config = create_cache_config(32_768); // 32KB cache
-    let cache_manager = Arc::new(CacheManager::new(&config));
+    let cache_manager = Arc::new(CacheManager::new_without_maintenance(&config));
     
     group.bench_function("eviction_pressure", |b| {
         let cache = cache_manager.clone();
@@ -201,7 +216,7 @@ fn bench_cache_eviction(c: &mut Criterion) {
 fn bench_cache_value_sizes(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let config = create_cache_config(10_485_760); // 10MB cache
-    let cache_manager = Arc::new(CacheManager::new(&config));
+    let cache_manager = Arc::new(CacheManager::new_without_maintenance(&config));
     
     let mut group = c.benchmark_group("cache_value_sizes");
     
@@ -248,13 +263,72 @@ fn bench_cache_value_sizes(c: &mut Criterion) {
     group.finish();
 }
 
+// Benchmark comparing cache with and without maintenance overhead
+fn bench_cache_performance_comparison(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let config = create_cache_config(1_048_576); // 1MB cache
+    
+    let cache_no_maintenance = Arc::new(CacheManager::new_without_maintenance(&config));
+    let cache_with_maintenance = Arc::new({
+        let _guard = rt.enter();
+        CacheManager::new(&config)
+    });
+    
+    let mut group = c.benchmark_group("cache_performance_comparison");
+    group.throughput(Throughput::Elements(100));
+    
+    // Benchmark without maintenance overhead
+    group.bench_function("no_maintenance_overhead", |b| {
+        let cache = cache_no_maintenance.clone();
+        b.to_async(&rt).iter(|| async {
+            for i in 0..100 {
+                let key = format!("perf_key_{}", i);
+                let value = Bytes::from(vec![i as u8; 256]);
+                cache.cache_write(&key, value).await.unwrap();
+                cache.serve_read(&key).await.unwrap();
+            }
+        });
+    });
+    
+    // Benchmark with maintenance overhead
+    group.bench_function("with_maintenance_overhead", |b| {
+        let cache = cache_with_maintenance.clone();
+        b.to_async(&rt).iter(|| async {
+            for i in 0..100 {
+                let key = format!("perf_key_{}", i);
+                let value = Bytes::from(vec![i as u8; 256]);
+                cache.cache_write(&key, value).await.unwrap();
+                cache.serve_read(&key).await.unwrap();
+            }
+        });
+    });
+    
+    // Benchmark manual maintenance triggering
+    #[cfg(feature = "moka-cache")]
+    group.bench_function("manual_maintenance", |b| {
+        let cache = cache_no_maintenance.clone();
+        b.to_async(&rt).iter(|| async {
+            for i in 0..50 {
+                let key = format!("maint_key_{}", i);
+                let value = Bytes::from(vec![i as u8; 256]);
+                cache.cache_write(&key, value).await.unwrap();
+            }
+            // Manually trigger maintenance
+            cache.run_maintenance().await;
+        });
+    });
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_cache_creation,
     bench_cache_operations,
     bench_concurrent_cache,
     bench_cache_eviction,
-    bench_cache_value_sizes
+    bench_cache_value_sizes,
+    bench_cache_performance_comparison
 );
 
 criterion_main!(benches);

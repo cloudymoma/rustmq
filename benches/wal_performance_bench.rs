@@ -15,8 +15,8 @@ fn create_test_record(offset: u64, size: usize) -> WalRecord {
         },
         offset,
         record: Record {
-            key: Some(format!("key-{}", offset).into_bytes()),
-            value: vec![0u8; size],
+            key: Some(format!("key-{}", offset).into_bytes().into()),
+            value: vec![0u8; size].into(),
             headers: vec![],
             timestamp: chrono::Utc::now().timestamp_millis(),
         },

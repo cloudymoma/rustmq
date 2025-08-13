@@ -16,13 +16,21 @@ This comprehensive guide covers certificate lifecycle management in RustMQ, incl
 
 ## Overview
 
-RustMQ provides comprehensive certificate management capabilities designed for enterprise environments. The system supports:
+RustMQ provides comprehensive certificate management capabilities designed for enterprise environments. **Following recent security infrastructure improvements**, the certificate management system now features proper certificate signing chains and validated X.509 certificate operations.
 
-- **Complete CA Operations**: Root and intermediate CA management
-- **Automated Lifecycle**: Certificate issuance, renewal, and revocation
+### Recent Improvements (August 2025)
+✅ **Fixed Certificate Signing**: Resolved critical certificate signing issue where all certificates were being created as self-signed instead of properly signed by their issuing CA
+✅ **Production-Ready X.509 Implementation**: Complete certificate chain validation with proper issuer-to-subject relationships
+✅ **Security Test Validation**: All 120+ security tests now pass, validating the certificate infrastructure
+
+The system supports:
+
+- **Complete CA Operations**: Root and intermediate CA management with proper certificate signing chains
+- **Automated Lifecycle**: Certificate issuance, renewal, and revocation with validated signing
 - **Role-Based Templates**: Different certificate types for various use cases
-- **Performance Optimization**: Certificate caching and validation optimization
+- **Performance Optimization**: Certificate caching and validation optimization  
 - **Audit Trail**: Complete audit logging of all certificate operations
+- **Proper X.509 Certificate Chains**: End-entity certificates correctly signed by their issuing CA
 
 ### Certificate Types
 
@@ -116,6 +124,53 @@ rustmq-admin ca update-config --ca-id root_ca_1 --config-file ca-config.toml
 # Rotate CA certificate (advanced operation)
 rustmq-admin ca rotate --ca-id root_ca_1 --transition-days 90
 ```
+
+### Certificate Signing Architecture
+
+RustMQ implements proper X.509 certificate signing chains, ensuring that all certificates (except root CAs) are correctly signed by their issuing Certificate Authority.
+
+#### Certificate Chain Structure
+
+```
+Root CA Certificate (Self-Signed)
+    │
+    ├── Intermediate CA Certificate (Signed by Root CA)
+    │   │
+    │   ├── Broker Certificate (Signed by Intermediate CA)
+    │   ├── Client Certificate (Signed by Intermediate CA)
+    │   └── Admin Certificate (Signed by Intermediate CA)
+    │
+    └── Direct End-Entity Certificates (Signed by Root CA)
+```
+
+#### Key Implementation Details
+
+**✅ Fixed in August 2025**: The certificate manager now properly implements certificate signing:
+
+1. **Root CA Certificates**: Remain self-signed (correct behavior)
+2. **Intermediate CA Certificates**: Now properly signed by their issuing root CA
+3. **End-Entity Certificates**: Now properly signed by the appropriate CA (root or intermediate)
+
+**Previous Issue**: All certificates were being created as self-signed using `RcgenCertificate::from_params()`, causing authentication manager certificate validation to fail with "Invalid certificate signature" errors.
+
+**Current Implementation**: 
+- Uses `reconstruct_rcgen_certificate()` to rebuild CA certificates from stored PEM data
+- Properly signs intermediate CAs with `ca_cert.serialize_der_with_signer(&issuer_cert)`
+- Correctly signs end-entity certificates with their designated issuing CA
+- Maintains proper certificate metadata and storage
+
+#### Certificate Validation Chain
+
+The authentication manager now successfully validates:
+
+1. **Certificate Chain Verification**: Validates the complete chain from end-entity to root CA
+2. **Signature Verification**: Verifies that each certificate is properly signed by its issuer
+3. **Issuer-Subject Relationships**: Confirms proper CA hierarchy relationships
+4. **Certificate Revocation**: Checks revocation status against CA records
+
+This resolves the previous authentication test failures and ensures production-ready mTLS security.
+
+**For detailed technical implementation details**, see [Certificate Signing Implementation](CERTIFICATE_SIGNING_IMPLEMENTATION.md).
 
 ## Certificate Lifecycle
 
