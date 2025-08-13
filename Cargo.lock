@@ -4706,6 +4706,7 @@ dependencies = [
  "env_logger",
  "futures",
  "hex",
+ "lru",
  "parking_lot",
  "proptest",
  "quinn 0.11.8",

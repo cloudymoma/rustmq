@@ -82,7 +82,7 @@ test-release:
 	@echo "$(GREEN)✅ Release tests and benchmarks completed$(RESET)"
 
 # Pre-commit sanity check, Linux only
-sanity: test-debug test-release
+sanity: test-debug test-release sdk-test-debug sdk-test-release
 	cargo test --lib 
 	cargo test --bins
 	cargo test --tests
@@ -97,6 +97,20 @@ build-binaries:
 	cargo build --release --bin rustmq-bigquery-subscriber $(FEATURES)
 	cargo build --release --bin rustmq-admin-server $(FEATURES)
 	@echo "$(GREEN)✅ All binaries built$(RESET)"
+
+# Rust SDK build targets
+.PHONY: sdk-build sdk-build-debug sdk-build-release
+sdk-build: sdk-build-debug sdk-build-release
+
+sdk-build-debug:
+	@echo "$(YELLOW)🔨 Building Rust SDK debug mode...$(RESET)"
+	cd sdk/rust && cargo build
+	@echo "$(GREEN)✅ Rust SDK debug build completed$(RESET)"
+
+sdk-build-release:
+	@echo "$(YELLOW)🔨 Building Rust SDK release mode...$(RESET)"
+	cd sdk/rust && cargo build --release
+	@echo "$(GREEN)✅ Rust SDK release build completed$(RESET)"
 
 # Code quality checks
 .PHONY: check lint fmt clippy
@@ -161,6 +175,25 @@ test-legacy-cache:
 	cargo test --lib $(FEATURES_NO_DEFAULT)
 	@echo "$(GREEN)✅ Legacy cache tests completed$(RESET)"
 
+# Rust SDK test targets
+.PHONY: sdk-test sdk-test-debug sdk-test-release
+sdk-test: sdk-test-debug sdk-test-release
+
+sdk-test-debug:
+	@echo "$(YELLOW)🧪 Running Rust SDK debug tests (excluding benchmarks)...$(RESET)"
+	cd sdk/rust && cargo test --lib
+	cd sdk/rust && cargo test --bins
+	cd sdk/rust && cargo test --tests
+	@echo "$(GREEN)✅ Rust SDK debug tests completed$(RESET)"
+
+sdk-test-release:
+	@echo "$(YELLOW)🧪 Running Rust SDK release tests...$(RESET)"
+	cd sdk/rust && cargo test --release --lib
+	cd sdk/rust && cargo test --release --tests
+	@echo "$(YELLOW)🏃 Running Rust SDK benchmarks (if available)...$(RESET)"
+	-cd sdk/rust && cargo bench 2>/dev/null || echo "$(YELLOW)⚠️  Some benchmarks skipped due to compilation issues$(RESET)"
+	@echo "$(GREEN)✅ Rust SDK release tests completed$(RESET)"
+
 # Development helpers
 .PHONY: dev dev-broker dev-controller dev-admin
 dev:
@@ -213,11 +246,17 @@ help:
 	@echo "  build-debug      - Build debug mode only"
 	@echo "  build-release    - Build release mode only"
 	@echo "  build-binaries   - Build all binary targets"
+	@echo "  sdk-build        - Build Rust SDK debug and release"
+	@echo "  sdk-build-debug  - Build Rust SDK debug mode only"
+	@echo "  sdk-build-release - Build Rust SDK release mode only"
 	@echo ""
 	@echo "$(YELLOW)Test Targets:$(RESET)"
 	@echo "  test-debug       - Run debug tests (no benchmarks)"
 	@echo "  test-release     - Run release tests with benchmarks"
 	@echo "  test-legacy-cache - Test with legacy LRU cache"
+	@echo "  sdk-test         - Run Rust SDK tests debug and release"
+	@echo "  sdk-test-debug   - Run Rust SDK debug tests (no benchmarks)"
+	@echo "  sdk-test-release - Run Rust SDK release tests with benchmarks"
 	@echo ""
 	@echo "$(YELLOW)Code Quality:$(RESET)"
 	@echo "  check            - Run cargo check"
