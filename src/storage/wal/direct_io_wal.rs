@@ -367,19 +367,14 @@ impl WriteAheadLog for DirectIOWal {
         let record_size = serialized.len() as u64;
         let total_size = serialized.len() + 8; // 8 bytes for size prefix
         
-        let buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
-        
-        let mut write_buffer = Vec::with_capacity(total_size);
-        write_buffer.extend_from_slice(&record_size.to_le_bytes());
-        write_buffer.extend_from_slice(&serialized);
-        
-        if write_buffer.len() > buffer.len() {
-            // Return the buffer before erroring
-            self.buffer_pool.return_buffer(buffer);
-            return Err(crate::error::RustMqError::BufferTooSmall);
-        }
+        // Get buffer from pool and write directly into it (zero-copy)
+        let mut buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
+        buffer.clear(); // Ensure buffer is empty
+        buffer.extend_from_slice(&record_size.to_le_bytes());
+        buffer.extend_from_slice(&serialized);
 
-        let file_offset = self.write_with_direct_io(&write_buffer).await?;
+        let buffer_len = buffer.len();
+        let file_offset = self.write_with_direct_io(&buffer).await?;
         let logical_offset = self.current_offset.fetch_add(1, Ordering::SeqCst);
 
         // Return the buffer to the pool after successful write
@@ -389,7 +384,7 @@ impl WriteAheadLog for DirectIOWal {
             start_offset: logical_offset,
             end_offset: logical_offset + 1,
             file_offset,
-            size_bytes: write_buffer.len() as u64,
+            size_bytes: buffer_len as u64,
             created_at: Instant::now(),
         };
 
@@ -398,7 +393,7 @@ impl WriteAheadLog for DirectIOWal {
         // Update current segment size for upload monitoring (with lock to prevent race conditions)
         {
             let _guard = self.segment_tracking_lock.lock().unwrap();
-            self.current_segment_size.fetch_add(write_buffer.len() as u64, Ordering::SeqCst);
+            self.current_segment_size.fetch_add(buffer_len as u64, Ordering::SeqCst);
         }
 
         Ok(logical_offset)
