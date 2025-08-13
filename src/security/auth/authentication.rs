@@ -257,6 +257,30 @@ impl AuthenticationManager {
             });
         }
         
+        // CRITICAL SECURITY FIX: Validate certificate signature against CA chain
+        // This prevents forged certificates and ensures cryptographic chain of trust
+        let mut signature_valid = false;
+        
+        if certificates.len() == 1 {
+            // Single certificate: validate against stored CA chain
+            for ca_cert in ca_chain.iter() {
+                // Try to validate against each CA certificate in the chain
+                if self.validate_certificate_signature(&parsed_cert, ca_cert).is_ok() {
+                    signature_valid = true;
+                    break;
+                }
+            }
+        } else {
+            // Certificate chain: validate each link in the chain
+            signature_valid = self.validate_full_certificate_chain(certificates, &ca_chain)?;
+        }
+        
+        if !signature_valid {
+            return Err(RustMqError::CertificateValidation {
+                reason: "Certificate signature validation failed - not signed by trusted CA".to_string()
+            });
+        }
+        
         // Check certificate validity period
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -286,7 +310,7 @@ impl AuthenticationManager {
             });
         }
         
-        // Certificate is valid
+        // Certificate is valid and properly signed
         Ok(())
     }
     
@@ -416,6 +440,44 @@ impl AuthenticationManager {
         Ok(parsed)
     }
     
+    /// Validate a full certificate chain with intermediate CAs
+    fn validate_full_certificate_chain(&self, certificates: &[Certificate], trusted_ca_chain: &[Certificate]) -> Result<bool, RustMqError> {
+        // Certificate chain order: [client_cert, intermediate_ca, ..., root_ca]
+        // Validate each link: cert[i] must be signed by cert[i+1]
+        
+        for i in 0..certificates.len() - 1 {
+            let child_cert_der = &certificates[i].0;
+            let parent_cert = &certificates[i + 1];
+            
+            // Parse the child certificate
+            let child_parsed = self.parse_certificate(child_cert_der)?;
+            
+            // Validate that child is signed by parent
+            if self.validate_certificate_signature(&child_parsed, parent_cert).is_err() {
+                return Ok(false);
+            }
+        }
+        
+        // Final step: validate the last certificate in the chain against trusted CAs
+        if let Some(last_cert) = certificates.last() {
+            let last_parsed = self.parse_certificate(&last_cert.0)?;
+            
+            // Check if the last certificate is a trusted root CA
+            for trusted_ca in trusted_ca_chain.iter() {
+                if self.validate_certificate_signature(&last_parsed, trusted_ca).is_ok() {
+                    return Ok(true);
+                }
+                
+                // Also check if the last certificate itself is in the trusted CA chain
+                if last_cert.0 == trusted_ca.0 {
+                    return Ok(true);
+                }
+            }
+        }
+        
+        Ok(false)
+    }
+
     /// Validate certificate signature
     fn validate_certificate_signature(&self, cert: &X509Certificate, ca_cert: &Certificate) -> Result<(), RustMqError> {
         // Extract signature algorithm
@@ -628,6 +690,14 @@ impl AuthenticationManager {
     
     /// Validate certificate using parsed cached data (faster path)
     async fn validate_with_parsed_data(&self, parsed_data: &ParsedCertData, fingerprint: &CertificateFingerprint) -> Result<(), RustMqError> {
+        // CRITICAL SECURITY CHECK: Ensure signature was validated
+        // This prevents using cached data from certificates with invalid signatures
+        if !parsed_data.signature_valid {
+            return Err(RustMqError::CertificateValidation {
+                reason: "Certificate signature not validated or invalid".to_string(),
+            });
+        }
+        
         // Check validity period using cached data
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -669,6 +739,28 @@ impl AuthenticationManager {
         // Parse certificate and cache the result
         let parsed_cert = self.parse_certificate(certificate_der)?;
         
+        // CRITICAL SECURITY FIX: Validate signature against CA chain
+        let ca_chain = self.ca_chain.load();
+        if ca_chain.is_empty() {
+            return Err(RustMqError::CertificateValidation {
+                reason: "No CA certificates configured".to_string(),
+            });
+        }
+        
+        let mut signature_valid = false;
+        for ca_cert in ca_chain.iter() {
+            if self.validate_certificate_signature(&parsed_cert, ca_cert).is_ok() {
+                signature_valid = true;
+                break;
+            }
+        }
+        
+        if !signature_valid {
+            return Err(RustMqError::CertificateValidation {
+                reason: "Certificate signature validation failed - not signed by trusted CA".to_string(),
+            });
+        }
+        
         // Cache parsed certificate data for future use
         let parsed_data = ParsedCertData {
             subject_cn: {
@@ -689,7 +781,7 @@ impl AuthenticationManager {
             serial_number: parsed_cert.tbs_certificate.serial.to_bytes_be(),
             not_before: parsed_cert.validity().not_before.timestamp(),
             not_after: parsed_cert.validity().not_after.timestamp(),
-            signature_valid: true, // TODO: Implement signature validation
+            signature_valid: true, // Set to true after successful validation
         };
         
         self.parsed_cert_cache.insert(*fingerprint, parsed_data.clone());

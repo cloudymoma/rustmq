@@ -52,6 +52,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_validation_with_valid_cert() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -105,6 +107,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_principal_extraction_from_certificate() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -155,6 +159,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_revocation_check() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -204,6 +210,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_caching_behavior() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -258,6 +266,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_authentication_context_creation() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -315,6 +325,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_fingerprint_calculation() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -364,6 +376,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_authentication_metrics_collection() {
+        // Acquire test isolation lock to prevent interference from other tests
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Get initial metrics
@@ -382,6 +397,10 @@ mod tests {
         
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Verify CA chain was loaded correctly
+        let ca_chain = cert_manager.get_ca_chain().await.unwrap();
+        assert!(!ca_chain.is_empty(), "CA chain should not be empty after refresh");
         
         // Perform successful authentication
         let mut subject = rcgen::DistinguishedName::new();
@@ -556,6 +575,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_authentication_with_expired_certificate() {
+        // Acquire test isolation lock to prevent interference from other tests
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -569,6 +591,10 @@ mod tests {
         
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Verify CA chain was loaded correctly
+        let ca_chain = cert_manager.get_ca_chain().await.unwrap();
+        assert!(!ca_chain.is_empty(), "CA chain should not be empty after refresh");
         
         // Issue a certificate with very short validity (1 day)
         let mut subject = rcgen::DistinguishedName::new();
@@ -764,6 +790,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_chain_manipulation_attacks() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create legitimate certificates
@@ -827,6 +855,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_authentication_safety() {
+        // Acquire test isolation lock to prevent interference from other tests
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
@@ -837,7 +868,13 @@ mod tests {
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
+        
+        // Ensure the CA chain is properly loaded and verify it
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Verify CA chain was loaded correctly by checking it exists
+        let ca_chain = cert_manager.get_ca_chain().await.unwrap();
+        assert!(!ca_chain.is_empty(), "CA chain should not be empty after refresh");
         
         // Create test certificates
         let mut test_certificates = Vec::new();
@@ -860,6 +897,12 @@ mod tests {
             let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
             test_certificates.push(cert_der);
         }
+        
+        // Verify that at least one valid certificate works before starting concurrent test
+        let test_validation = auth_manager.validate_certificate(&test_certificates[0]).await;
+        assert!(test_validation.is_ok(), 
+               "Test setup failed: Valid certificate should pass validation. Error: {:?}", 
+               test_validation);
         
         let auth_manager = Arc::new(auth_manager);
         let mut handles = Vec::new();
@@ -965,6 +1008,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_revocation_bypass_attempts() {
+        let _lock = TEST_ISOLATION_MUTEX.lock().await;
+        
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
         // Create a root CA first
