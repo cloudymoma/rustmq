@@ -450,6 +450,9 @@ mod tests {
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
         
+        // Give time for CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         // Create an intermediate CA
         let intermediate_ca_params = CaGenerationParams {
             common_name: "Intermediate CA".to_string(),
@@ -461,6 +464,9 @@ mod tests {
         
         // Refresh CA chain again after adding intermediate CA
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Give time for CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         
         // Issue a client certificate from the intermediate CA
         let mut subject = rcgen::DistinguishedName::new();
@@ -480,6 +486,9 @@ mod tests {
         
         // Refresh CA chain after issuing client certificate
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Give time for background certificate persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Validate the certificate chain - convert PEMs to DER first
         let client_pem = client_cert.certificate_pem.clone().unwrap();
@@ -618,11 +627,14 @@ mod tests {
         // Refresh CA chain after issuing client certificate
         auth_manager.refresh_ca_chain().await.unwrap();
         
+        // Add small delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         // Test validation with newly issued certificate (should succeed) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
         let validation_result = auth_manager.validate_certificate(&der_data).await;
-        assert!(validation_result.is_ok(), "Validation of fresh certificate should succeed");
+        assert!(validation_result.is_ok(), "Validation of fresh certificate should succeed: {:?}", validation_result);
         
         // Note: Testing actual expiry would require time manipulation or very short certificates
         // In a production test environment, you might use mock time or certificates with past expiry dates
@@ -878,6 +890,9 @@ mod tests {
         // Ensure the CA chain is properly loaded and verify it
         auth_manager.refresh_ca_chain().await.unwrap();
         
+        // Add delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         // Verify CA chain was loaded correctly by checking it exists
         let ca_chain = cert_manager.get_ca_chain().await.unwrap();
         assert!(!ca_chain.is_empty(), "CA chain should not be empty after refresh");
@@ -906,6 +921,9 @@ mod tests {
         
         // Refresh CA chain after issuing all certificates
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Add delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         
         // Verify that at least one valid certificate works before starting concurrent test
         let test_validation = auth_manager.validate_certificate(&test_certificates[0]).await;
@@ -1031,6 +1049,9 @@ mod tests {
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
         
+        // Add delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         // Create and then revoke a certificate
         let mut subject = rcgen::DistinguishedName::new();
         subject.push(rcgen::DnType::CommonName, "revocation-test-user".to_string());
@@ -1051,6 +1072,9 @@ mod tests {
         
         // Refresh CA chain after issuing certificate
         auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Add delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         
         // Revoke the certificate
         cert_manager.revoke_certificate(&cert_result.id, RevocationReason::KeyCompromise).await.unwrap();
@@ -1115,6 +1139,13 @@ mod tests {
         };
         
         let legitimate_cert = cert_manager.issue_certificate(legitimate_request).await.unwrap();
+        
+        // Refresh CA chain after issuing legitimate certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Add delay to ensure CA chain is fully propagated
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         let legitimate_pem = legitimate_cert.certificate_pem.clone().unwrap();
         let legitimate_der = rustls_pemfile::certs(&mut legitimate_pem.as_bytes()).unwrap().into_iter().next().unwrap();
         let legitimate_result = auth_manager.validate_certificate(&legitimate_der).await;

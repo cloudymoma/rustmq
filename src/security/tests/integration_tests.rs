@@ -280,6 +280,9 @@ mod tests {
         let client_cert = security_manager.certificate_manager()
             .issue_certificate(cert_request).await.unwrap();
         
+        // Give time for background certificate persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        
         // 2. Perform authentication operations (some successful, some failed)
         // Successful authentication
         let pem_data = client_cert.certificate_pem.clone().unwrap();
