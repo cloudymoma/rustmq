@@ -1,0 +1,25 @@
+# Test Controller Configuration
+[cluster]
+node_id = 1
+cluster_id = "test-cluster"
+
+[network]
+bind_addr = "127.0.0.1:9094"
+grpc_bind_addr = "127.0.0.1:9095"
+
+[raft]
+enable = true
+data_dir = "/tmp/rustmq-controller-data"
+log_dir = "/tmp/rustmq-controller-logs" 
+heartbeat_interval_ms = 1000
+heartbeat_timeout_ms = 2000
+election_timeout_ms = 5000
+snapshot_policy = { log_since_last = 1000 }
+
+[storage]
+data_dir = "/tmp/rustmq-controller-storage"
+
+[security]
+enable_tls = false
+enable_auth = false
+certificate_management = { auto_generate = true }

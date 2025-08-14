@@ -1,0 +1,79 @@
+# Test Broker Configuration
+[broker]
+id = "test-broker-001"
+rack_id = "test-rack"
+
+[network]
+quic_listen = "127.0.0.1:9092"
+rpc_listen = "127.0.0.1:9093"
+max_connections = 100
+connection_timeout_ms = 10000
+
+[network.quic_config]
+max_concurrent_uni_streams = 100
+max_concurrent_bidi_streams = 100
+max_idle_timeout_ms = 30000
+max_stream_data = 1048576
+max_connection_data = 10485760
+
+[wal]
+path = "/tmp/rustmq/test-broker-wal"
+capacity_bytes = 104857600  # 100MB
+fsync_on_write = false
+segment_size_bytes = 16777216
+buffer_size = 16384
+upload_interval_ms = 60000
+flush_interval_ms = 500
+
+[cache]
+write_cache_size_bytes = 16777216  # 16MB
+read_cache_size_bytes = 33554432   # 32MB
+eviction_policy = "Moka"
+
+[object_storage]
+storage_type = { Local = { path = "/tmp/rustmq/test-broker-storage" } }
+bucket = "test-bucket"
+region = "test-region"
+endpoint = ""
+access_key = ""
+secret_key = ""
+multipart_threshold = 10485760
+max_concurrent_uploads = 2
+
+[controller]
+endpoints = ["127.0.0.1:9095"]
+election_timeout_ms = 3000
+heartbeat_interval_ms = 1000
+
+[replication]
+ack_timeout_ms = 5000
+replication_factor = 1
+enable_async_replication = true
+batch_size = 10
+
+[etl]
+enable = false
+
+[scaling]
+min_partitions = 1
+max_partitions = 16
+partition_scale_threshold = 0.8
+
+[operations]
+enable_auto_topic_creation = true
+default_partition_count = 4
+default_replication_factor = 1
+
+[rate_limiting]
+enable = false
+max_requests_per_second = 10000
+max_bytes_per_second = 104857600
+
+[security]
+enable_auth = false
+auth_method = "none"
+auth_secret = ""
+enable_tls = false
+tls_cert_path = ""
+tls_key_path = ""
+ca_cert_path = ""

@@ -92,6 +92,9 @@ mod tests {
         assert!(auth_context.groups.contains(&"clients".to_string()));
         
         // 6. Test certificate validation
+        // Refresh CA chain to ensure latest certificates are loaded before validation
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+        
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
             .unwrap().into_iter().next().unwrap();

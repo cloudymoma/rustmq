@@ -478,6 +478,9 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         
+        // Refresh CA chain after issuing client certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
+        
         // Validate the certificate chain - convert PEMs to DER first
         let client_pem = client_cert.certificate_pem.clone().unwrap();
         let client_der = rustls_pemfile::certs(&mut client_pem.as_bytes()).unwrap().into_iter().next().unwrap();
@@ -611,6 +614,9 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
+        
+        // Refresh CA chain after issuing client certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
         
         // Test validation with newly issued certificate (should succeed) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
@@ -898,6 +904,9 @@ mod tests {
             test_certificates.push(cert_der);
         }
         
+        // Refresh CA chain after issuing all certificates
+        auth_manager.refresh_ca_chain().await.unwrap();
+        
         // Verify that at least one valid certificate works before starting concurrent test
         let test_validation = auth_manager.validate_certificate(&test_certificates[0]).await;
         assert!(test_validation.is_ok(), 
@@ -1039,6 +1048,9 @@ mod tests {
         let cert_result = cert_manager.issue_certificate(cert_request).await.unwrap();
         let pem_data = cert_result.certificate_pem.clone().unwrap();
         let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        
+        // Refresh CA chain after issuing certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
         
         // Revoke the certificate
         cert_manager.revoke_certificate(&cert_result.id, RevocationReason::KeyCompromise).await.unwrap();

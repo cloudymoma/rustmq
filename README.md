@@ -78,7 +78,7 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - [WebAssembly ETL Processing](#-webassembly-etl-processing)
 - [Zero-Copy Optimization](docs/zero-copy-optimization.md)
 - [Google Cloud Platform Setup](#-google-cloud-platform-setup)
-- [Configuration](#-configuration)
+- [Configuration](#-configuration) - **Configuration Guide Available: [docs/configuration-guide.md](docs/configuration-guide.md)**
 - [Message Broker Core API](#-message-broker-core-api)
 - [Client SDKs](#-client-sdks)
 - [Usage Examples](#-usage-examples)
@@ -1547,7 +1547,50 @@ gcloud compute firewall-rules create rustmq-admin \
 
 ## ⚙️ Configuration
 
-**Note**: This is the intended configuration structure. Current implementation includes placeholder services that load and validate this configuration but don't fully implement the functionality.
+RustMQ provides a comprehensive configuration system with optimized settings for development, testing, and production environments. **For detailed configuration guide, see [Configuration Guide](docs/configuration-guide.md)**.
+
+### Configuration Files Overview
+
+RustMQ includes well-structured configuration files for different environments:
+
+#### 🧪 **Testing Configurations** (Ready to Use)
+- `config/test-broker.toml` - Optimized for unit/integration tests with `/tmp` storage, disabled fsync, and fast timeouts
+- `config/test-controller.toml` - Test controller with local addresses and temporary directories
+
+#### 🛠️ **Development Configurations** (Ready to Use)  
+- `config/broker-dev.toml` - Development broker with local paths and debug logging
+- `config/controller-dev.toml` - Development controller with self-signed certificates
+- `config/example-development.toml` - Comprehensive development template with detailed comments
+
+#### 🏭 **Production Configurations** (Ready to Use)
+- `config/broker.toml` - Production broker configuration
+- `config/controller.toml` - Production controller configuration
+- `config/example-production.toml` - Production template with enterprise settings
+
+### Quick Start
+
+```bash
+# Testing (use existing optimized configs)
+cargo test --lib  # Uses test configs automatically
+RUSTMQ_BROKER_CONFIG=config/test-broker.toml cargo test --test integration
+
+# Development (ready-to-use configs)  
+cargo run --bin rustmq-broker -- --config config/broker-dev.toml
+cargo run --bin rustmq-controller -- --config config/controller-dev.toml
+
+# Production (customize from templates)
+cp config/example-production.toml config/my-production.toml
+# Edit my-production.toml for your environment
+cargo run --bin rustmq-broker -- --config config/my-production.toml
+```
+
+### Key Configuration Features
+
+- **📁 Environment-Specific**: Separate configs for test/dev/prod with optimal defaults
+- **🔧 No New Files Needed**: Existing configurations cover all use cases
+- **⚡ Performance Optimized**: Test configs use `/tmp` storage and disabled fsync for speed
+- **🔒 Security Ready**: Development configs include mTLS with proper certificate chains
+- **☁️ Cloud Native**: Production configs optimized for GCP with proper storage backends
 
 ### Broker Configuration (`broker.toml`)
 

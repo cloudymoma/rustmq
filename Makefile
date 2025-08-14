@@ -82,7 +82,7 @@ test-release:
 	@echo "$(GREEN)✅ Release tests and benchmarks completed$(RESET)"
 
 # Pre-commit sanity check, Linux only
-sanity: test-debug test-release sdk-test-debug sdk-test-release
+sanity: test sdk-test
 	cargo test --lib 
 	cargo test --bins
 	cargo test --tests
@@ -98,19 +98,34 @@ build-binaries:
 	cargo build --release --bin rustmq-admin-server $(FEATURES)
 	@echo "$(GREEN)✅ All binaries built$(RESET)"
 
-# Rust SDK build targets
+# SDK build targets (Rust and Go)
 .PHONY: sdk-build sdk-build-debug sdk-build-release
 sdk-build: sdk-build-debug sdk-build-release
 
-sdk-build-debug:
+sdk-build-debug: sdk-rust-build-debug sdk-go-build
+
+sdk-build-release: sdk-rust-build-release sdk-go-build
+
+# Rust SDK build targets
+.PHONY: sdk-rust-build sdk-rust-build-debug sdk-rust-build-release
+sdk-rust-build: sdk-rust-build-debug sdk-rust-build-release
+
+sdk-rust-build-debug:
 	@echo "$(YELLOW)🔨 Building Rust SDK debug mode...$(RESET)"
 	cd sdk/rust && cargo build
 	@echo "$(GREEN)✅ Rust SDK debug build completed$(RESET)"
 
-sdk-build-release:
+sdk-rust-build-release:
 	@echo "$(YELLOW)🔨 Building Rust SDK release mode...$(RESET)"
 	cd sdk/rust && cargo build --release
 	@echo "$(GREEN)✅ Rust SDK release build completed$(RESET)"
+
+# Go SDK build targets
+.PHONY: sdk-go-build sdk-go-test sdk-go-bench sdk-go-examples
+sdk-go-build:
+	@echo "$(YELLOW)🔨 Building Go SDK...$(RESET)"
+	cd sdk/go && go build ./...
+	@echo "$(GREEN)✅ Go SDK build completed$(RESET)"
 
 # Code quality checks
 .PHONY: check lint fmt clippy
@@ -119,7 +134,7 @@ check:
 	cargo check $(FEATURES)
 	@echo "$(GREEN)✅ Check completed$(RESET)"
 
-lint: clippy fmt
+lint: clippy fmt sdk-go-fmt sdk-go-vet
 
 clippy:
 	@echo "$(YELLOW)📎 Running clippy...$(RESET)"
@@ -143,7 +158,7 @@ clean-all: clean
 	rm -rf target/
 	@echo "$(GREEN)✅ Deep clean completed$(RESET)"
 
-# Performance-specific targets
+# Performance-specific targets (all benchmarks run in release mode for accurate results)
 .PHONY: bench bench-cache bench-security bench-wal bench-replication
 bench:
 	@echo "$(YELLOW)🏃 Running all benchmarks...$(RESET)"
@@ -175,24 +190,85 @@ test-legacy-cache:
 	cargo test --lib $(FEATURES_NO_DEFAULT)
 	@echo "$(GREEN)✅ Legacy cache tests completed$(RESET)"
 
-# Rust SDK test targets
+# SDK test targets (Rust and Go)
 .PHONY: sdk-test sdk-test-debug sdk-test-release
 sdk-test: sdk-test-debug sdk-test-release
 
-sdk-test-debug:
+sdk-test-debug: sdk-rust-test-debug sdk-go-test-debug
+
+sdk-test-release: sdk-rust-test-release sdk-go-test-release
+
+# Rust SDK test targets
+.PHONY: sdk-rust-test sdk-rust-test-debug sdk-rust-test-release
+sdk-rust-test: sdk-rust-test-debug sdk-rust-test-release
+
+sdk-rust-test-debug:
 	@echo "$(YELLOW)🧪 Running Rust SDK debug tests (excluding benchmarks)...$(RESET)"
 	cd sdk/rust && cargo test --lib
 	cd sdk/rust && cargo test --bins
 	cd sdk/rust && cargo test --tests
 	@echo "$(GREEN)✅ Rust SDK debug tests completed$(RESET)"
 
-sdk-test-release:
+sdk-rust-test-release:
 	@echo "$(YELLOW)🧪 Running Rust SDK release tests...$(RESET)"
 	cd sdk/rust && cargo test --release --lib
 	cd sdk/rust && cargo test --release --tests
 	@echo "$(YELLOW)🏃 Running Rust SDK benchmarks (if available)...$(RESET)"
 	-cd sdk/rust && cargo bench 2>/dev/null || echo "$(YELLOW)⚠️  Some benchmarks skipped due to compilation issues$(RESET)"
 	@echo "$(GREEN)✅ Rust SDK release tests completed$(RESET)"
+
+# Go SDK test targets
+.PHONY: sdk-go-test sdk-go-test-debug sdk-go-test-release sdk-go-bench
+sdk-go-test: sdk-go-test-debug sdk-go-test-release
+
+sdk-go-test-debug:
+	@echo "$(YELLOW)🧪 Running Go SDK debug tests (excluding benchmarks)...$(RESET)"
+	-cd sdk/go && go test ./rustmq ./tests ./benchmarks -v
+	@echo "$(GREEN)✅ Go SDK debug tests completed$(RESET)"
+
+sdk-go-test-release:
+	@echo "$(YELLOW)🧪 Running Go SDK release tests...$(RESET)"
+	cd sdk/go && go test ./rustmq ./tests ./benchmarks -v -ldflags="-s -w"
+	@echo "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)"
+	cd sdk/go && go test -bench=. -benchmem -ldflags="-s -w" ./rustmq ./tests ./benchmarks
+	@echo "$(GREEN)✅ Go SDK release tests and benchmarks completed$(RESET)"
+
+sdk-go-bench:
+	@echo "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)"
+	cd sdk/go && go test -bench=. -benchmem -ldflags="-s -w" ./rustmq ./tests ./benchmarks
+	@echo "$(GREEN)✅ Go SDK benchmarks completed$(RESET)"
+
+sdk-go-examples:
+	@echo "$(YELLOW)🔨 Building Go SDK examples...$(RESET)"
+	cd sdk/go && go build -o bin/simple_producer examples/simple_producer.go
+	cd sdk/go && go build -o bin/simple_consumer examples/simple_consumer.go
+	cd sdk/go && go build -o bin/stream_processor examples/stream_processor.go
+	cd sdk/go && go build -o bin/advanced_stream_processor examples/advanced_stream_processor.go
+	cd sdk/go && go build -o bin/secure_producer_mtls examples/secure_producer_mtls.go
+	cd sdk/go && go build -o bin/secure_consumer_jwt examples/secure_consumer_jwt.go
+	cd sdk/go && go build -o bin/secure_admin_sasl examples/secure_admin_sasl.go
+	cd sdk/go && go build -o bin/test-producer examples/mock_test_producer.go
+	cd sdk/go && go build -o bin/production-producer examples/production_producer.go
+	cd sdk/go && go build -o bin/high-throughput-producer examples/high_throughput_producer.go
+	cd sdk/go && go build -o bin/secure-mtls-producer examples/secure_production_mtls.go
+	@echo "$(GREEN)✅ Go SDK examples built$(RESET)"
+
+# Go SDK quality checks
+.PHONY: sdk-go-fmt sdk-go-vet sdk-go-mod-tidy
+sdk-go-fmt:
+	@echo "$(YELLOW)📝 Running go fmt on Go SDK...$(RESET)"
+	cd sdk/go && go fmt ./...
+	@echo "$(GREEN)✅ Go SDK format check completed$(RESET)"
+
+sdk-go-vet:
+	@echo "$(YELLOW)🔍 Running go vet on Go SDK...$(RESET)"
+	cd sdk/go && go vet ./...
+	@echo "$(GREEN)✅ Go SDK vet check completed$(RESET)"
+
+sdk-go-mod-tidy:
+	@echo "$(YELLOW)🧹 Running go mod tidy on Go SDK...$(RESET)"
+	cd sdk/go && go mod tidy
+	@echo "$(GREEN)✅ Go SDK mod tidy completed$(RESET)"
 
 # Development helpers
 .PHONY: dev dev-broker dev-controller dev-admin
@@ -246,23 +322,38 @@ help:
 	@echo "  build-debug      - Build debug mode only"
 	@echo "  build-release    - Build release mode only"
 	@echo "  build-binaries   - Build all binary targets"
-	@echo "  sdk-build        - Build Rust SDK debug and release"
-	@echo "  sdk-build-debug  - Build Rust SDK debug mode only"
-	@echo "  sdk-build-release - Build Rust SDK release mode only"
+	@echo "  sdk-build        - Build all SDKs (Rust and Go)"
+	@echo "  sdk-build-debug  - Build all SDKs debug mode"
+	@echo "  sdk-build-release - Build all SDKs release mode"
+	@echo "  sdk-rust-build   - Build Rust SDK debug and release"
+	@echo "  sdk-rust-build-debug - Build Rust SDK debug mode only"
+	@echo "  sdk-rust-build-release - Build Rust SDK release mode only"
+	@echo "  sdk-go-build     - Build Go SDK"
+	@echo "  sdk-go-examples  - Build Go SDK examples"
 	@echo ""
 	@echo "$(YELLOW)Test Targets:$(RESET)"
 	@echo "  test-debug       - Run debug tests (no benchmarks)"
 	@echo "  test-release     - Run release tests with benchmarks"
 	@echo "  test-legacy-cache - Test with legacy LRU cache"
-	@echo "  sdk-test         - Run Rust SDK tests debug and release"
-	@echo "  sdk-test-debug   - Run Rust SDK debug tests (no benchmarks)"
-	@echo "  sdk-test-release - Run Rust SDK release tests with benchmarks"
+	@echo "  sdk-test         - Run all SDK tests (Rust and Go)"
+	@echo "  sdk-test-debug   - Run all SDK debug tests (no benchmarks)"
+	@echo "  sdk-test-release - Run all SDK release tests with benchmarks"
+	@echo "  sdk-rust-test    - Run Rust SDK tests debug and release"
+	@echo "  sdk-rust-test-debug - Run Rust SDK debug tests (no benchmarks)"
+	@echo "  sdk-rust-test-release - Run Rust SDK release tests with benchmarks"
+	@echo "  sdk-go-test      - Run Go SDK tests debug and release"
+	@echo "  sdk-go-test-debug - Run Go SDK debug tests (no benchmarks)"
+	@echo "  sdk-go-test-release - Run Go SDK release tests with benchmarks"
+	@echo "  sdk-go-bench     - Run Go SDK benchmarks (release optimized)"
 	@echo ""
 	@echo "$(YELLOW)Code Quality:$(RESET)"
 	@echo "  check            - Run cargo check"
-	@echo "  lint             - Run clippy and fmt checks"
+	@echo "  lint             - Run clippy, fmt, and Go quality checks"
 	@echo "  clippy           - Run clippy linter"
 	@echo "  fmt              - Check code formatting"
+	@echo "  sdk-go-fmt       - Run go fmt on Go SDK"
+	@echo "  sdk-go-vet       - Run go vet on Go SDK"
+	@echo "  sdk-go-mod-tidy  - Run go mod tidy on Go SDK"
 	@echo ""
 	@echo "$(YELLOW)Benchmarks:$(RESET)"
 	@echo "  bench            - Run all benchmarks"

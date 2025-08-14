@@ -736,6 +736,13 @@ impl AuthenticationManager {
     
     /// Optimized certificate validation with parsing cache
     async fn validate_certificate_optimized(&self, certificate_der: &[u8], fingerprint: &CertificateFingerprint) -> Result<(), RustMqError> {
+        // Check revocation FIRST (before expensive signature validation)
+        if self.is_certificate_revoked_raw(fingerprint) {
+            return Err(RustMqError::CertificateRevoked {
+                subject: hex::encode(fingerprint),
+            });
+        }
+        
         // Parse certificate and cache the result
         let parsed_cert = self.parse_certificate(certificate_der)?;
         
