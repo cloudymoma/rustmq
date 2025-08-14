@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use rustmq_client::*;
+use rustmq_client::message::{MessageBatch, MessageMetadata};
 use tokio::runtime::Runtime;
 
 fn bench_message_creation(c: &mut Criterion) {
@@ -90,7 +91,7 @@ fn bench_config_deserialization(c: &mut Criterion) {
 
     c.bench_function("config_deserialization", |b| {
         b.iter(|| {
-            let config: Result<ClientConfig, _> = serde_json::from_str(black_box(&json));
+            let config: std::result::Result<ClientConfig, serde_json::Error> = serde_json::from_str(black_box(&json));
             black_box(config)
         })
     });
@@ -100,15 +101,17 @@ fn bench_client_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     
     c.bench_function("client_creation", |b| {
-        b.to_async(&rt).iter(|| async {
-            let config = ClientConfig {
-                brokers: vec!["localhost:9092".to_string()],
-                ..Default::default()
-            };
-            
-            // This will fail without a broker, but we're measuring creation overhead
-            let result = RustMqClient::new(black_box(config)).await;
-            black_box(result)
+        b.iter(|| {
+            rt.block_on(async {
+                let config = ClientConfig {
+                    brokers: vec!["localhost:9092".to_string()],
+                    ..Default::default()
+                };
+                
+                // This will fail without a broker, but we're measuring creation overhead
+                let result = RustMqClient::new(black_box(config)).await;
+                black_box(result)
+            })
         })
     });
 }
