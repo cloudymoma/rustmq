@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
-use bytes::Bytes;
 
 // Write commands for the optimized file task using the async file abstraction
 #[derive(Debug)]

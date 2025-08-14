@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // ZERO-COPY OPTIMIZATION: Enable bytes::Bytes for all protobuf bytes fields
     // This eliminates allocations during deserialization by using reference-counted buffers
-    config = config.bytes(&[".rustmq", "."]); // Apply to all RustMQ messages
+    config = config.bytes([".rustmq", "."]); // Apply to all RustMQ messages
     
     // Configure file descriptor sets for reflection support
     config = config

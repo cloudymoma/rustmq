@@ -1,5 +1,4 @@
 use crate::{Result, types::*, config::ReplicationConfig, storage::WriteAheadLog, replication::traits::ReplicationManager as ReplicationManagerTrait};
-use bytes::Bytes;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

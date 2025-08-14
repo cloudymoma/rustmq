@@ -359,7 +359,7 @@ impl LogCompactionManager {
                 .unwrap()
                 .as_secs(),
             compressed_size: compressed_data.len() as u64,
-            uncompressed_size: uncompressed_size,
+            uncompressed_size,
             checksum: self.compute_checksum(&compressed_data),
             base_snapshot_id: self.get_base_snapshot_id(&snapshot_type).await,
             topic_count: current_state.topics.len(),

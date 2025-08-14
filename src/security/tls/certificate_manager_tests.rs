@@ -1,5 +1,4 @@
 /// Comprehensive unit tests for certificate manager
-
 use super::*;
 use tempfile::TempDir;
 use std::time::{SystemTime, Duration};

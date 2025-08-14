@@ -1,5 +1,4 @@
 use crate::{Result, types::*, error::RustMqError, storage::WriteAheadLog};
-use bytes::Bytes;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::RwLock;

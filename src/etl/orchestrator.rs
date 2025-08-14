@@ -322,7 +322,7 @@ impl EtlPipelineOrchestrator {
     async fn execute_single_pipeline(
         &self,
         pipeline: &PipelineInstance,
-        mut context: PipelineExecutionContext,
+        context: PipelineExecutionContext,
     ) -> Result<PipelineExecutionResult> {
         let mut execution_metadata = ExecutionMetadata {
             pipeline_id: context.pipeline_id.clone(),

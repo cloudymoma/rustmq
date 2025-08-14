@@ -7,7 +7,6 @@
 /// - Comprehensive audit logging
 /// - Automated certificate rotation
 /// - Certificate chain validation
-
 use crate::error::{Result, RustMqError};
 use crate::security::CertificateManagementConfig;
 use crate::storage::{ObjectStorage, LocalObjectStorage};

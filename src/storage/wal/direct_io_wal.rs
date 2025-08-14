@@ -7,7 +7,6 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
-use bytes::Bytes;
 
 #[cfg(feature = "io-uring")]
 use tokio_uring::fs::File as UringFile;
