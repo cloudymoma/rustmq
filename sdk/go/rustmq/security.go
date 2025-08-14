@@ -6,6 +6,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -568,8 +571,13 @@ func (sm *SecurityManager) createTLSConfig() (*tls.Config, error) {
 	
 	// Load CA certificates
 	if sm.config.TLS.CACert != "" {
+		caCertContent, err := sm.loadCertificateContent(sm.config.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load CA certificate: %w", err)
+		}
+		
 		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM([]byte(sm.config.TLS.CACert)) {
+		if !caCertPool.AppendCertsFromPEM(caCertContent) {
 			return nil, fmt.Errorf("failed to parse CA certificate")
 		}
 		tlsConfig.RootCAs = caCertPool
@@ -581,9 +589,19 @@ func (sm *SecurityManager) createTLSConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("client certificate and key required for mutual TLS")
 		}
 		
-		cert, err := tls.X509KeyPair([]byte(sm.config.TLS.ClientCert), []byte(sm.config.TLS.ClientKey))
+		clientCertContent, err := sm.loadCertificateContent(sm.config.TLS.ClientCert)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		
+		clientKeyContent, err := sm.loadCertificateContent(sm.config.TLS.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client key: %w", err)
+		}
+		
+		cert, err := tls.X509KeyPair(clientCertContent, clientKeyContent)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse client certificate: %w", err)
 		}
 		
 		tlsConfig.Certificates = []tls.Certificate{cert}
@@ -713,4 +731,31 @@ func matchesPattern(text, pattern string) bool {
 	}
 	
 	return text == pattern
+}
+
+// loadCertificateContent loads certificate content from either a file path or PEM string
+func (sm *SecurityManager) loadCertificateContent(certInput string) ([]byte, error) {
+	// Check if the input looks like a file path
+	// We detect file paths by checking if the input doesn't contain PEM headers
+	// and appears to be a file path (contains path separators or has common file extensions)
+	if !strings.Contains(certInput, "-----BEGIN") && 
+	   (strings.Contains(certInput, "/") || 
+	    strings.Contains(certInput, "\\") || 
+	    strings.HasSuffix(certInput, ".pem") || 
+	    strings.HasSuffix(certInput, ".crt") || 
+	    strings.HasSuffix(certInput, ".cert") ||
+	    strings.HasSuffix(certInput, ".key")) {
+		
+		// Try to read as file path
+		if _, err := os.Stat(certInput); err == nil {
+			content, err := ioutil.ReadFile(certInput)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read certificate file %s: %w", certInput, err)
+			}
+			return content, nil
+		}
+	}
+	
+	// Assume it's PEM content directly
+	return []byte(certInput), nil
 }

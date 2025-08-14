@@ -223,7 +223,7 @@ sdk-go-test: sdk-go-test-debug sdk-go-test-release
 
 sdk-go-test-debug:
 	@echo "$(YELLOW)🧪 Running Go SDK debug tests (excluding benchmarks)...$(RESET)"
-	-cd sdk/go && go test ./rustmq ./tests ./benchmarks -v
+	cd sdk/go && go test ./rustmq ./tests ./benchmarks -v
 	@echo "$(GREEN)✅ Go SDK debug tests completed$(RESET)"
 
 sdk-go-test-release:
