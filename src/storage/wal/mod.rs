@@ -1,11 +1,16 @@
 // WAL (Write-Ahead Log) module with multiple I/O backend support
 
 pub mod async_file;
+pub mod branchless_parser; // Branchless SIMD parser for batch operations
 pub mod direct_io_wal;     // Original implementation
 pub mod optimized_wal;     // New io_uring optimized implementation
 
 pub use async_file::{
     AsyncWalFile, AsyncWalFileFactory, PlatformCapabilities, TokioWalFile
+};
+
+pub use branchless_parser::{
+    BranchlessRecordBatchParser, BranchlessValidation, ParserStats, RecordHeader
 };
 
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
@@ -19,6 +24,17 @@ pub use optimized_wal::OptimizedDirectIOWal;
 
 use crate::{Result, config::WalConfig, storage::traits::BufferPool};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Metadata for a WAL segment/record
+#[derive(Debug, Clone)]
+pub struct WalSegmentMetadata {
+    pub start_offset: u64,
+    pub end_offset: u64,
+    pub file_offset: u64,
+    pub size_bytes: u64,
+    pub created_at: Instant,
+}
 
 /// Factory for creating optimal WAL implementations based on platform capabilities
 pub struct WalFactory;

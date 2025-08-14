@@ -1,6 +1,6 @@
 // Optimized DirectIOWal using the async file abstraction for performance
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
-use super::async_file::{AsyncWalFile, AsyncWalFileFactory, PlatformCapabilities};
+use super::{async_file::{AsyncWalFile, AsyncWalFileFactory, PlatformCapabilities}, WalSegmentMetadata};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -48,14 +48,7 @@ pub struct OptimizedDirectIOWal {
     backend_type: String,
 }
 
-#[derive(Debug, Clone)]
-struct WalSegmentMetadata {
-    start_offset: u64,
-    end_offset: u64,
-    file_offset: u64,
-    size_bytes: u64,
-    created_at: Instant,
-}
+// WalSegmentMetadata is now imported from the parent module
 
 impl OptimizedDirectIOWal {
     pub async fn new(config: WalConfig, buffer_pool: Arc<dyn BufferPool>) -> Result<Self> {
@@ -306,7 +299,7 @@ impl OptimizedDirectIOWal {
                         end_offset: logical_offset + 1,
                         file_offset: file_offset + buffer_pos as u64,
                         size_bytes: record_size,
-                        created_at: Instant::now(),
+                        created_at: std::time::Instant::now(),
                     };
 
                     self.segments.write().push(segment_meta);
@@ -401,7 +394,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
             end_offset: logical_offset + 1,
             file_offset,
             size_bytes: total_size as u64,
-            created_at: Instant::now(),
+            created_at: std::time::Instant::now(),
         };
 
         self.segments.write().push(segment_meta);

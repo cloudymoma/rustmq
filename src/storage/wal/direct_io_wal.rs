@@ -1,4 +1,5 @@
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
+use crate::storage::wal::{branchless_parser::BranchlessRecordBatchParser, WalSegmentMetadata};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -51,17 +52,11 @@ pub struct DirectIOWal {
     upload_in_progress: Arc<AtomicBool>,
     // Mutex to protect segment tracking operations against race conditions
     segment_tracking_lock: Arc<Mutex<()>>,
+    // Branchless parser for high-performance WAL recovery
+    branchless_parser: Arc<Mutex<BranchlessRecordBatchParser>>,
 }
 
-#[derive(Debug, Clone)]
-struct WalSegmentMetadata {
-    start_offset: u64,
-    end_offset: u64,
-    file_offset: u64,
-    size_bytes: u64,
-    #[allow(dead_code)]
-    created_at: Instant,
-}
+// WalSegmentMetadata is now imported from the parent module
 
 impl DirectIOWal {
     pub async fn new(config: WalConfig, buffer_pool: Arc<dyn BufferPool>) -> Result<Self> {
@@ -87,6 +82,10 @@ impl DirectIOWal {
         
         tokio::spawn(Self::file_task(file, write_rx, flush_interval_ms, fsync_on_write));
 
+        // Initialize branchless parser for high-performance recovery
+        let branchless_parser = BranchlessRecordBatchParser::new()
+            .map_err(|e| crate::error::RustMqError::Wal(format!("Failed to create branchless parser: {}", e)))?;
+
         let mut wal = Self {
             write_tx,
             buffer_pool,
@@ -100,6 +99,7 @@ impl DirectIOWal {
             upload_callbacks: Arc::new(RwLock::new(Vec::new())),
             upload_in_progress: Arc::new(AtomicBool::new(false)),
             segment_tracking_lock: Arc::new(Mutex::new(())),
+            branchless_parser: Arc::new(Mutex::new(branchless_parser)),
         };
 
         wal.recover().await?;
@@ -272,8 +272,22 @@ impl DirectIOWal {
             return Ok(());
         }
 
+        let recovery_start = Instant::now();
+        let mut total_records = 0u64;
         let mut logical_offset = 0u64;
         let mut file_offset = 0u64;
+
+        // Check if branchless parsing is available
+        let use_branchless = {
+            let parser = self.branchless_parser.lock().unwrap();
+            parser.is_simd_enabled()
+        };
+
+        tracing::info!(
+            "Starting WAL recovery with {} parsing, file_size={}",
+            if use_branchless { "branchless SIMD" } else { "traditional" },
+            file_size
+        );
 
         while file_offset < file_size {
             let bytes_to_read = (file_size - file_offset).min(RECOVERY_BUFFER_SIZE as u64) as usize;
@@ -289,29 +303,45 @@ impl DirectIOWal {
             let buffer = rx.await
                 .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
 
-            let mut buffer_pos = 0;
-            while buffer_pos < buffer.len() {
-                if let Ok(record_size) = self.read_record_size(&buffer[buffer_pos..]) {
-                    if buffer_pos + record_size as usize > buffer.len() {
-                        break; // Incomplete record in buffer
-                    }
+            // Use branchless parsing for high performance
+            let segments = if use_branchless {
+                let mut parser = self.branchless_parser.lock().unwrap();
+                parser.parse_record_headers_batch(&buffer, file_offset, logical_offset)?
+            } else {
+                // Fallback to traditional parsing
+                self.parse_records_traditional(&buffer, file_offset, logical_offset)?
+            };
 
-                    let segment_meta = WalSegmentMetadata {
-                        start_offset: logical_offset,
-                        end_offset: logical_offset + 1,
-                        file_offset: file_offset + buffer_pos as u64,
-                        size_bytes: record_size,
-                        created_at: Instant::now(),
-                    };
-
-                    self.segments.write().push(segment_meta);
-                    logical_offset += 1;
-                    buffer_pos += record_size as usize;
-                } else {
-                    break; // Could not read record size
-                }
+            // Update tracking with processed segments
+            let mut segments_guard = self.segments.write();
+            let records_in_buffer = segments.len();
+            
+            for segment in segments {
+                segments_guard.push(segment);
+                logical_offset += 1;
+                total_records += 1;
             }
-            file_offset += buffer_pos as u64;
+            drop(segments_guard);
+
+            // Calculate how much of the buffer was actually processed
+            let bytes_processed = if records_in_buffer > 0 {
+                // Calculate from the last segment's position
+                if let Some(last_segment) = self.segments.read().last() {
+                    (last_segment.file_offset + last_segment.size_bytes - file_offset) as usize
+                } else {
+                    buffer.len()
+                }
+            } else {
+                // No records found, move to end of buffer or stop
+                if buffer.len() < 8 {
+                    buffer.len()
+                } else {
+                    // Try to find the issue and skip problematic data
+                    8 // Skip at least 8 bytes to avoid infinite loop
+                }
+            };
+
+            file_offset += bytes_processed as u64;
         }
 
         self.current_offset.store(logical_offset, Ordering::SeqCst);
@@ -323,7 +353,65 @@ impl DirectIOWal {
             self.current_segment_size.store(0, Ordering::SeqCst);
         }
 
+        let recovery_time = recovery_start.elapsed();
+        
+        // Log performance statistics
+        if use_branchless {
+            let parser = self.branchless_parser.lock().unwrap();
+            let stats = parser.get_stats();
+            tracing::info!(
+                "WAL recovery completed with branchless parsing: {} records in {:?}, {} bytes processed, {} SIMD ops, {} scalar fallbacks",
+                total_records,
+                recovery_time,
+                stats.total_bytes_processed,
+                stats.simd_operations,
+                stats.scalar_fallbacks
+            );
+        } else {
+            tracing::info!(
+                "WAL recovery completed with traditional parsing: {} records in {:?}",
+                total_records,
+                recovery_time
+            );
+        }
+
         Ok(())
+    }
+
+    /// Traditional record parsing for fallback compatibility
+    fn parse_records_traditional(
+        &self,
+        buffer: &[u8],
+        file_offset_start: u64,
+        logical_offset_start: u64,
+    ) -> Result<Vec<WalSegmentMetadata>> {
+        let mut segments = Vec::new();
+        let mut buffer_pos = 0;
+        let mut logical_offset = logical_offset_start;
+
+        while buffer_pos < buffer.len() {
+            if let Ok(record_size) = self.read_record_size(&buffer[buffer_pos..]) {
+                if buffer_pos + record_size as usize > buffer.len() {
+                    break; // Incomplete record in buffer
+                }
+
+                let segment_meta = WalSegmentMetadata {
+                    start_offset: logical_offset,
+                    end_offset: logical_offset + 1,
+                    file_offset: file_offset_start + buffer_pos as u64,
+                    size_bytes: record_size,
+                    created_at: std::time::Instant::now(),
+                };
+
+                segments.push(segment_meta);
+                logical_offset += 1;
+                buffer_pos += record_size as usize;
+            } else {
+                break; // Could not read record size
+            }
+        }
+
+        Ok(segments)
     }
 
     fn read_record_size(&self, buffer: &[u8]) -> Result<u64> {
@@ -384,7 +472,7 @@ impl WriteAheadLog for DirectIOWal {
             end_offset: logical_offset + 1,
             file_offset,
             size_bytes: buffer_len as u64,
-            created_at: Instant::now(),
+            created_at: std::time::Instant::now(),
         };
 
         self.segments.write().push(segment_meta);
