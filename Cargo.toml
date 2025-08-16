@@ -33,13 +33,18 @@ prost = "0.12"
 prost-types = "0.12"
 rustls = "0.21"
 rustls-pemfile = "1.0"
+pem = "3.0"
 rcgen = "0.11"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Security and Authentication
-x509-parser = "0.15"
-webpki = "0.22"
+x509-parser = "0.15"  # Legacy parser, gradually being replaced
+webpki = { version = "0.22", features = ["alloc"] }
+webpki-roots = "0.25"  # For standard CA roots if needed
 ring = "0.17"
+x509-cert = "0.2"    # Modern ASN.1 certificate parsing
+der = "0.7"          # ASN.1 DER encoding/decoding
+spki = "0.7"         # Subject Public Key Info parsing
 lru = "0.12"
 regex = "1.11"
 hex = "0.4"

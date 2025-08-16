@@ -1002,31 +1002,31 @@ func NewClient(config *ClientConfig) (*Client, error) {
 
 ## Implementation Roadmap
 
-### Phase 1: Core Security Infrastructure
+### Stage 1: Core Security Infrastructure
 1. Create security package structure
 2. Implement core types and configuration
 3. Create SecurityManager framework
 4. Add basic error handling
 
-### Phase 2: Authentication Providers
+### Stage 2: Authentication Providers
 1. Implement mTLS authentication provider
 2. Implement JWT token authentication provider  
 3. Implement SASL authentication providers
 4. Add authentication provider registry
 
-### Phase 3: Certificate Management
+### Stage 3: Certificate Management
 1. Implement certificate validator
 2. Add certificate information extraction
 3. Implement CRL/OCSP checking
 4. Add certificate lifecycle management
 
-### Phase 4: ACL and Authorization
+### Stage 4: ACL and Authorization
 1. Implement ACL cache with TTL
 2. Add gRPC client for ACL server communication
 3. Implement permission pattern matching
 4. Add authorization middleware
 
-### Phase 5: Security Metrics and Integration
+### Stage 5: Security Metrics and Integration
 1. Implement comprehensive metrics collection
 2. Add Prometheus metrics integration
 3. Integrate with existing Go SDK components

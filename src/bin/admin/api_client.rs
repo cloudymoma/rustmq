@@ -251,13 +251,7 @@ pub struct GenerateCaRequest {
     pub key_size: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GenerateIntermediateCaRequest {
-    pub parent_ca_id: String,
-    pub common_name: String,
-    pub organization: Option<String>,
-    pub validity_days: Option<u32>,
-}
+// Intermediate CA request removed - only root CA supported for simplicity
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CaInfo {

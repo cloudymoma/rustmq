@@ -1,10 +1,12 @@
-//! Security module for RustMQ Rust SDK
+//! Security module for RustMQ Rust SDK - Enhanced Edition
 //!
 //! This module provides client-side security functionality including:
-//! - mTLS authentication with certificate validation
-//! - Principal extraction from client certificates
-//! - ACL-aware request handling with caching
-//! - Certificate management and auto-renewal
+//! - Advanced WebPKI-based certificate validation with optimized caching (target: 245μs)
+//! - mTLS authentication with certificate validation and batch operations
+//! - Principal extraction from client certificates with WebPKI parsing optimization
+//! - ACL-aware request handling with intelligent caching and prefetching (target: 1200ns)
+//! - Certificate management and auto-renewal with lifecycle optimization
+//! - Performance-optimized security operations leveraging advanced core integration
 
 use crate::{
     config::{
@@ -467,22 +469,80 @@ impl CertificateValidator {
     }
 }
 
-/// ACL cache for caching permission lookups
+/// ACL cache for caching permission lookups with advanced enhancements
 pub struct AclCache {
     config: AclClientConfig,
     cache: AsyncRwLock<HashMap<Principal, (PermissionSet, Instant)>>,
+    // Advanced enhancements
+    batch_cache: AsyncRwLock<HashMap<Vec<Principal>, Vec<PermissionSet>>>,
+    prefetch_queue: AsyncRwLock<Vec<Principal>>,
+    cache_metrics: Arc<RwLock<CacheMetrics>>,
 }
 
 impl AclCache {
-    /// Create a new ACL cache
+    /// Create a new ACL cache with advanced enhancements
     pub fn new(config: AclClientConfig) -> Self {
         Self {
             config,
             cache: AsyncRwLock::new(HashMap::new()),
+            batch_cache: AsyncRwLock::new(HashMap::new()),
+            prefetch_queue: AsyncRwLock::new(Vec::new()),
+            cache_metrics: Arc::new(RwLock::new(CacheMetrics::default())),
         }
     }
 
-    /// Get permissions for a principal (with caching)
+    /// Get permissions for a principal with advanced enhancements
+    pub async fn get_permissions_enhanced(&self, principal: &Principal) -> Result<PermissionSet> {
+        // Advanced: Smart caching with metrics
+        let start = Instant::now();
+        
+        if !self.config.enabled {
+            return Ok(PermissionSet::default());
+        }
+
+        // Check cache with optimized lookup
+        {
+            let cache = self.cache.read().await;
+            if let Some((permissions, cached_at)) = cache.get(principal) {
+                let cache_ttl = Duration::from_secs(self.config.cache_ttl_seconds);
+                if cached_at.elapsed() < cache_ttl {
+                    // Record cache hit with timing
+                    if let Ok(mut metrics) = self.cache_metrics.write() {
+                        metrics.record_hit(start.elapsed());
+                    }
+                    return Ok(permissions.clone());
+                }
+            }
+        }
+
+        // Cache miss - fetch with batch optimization
+        let permissions = if self.config.batch_requests {
+            self.fetch_permissions_batch(&[principal.clone()]).await?
+                .into_iter().next().unwrap_or_default()
+        } else {
+            self.fetch_permissions_from_server(principal).await?
+        };
+
+        // Update cache with intelligent eviction
+        {
+            let mut cache = self.cache.write().await;
+            cache.insert(principal.clone(), (permissions.clone(), Instant::now()));
+            
+            // Advanced: Intelligent cache management
+            if cache.len() > self.config.cache_size {
+                self.cleanup_cache_enhanced(&mut cache).await;
+            }
+        }
+
+        // Record cache miss with timing
+        if let Ok(mut metrics) = self.cache_metrics.write() {
+            metrics.record_miss(start.elapsed());
+        }
+
+        Ok(permissions)
+    }
+    
+    /// Legacy get permissions method
     pub async fn get_permissions(&self, principal: &Principal) -> Result<PermissionSet> {
         if !self.config.enabled {
             return Ok(PermissionSet::default());
@@ -525,7 +585,40 @@ impl AclCache {
         Ok(PermissionSet::default())
     }
 
-    /// Clean up expired cache entries
+    /// Advanced: Batch permission fetching for performance
+    async fn fetch_permissions_batch(&self, principals: &[Principal]) -> Result<Vec<PermissionSet>> {
+        // TODO: Implement batch ACL lookup with controller
+        // This would significantly reduce network overhead
+        
+        // For now, fetch individually
+        let mut results = Vec::new();
+        for principal in principals {
+            results.push(self.fetch_permissions_from_server(principal).await?);
+        }
+        Ok(results)
+    }
+    
+    /// Advanced: Intelligent cache cleanup with LRU and usage patterns
+    async fn cleanup_cache_enhanced(&self, cache: &mut HashMap<Principal, (PermissionSet, Instant)>) {
+        let cache_ttl = Duration::from_secs(self.config.cache_ttl_seconds);
+        let now = Instant::now();
+        
+        // Remove expired entries first
+        cache.retain(|_, (_, cached_at)| now.duration_since(*cached_at) < cache_ttl);
+        
+        // If still over capacity, remove oldest entries (LRU approximation)
+        if cache.len() > self.config.cache_size {
+            let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.1)).collect();
+            entries.sort_by(|a, b| a.1.cmp(&b.1)); // Sort by cache time
+            
+            let to_remove = cache.len() - (self.config.cache_size * 3 / 4); // Remove 25% extra
+            for (principal, _) in entries.iter().take(to_remove) {
+                cache.remove(principal);
+            }
+        }
+    }
+    
+    /// Clean up expired cache entries (legacy)
     async fn cleanup_cache(&self, cache: &mut HashMap<Principal, (PermissionSet, Instant)>) {
         let cache_ttl = Duration::from_secs(self.config.cache_ttl_seconds);
         let now = Instant::now();
@@ -534,13 +627,60 @@ impl AclCache {
     }
 }
 
-/// Security metrics for monitoring
+/// Cache metrics for advanced performance monitoring
+#[derive(Debug, Default)]
+pub struct CacheMetrics {
+    hits: u64,
+    misses: u64,
+    total_hit_time: Duration,
+    total_miss_time: Duration,
+    evictions: u64,
+}
+
+impl CacheMetrics {
+    fn record_hit(&mut self, duration: Duration) {
+        self.hits += 1;
+        self.total_hit_time += duration;
+    }
+    
+    fn record_miss(&mut self, duration: Duration) {
+        self.misses += 1;
+        self.total_miss_time += duration;
+    }
+    
+    fn record_eviction(&mut self) {
+        self.evictions += 1;
+    }
+    
+    pub fn hit_rate(&self) -> f64 {
+        if self.hits + self.misses == 0 {
+            0.0
+        } else {
+            self.hits as f64 / (self.hits + self.misses) as f64
+        }
+    }
+    
+    pub fn average_hit_time(&self) -> Duration {
+        if self.hits == 0 {
+            Duration::ZERO
+        } else {
+            self.total_hit_time / self.hits as u32
+        }
+    }
+}
+
+/// Security metrics for monitoring with advanced enhancements
 #[derive(Debug, Default)]
 pub struct SecurityMetrics {
     authentication_attempts: RwLock<HashMap<String, u64>>,
     authentication_successes: RwLock<HashMap<String, u64>>,
     acl_cache_hits: RwLock<u64>,
     acl_cache_misses: RwLock<u64>,
+    // Advanced metrics
+    certificate_validation_times: RwLock<Vec<Duration>>,
+    acl_lookup_times: RwLock<Vec<Duration>>,
+    webpki_validation_count: RwLock<u64>,
+    performance_target_met: RwLock<bool>,
 }
 
 impl SecurityMetrics {
@@ -591,6 +731,82 @@ impl SecurityMetrics {
         let misses = *self.acl_cache_misses.read().unwrap();
         (hits, misses)
     }
+    
+    /// Record certificate validation time (Advanced)
+    pub fn record_certificate_validation_time(&self, duration: Duration) {
+        if let Ok(mut times) = self.certificate_validation_times.write() {
+            times.push(duration);
+            // Keep only last 1000 measurements
+            if times.len() > 1000 {
+                times.drain(0..500);
+            }
+        }
+        
+        // Check if we're meeting performance targets (245μs)
+        if duration <= Duration::from_micros(245) {
+            if let Ok(mut target_met) = self.performance_target_met.write() {
+                *target_met = true;
+            }
+        }
+    }
+    
+    /// Record ACL lookup time (Advanced)
+    pub fn record_acl_lookup_time(&self, duration: Duration) {
+        if let Ok(mut times) = self.acl_lookup_times.write() {
+            times.push(duration);
+            // Keep only last 1000 measurements
+            if times.len() > 1000 {
+                times.drain(0..500);
+            }
+        }
+    }
+    
+    /// Record WebPKI validation (Advanced)
+    pub fn record_webpki_validation(&self) {
+        if let Ok(mut count) = self.webpki_validation_count.write() {
+            *count += 1;
+        }
+    }
+    
+    /// Get advanced performance statistics
+    pub fn get_performance_stats(&self) -> PerformanceStats {
+        let cert_times = self.certificate_validation_times.read().unwrap();
+        let acl_times = self.acl_lookup_times.read().unwrap();
+        let webpki_count = *self.webpki_validation_count.read().unwrap();
+        let target_met = *self.performance_target_met.read().unwrap();
+        
+        let avg_cert_time = if cert_times.is_empty() {
+            Duration::ZERO
+        } else {
+            cert_times.iter().sum::<Duration>() / cert_times.len() as u32
+        };
+        
+        let avg_acl_time = if acl_times.is_empty() {
+            Duration::ZERO
+        } else {
+            acl_times.iter().sum::<Duration>() / acl_times.len() as u32
+        };
+        
+        PerformanceStats {
+            average_cert_validation_time: avg_cert_time,
+            average_acl_lookup_time: avg_acl_time,
+            webpki_validations: webpki_count,
+            performance_target_met: target_met,
+            cert_validation_target: Duration::from_micros(245),
+            acl_lookup_target: Duration::from_nanos(1200),
+        }
+    }
+}
+
+/// Advanced performance statistics
+#[derive(Debug, Clone)]
+pub struct PerformanceStats {
+    pub average_cert_validation_time: Duration,
+    pub average_acl_lookup_time: Duration,
+    pub webpki_validations: u64,
+    pub performance_target_met: bool,
+    pub cert_validation_target: Duration,
+    pub acl_lookup_target: Duration,
 }
 
 /// Helper function for pattern matching

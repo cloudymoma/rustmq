@@ -219,7 +219,7 @@ cargo bench --bench consumer_benchmarks
 
 ## 🔮 Future Enhancements
 
-### Phase 2 Improvements (Planned)
+### Additional Improvements (Planned)
 1. **Session Management**: Consumer heartbeat and rebalancing
 2. **Advanced Observability**: Distributed tracing support
 3. **Dynamic Configuration**: Runtime configuration updates

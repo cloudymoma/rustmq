@@ -200,7 +200,7 @@ impl UltraFastAuthSystem {
     pub fn authorize_fast(&self, key: &AclKey) -> UltraFastAuthResult {
         let start = Instant::now();
         
-        // Phase 1: Check thread-local L1 cache (~5ns target)
+        // L1: Check thread-local L1 cache (~5ns target)
         let l1_cache = self.l1_factory.get_cache();
         if let Some(allowed) = l1_cache.get_fast(key) {
             let latency = start.elapsed().as_nanos() as u64;
@@ -216,7 +216,7 @@ impl UltraFastAuthSystem {
             };
         }
         
-        // Phase 2: Check lock-free L2 cache (~25ns target)
+        // L2: Check lock-free L2 cache (~25ns target)
         if let Some(allowed) = self.l2_cache.get_fast(key) {
             let latency = start.elapsed().as_nanos() as u64;
             
@@ -235,7 +235,7 @@ impl UltraFastAuthSystem {
             };
         }
         
-        // Phase 3: Fallback to full authorization
+        // L3: Fallback to full authorization
         // This would integrate with the existing authorization system
         let allowed = self.authorize_full_fallback(key);
         let latency = start.elapsed().as_nanos() as u64;

@@ -1,4 +1,5 @@
-# RustMQ Controller Development Configuration
+# RustMQ Controller Development Configuration - Enhanced
+# Updated with advanced security features, OpenRaft integration, and admin API
 
 [controller]
 controller_id = "controller-01"
@@ -6,22 +7,104 @@ host = "127.0.0.1"
 port = 9094
 raft_port = 9095
 http_port = 9642
+bind_addr = "127.0.0.1"
+admin_port = 9642
 
+# OpenRaft Configuration - Development optimized
 [raft]
 data_dir = "./data/raft"
 heartbeat_interval_ms = 500
 election_timeout_ms = 2000
+heartbeat_timeout_ms = 1000  # Required for stability
 max_append_entries_size = 1000
+enable_tick = true
+enable_heartbeat = true
+install_snapshot_timeout_ms = 60000
+max_replication_lag = 1000
+enable_elect = true
+max_uncommitted_entries = 500
+network_timeout_ms = 5000
+
+[raft.snapshot_policy]
+log_entries_since_last = 1000
+enable_periodic = true
+periodic_interval_secs = 300
 
 [cluster]
 initial_cluster = ["controller-01=127.0.0.1:9095"]
 
+# Security Configuration
 [security]
 enabled = true
+security_level = "development"
 tls_cert_path = "./certs/server.pem"
 tls_key_path = "./certs/server.key"
 ca_cert_path = "./certs/ca.pem"
+require_client_cert = true
+fail_open = true
+
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = false
+validation_timeout_ms = 3000
+allow_rcgen_certificates = true
+allow_self_signed_for_testing = true
+
+# Certificate Caching
+[security.certificate_caching]
+cert_cache_size = 500
+cert_cache_ttl_hours = 1
+enable_batch_validation = true
+webpki_cache_enabled = true
+enable_certificate_metrics = true
+
+# Admin API Security
+[security.admin_api]
+enabled = true
+require_authentication = true
+allowed_principals = ["admin@rustmq.dev", "developer@rustmq.dev"]
+rate_limiting_enabled = false  # Disabled for development
+
+# ACL Management
+[security.acl]
+enabled = true
+storage_type = "memory"
+cache_enabled = true
+cache_size = 5000
+cache_ttl_seconds = 120
+ultra_fast_enabled = true
+l1_cache_size = 512
+max_l1_latency_ns = 1200
+
+# Authentication
+[security.auth]
+enabled = true
+default_mechanism = "certificate"
+require_authentication = true
+fail_open = true
+
+# Performance Configuration
+[security.performance]
+certificate_validation_target_us = 245
+admin_thread_pool_size = 4
+acl_thread_pool_size = 8
+
+# Audit Configuration
+[security.audit]
+enabled = true
+audit_level = "debug"
+log_admin_operations = true
+log_certificate_events = true
+log_acl_operations = true
+audit_log_path = "./logs/controller-audit.log"
 
 [logging]
 level = "debug"
 file = "./logs/controller.log"
+
+# Development features
+[development]
+enable_debug_endpoints = true
+enable_hot_reload = false  # Controllers need stability

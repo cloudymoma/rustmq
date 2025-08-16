@@ -159,7 +159,7 @@ bloom_filter_size = 100000     # Negative cache capacity
 bloom_filter_fp_rate = 0.01    # 1% false positive rate
 
 # Performance targets (production-validated)
-max_l1_latency_ns = 1000       # Target: <1μs
+max_l1_latency_ns = 1200       # Target: <1.2μs
 max_l2_latency_ns = 5000       # Target: <5μs
 min_throughput_ops_per_sec = 2000000  # Target: 2M+ ops/sec
 

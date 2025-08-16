@@ -1,5 +1,6 @@
-# RustMQ Broker Configuration
+# RustMQ Broker Configuration - Enhanced Security
 # This configuration is for the message broker binary
+# Updated: August 2025 - Includes security improvements with WebPKI integration
 
 [broker]
 id = "broker-001"
@@ -137,40 +138,299 @@ cleanup_interval_secs = 300
 max_age_secs = 3600
 max_cleanup_per_run = 10000
 
+# =============================================================================
+# SECURITY CONFIGURATION - BROKER ENHANCED
+# =============================================================================
+# Enhanced security with WebPKI integration, certificate caching, and 
+# high-performance authorization for message broker operations
+
 [security]
 enabled = true
-default_auth_mode = "mTLS"
-max_auth_cache_size = 100000
-auth_cache_ttl_seconds = 300
+security_level = "balanced"  # Production-ready with development flexibility
+environment = "staging"
+# Secure default: fail closed on errors
+fail_open = false
+# Enable comprehensive security auditing
+audit_enabled = true
+# Enable security metrics collection
+metrics_enabled = true
 
+# Enhanced TLS Configuration with security improvements
 [security.tls]
-enabled = false  # Disabled for development
-ca_cert_path = "/etc/certs/ca.crt"
-ca_cert_chain_path = "/etc/certs/ca-chain.crt"
+enabled = true  # Enable TLS for secure broker operations
+# Modern TLS configuration
+tls_version_min = "TLS1.3"
+tls_version_max = "TLS1.3"
+cipher_suites = "modern"
+verify_client_cert = true
+# Allow self-signed for development/staging
+allow_self_signed = true
+
+# Certificate paths for broker-specific certificates
 server_cert_path = "/etc/certs/broker.crt"
 server_key_path = "/etc/certs/broker.key"
-client_cert_required = true
-cert_verify_mode = "Full"
-crl_path = "/etc/certs/ca.crl"
-ocsp_url = "http://ocsp.example.com"
-min_tls_version = "1.3"
-cert_refresh_interval_hours = 24
-cipher_suites = ["TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256"]
+client_ca_cert_path = "/etc/certs/ca.crt"
 
+# Certificate chain validation
+validate_certificate_chain = true
+check_certificate_expiry = true
+certificate_expiry_warning_days = 14
+certificate_expiry_critical_days = 3
+
+# WebPKI Integration - Enhanced Certificate Validation
+[security.webpki]
+# Enable WebPKI for enhanced certificate validation
+enabled = true
+# Enable graceful fallback for certificate compatibility
+fallback_to_legacy = true
+# Balanced trust anchor validation
+strict_trust_anchor_validation = false
+# Validation timeout appropriate for broker operations
+validation_timeout_ms = 4000
+
+# Development/staging compatibility settings
+allow_rcgen_certificates = true
+allow_self_signed_for_testing = true
+strict_der_validation = false
+
+# Error handling and logging
+log_fallback_events = true
+log_trust_anchor_failures = true
+max_fallback_attempts = 3
+
+# WebPKI metrics for monitoring broker certificate operations
+enable_detailed_metrics = true
+track_validation_methods = true
+
+# Certificate Caching - Broker-Optimized Performance
+[security.certificate_caching]
+# Certificate cache settings optimized for broker operations
+cert_cache_size = 5000               # Broker-appropriate cache size
+cert_cache_ttl_hours = 8            # Reasonable TTL for broker certificates
+ca_cache_size = 50                  # CA chain cache
+ca_cache_ttl_hours = 24             # CA cache TTL
+
+# Performance tuning - Advanced features for broker
+enable_batch_validation = true      # Enable batch operations
+enable_certificate_prefetch = true  # Enable prefetching
+prefetch_recently_used_count = 25   # Prefetch for broker clients
+
+# Cache invalidation for broker certificate updates
+auto_invalidate_expired = true      # Auto-invalidate expired certificates
+invalidation_check_interval_minutes = 15  # Check interval
+
+# WebPKI integration with caching
+webpki_cache_enabled = true         # Enable WebPKI-based caching
+webpki_fallback_cache_enabled = true # Cache fallback results
+trust_anchor_cache_size = 25       # Trust anchor cache size
+
+# Metrics collection for broker performance monitoring
+enable_certificate_metrics = true   # Enable detailed metrics
+parse_timing_enabled = true        # Track certificate parsing times
+cache_hit_rate_target = 0.85       # Target 85% hit rate for broker
+
+# Authentication Configuration - Broker-Focused
+[security.auth]
+enabled = true
+# mTLS authentication for broker-to-client and inter-broker communication
+default_mechanism = "certificate"
+require_authentication = true
+# Secure default: fail closed
+fail_open = false
+
+# Disable MFA for broker-to-broker communication (use certs instead)
+mfa_enabled = false
+mfa_required_for_admin = false
+
+# Session management for broker operations
+session_timeout_minutes = 60  # Reasonable for broker operations
+max_sessions_per_user = 20     # Allow multiple connections per client
+session_encryption_enabled = true
+
+# Certificate-based authentication for broker operations
+[security.auth.certificate]
+enabled = true
+require_valid_certificate = true
+extract_principal_from_cn = true
+# Broker-friendly principal pattern (supports client certificates)
+principal_regex = "^(.+)@(broker|client|service)\\.(.+)$"
+allow_wildcard_principals = false
+
+# Certificate validation for broker security
+check_certificate_revocation = false  # Disable for performance in staging
+validate_certificate_usage = true
+require_san_validation = false  # Relaxed for broker certificates
+check_certificate_transparency = false
+
+# Token-based authentication (for admin operations)
+[security.auth.token]
+enabled = true
+# Secure token storage for broker admin operations
+token_file = "/etc/rustmq/broker-tokens.enc"
+token_refresh_interval_minutes = 30
+allow_bearer_tokens = false  # Secure default
+token_encryption_enabled = true
+token_signing_algorithm = "ES256"
+
+# Authorization Configuration - High-Performance Broker ACL
+[security.authz]
+enabled = true
+# Secure default: deny by default
+default_policy = "deny"
+acl_enabled = true
+fail_closed = true
+
+# Security-first authorization
+require_explicit_allow = true
+deny_overrides_allow = true
+validate_resource_patterns = true
+
+# ACL Configuration - Performance Optimized for Broker
 [security.acl]
 enabled = true
-cache_size_mb = 100
-cache_ttl_seconds = 300
-l2_shard_count = 64
-bloom_filter_size = 1000000
-batch_fetch_size = 100
-enable_audit_logging = true
-negative_cache_enabled = true
+cache_enabled = true
+# Balanced cache size for broker operations
+cache_size = 50000
+# Reasonable TTL for broker security
+cache_ttl_seconds = 180
+fetch_batch_size = 200
 
+# Multi-Level Cache Performance (broker-optimized)
+ultra_fast_enabled = true
+l1_cache_size = 2048           # Connection-local cache for broker clients
+l1_cache_ttl_seconds = 240     # 4 minutes L1 TTL
+l2_shard_count = 32            # Optimal for broker concurrency
+bloom_filter_size = 100000     # Negative cache for broker operations
+bloom_filter_fp_rate = 0.02    # 2% false positive rate
+
+# Performance targets (broker-specific validation)
+max_l1_latency_ns = 1200       # Target: <1.2μs for optimal performance
+max_l2_latency_ns = 5000       # Target: <5μs
+min_throughput_ops_per_sec = 1000000  # Target: 1M+ ops/sec for broker
+
+# Broker ACL storage (can be in-memory for staging or external for production)
+storage_type = "memory"
+storage_config = { }
+
+# Balanced validation for broker operations
+validate_principals = true
+validate_resources = true
+allow_wildcard_rules = false
+require_explicit_permissions = true
+
+# Performance optimization for broker operations
+enable_performance_monitoring = true
+enable_acl_rule_validation = true
+preload_common_rules = true
+enable_rule_compilation = true
+
+# Audit Configuration - Broker Security Monitoring
 [security.audit]
 enabled = true
-log_authentication_events = true
-log_authorization_events = false
+# Detailed audit for broker security events
+audit_level = "info"
+log_successful_auth = false  # Reduce noise for broker operations
+log_failed_auth = true
+log_authorization_decisions = false  # Reduce noise
 log_certificate_events = true
-log_failed_attempts = true
+log_admin_operations = true
+log_configuration_changes = true
+log_security_violations = true
+
+# Broker-specific audit features
+log_performance_metrics = true
+log_security_events = true
+log_data_access = false  # Not applicable for broker
+log_privilege_escalation_attempts = true
+
+# Simplified monitoring for broker
+real_time_monitoring_enabled = true
+anomaly_detection_enabled = false  # Disable for broker simplicity
+threat_detection_enabled = true
+
+# Audit storage (local files for broker)
+audit_log_path = "/var/log/rustmq/broker-security-audit.log"
+centralized_logging_enabled = true
+syslog_enabled = true
+syslog_facility = "local1"
+syslog_tag = "rustmq-broker-security"
+
+# External integrations (optional for broker)
+siem_integration_enabled = false
+
+# Log management for broker
+encrypt_audit_logs = false  # Simplify for broker
+audit_log_signing_enabled = true
+rotate_logs = true
 max_log_size_mb = 100
+max_log_files = 10
+
+# Performance Configuration - Broker-Optimized
+[security.performance]
+# Certificate validation targets (broker-specific)
+certificate_validation_target_us = 245  # Target: <245μs average
+trust_anchor_conversion_target_us = 50  # Trust anchor processing
+webpki_validation_target_us = 180      # WebPKI validation target
+fallback_validation_target_us = 300    # Legacy fallback target
+
+# Broker-scale caching
+auth_cache_size = 20000
+auth_cache_ttl_seconds = 180
+authz_cache_size = 50000
+authz_cache_ttl_seconds = 240
+
+# Certificate validation (broker-optimized)
+cert_validation_timeout_seconds = 3
+cert_cache_warmup_enabled = true  # Warm cache for broker startup
+ca_chain_cache_enabled = true
+trust_anchor_cache_enabled = true
+
+# Connection limits (broker-appropriate)
+max_connections = 10000
+max_connections_per_ip = 50
+connection_timeout_seconds = 15
+
+# Background processing (broker-optimized)
+background_cert_refresh_enabled = true
+background_acl_refresh_enabled = true
+background_cleanup_enabled = true
+health_check_interval_seconds = 20
+
+# Thread pool configuration (broker-optimized)
+auth_thread_pool_size = 8
+authz_thread_pool_size = 16
+cert_validation_thread_pool_size = 4
+io_thread_pool_size = 12
+
+# Monitoring and Alerting - Broker-Specific
+[security.monitoring]
+enabled = true
+metrics_enabled = true
+alerts_enabled = true
+
+# Security metrics (for broker operations)
+track_authentication_metrics = true
+track_authorization_metrics = true
+track_certificate_metrics = true
+track_performance_metrics = true
+track_webpki_metrics = true  # WebPKI performance metrics
+track_cache_metrics = true   # Cache performance metrics
+
+# Alert thresholds (broker-appropriate)
+max_failed_auth_per_minute = 50  # Higher threshold for broker
+max_failed_authz_per_minute = 100
+max_cert_validation_failures_per_minute = 20
+max_webpki_fallback_rate = 0.2  # 20% fallback acceptable for broker
+
+# Performance alerts (targets for broker)
+max_l1_cache_latency_ns = 1200     # L1 cache latency target
+max_certificate_validation_us = 245  # Certificate validation target
+min_cache_hit_rate = 0.75          # 75% hit rate target for broker
+
+# Broker deployment notes
+[security.notes]
+security_statement = "Broker configuration with advanced security enhancements optimized for message routing"
+webpki_status = "Enabled with graceful fallback for broker certificate validation"
+performance_targets = "L1 cache: <1200ns, Certificate validation: <245μs average"
+deployment_type = "Message broker with enhanced security and performance"
+security_optimizations = "Certificate caching, WebPKI integration, high-performance authorization"

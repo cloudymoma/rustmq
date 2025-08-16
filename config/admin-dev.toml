@@ -1,8 +1,11 @@
-# RustMQ Admin Development Configuration
+# RustMQ Admin Development Configuration - Enhanced
+# Updated with advanced security features and SDK compatibility
 
 [admin]
 controller_endpoint = "https://127.0.0.1:9642"
 timeout_seconds = 30
+api_version = "v1"
+user_agent = "rustmq-admin-dev"
 
 [security]
 enabled = true
@@ -11,6 +14,42 @@ client_key_path = "./certs/admin.key"
 ca_cert_path = "./certs/ca.pem"
 verify_server_cert = true
 
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+validation_timeout_ms = 3000
+allow_self_signed = true  # Development only
+
+# Certificate Caching
+[security.certificate_cache]
+enabled = true
+cache_size = 100
+cache_ttl_minutes = 60
+
+# Authentication settings for admin operations
+[security.auth]
+method = "certificate"
+require_valid_certificate = true
+extract_principal_from_cn = true
+
+# Performance settings
+[security.performance]
+certificate_validation_target_us = 245
+enable_metrics = true
+
 [output]
 format = "json"
 pretty = true
+show_timestamps = true
+show_performance_metrics = true
+
+[logging]
+level = "info"
+enable_security_logs = true
+
+# Development-specific settings
+[development]
+enable_debug_output = true
+show_api_calls = false
+mock_mode = false

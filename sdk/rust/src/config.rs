@@ -80,7 +80,7 @@ pub enum TlsMode {
     MutualAuth,
 }
 
-/// Certificate validation configuration
+/// Certificate validation configuration with advanced enhancements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateValidationConfig {
     /// Verify server certificate chain
@@ -97,6 +97,25 @@ pub struct CertificateValidationConfig {
     
     /// Maximum certificate chain depth
     pub max_chain_depth: usize,
+    
+    // Advanced enhancements
+    /// Enable WebPKI validation for improved performance and security
+    pub enable_webpki: bool,
+    
+    /// Enable certificate caching for performance optimization
+    pub enable_caching: bool,
+    
+    /// Certificate cache TTL in seconds
+    pub cache_ttl_seconds: u64,
+    
+    /// Certificate cache size (number of certificates)
+    pub cache_size: usize,
+    
+    /// Enable batch certificate validation
+    pub enable_batch_validation: bool,
+    
+    /// Performance target for certificate validation (microseconds)
+    pub performance_target_us: u64,
 }
 
 /// Retry configuration
@@ -467,6 +486,13 @@ impl Default for CertificateValidationConfig {
             check_revocation: false, // Disabled by default for performance
             allow_self_signed: false,
             max_chain_depth: 10,
+            // Advanced defaults
+            enable_webpki: true,
+            enable_caching: true,
+            cache_ttl_seconds: 3600, // 1 hour
+            cache_size: 1000,
+            enable_batch_validation: true,
+            performance_target_us: 245, // Performance target: 245μs
         }
     }
 }
@@ -619,6 +645,13 @@ impl TlsConfig {
                 check_revocation: true,
                 allow_self_signed: false,
                 max_chain_depth: 5,
+                // Advanced production settings
+                enable_webpki: true,
+                enable_caching: true,
+                cache_ttl_seconds: 1800, // 30 minutes for production
+                cache_size: 2000, // Larger cache for production
+                enable_batch_validation: true,
+                performance_target_us: 200, // Stricter target for production
             },
             alpn_protocols: vec!["h3".to_string()],
         }
@@ -640,6 +673,12 @@ impl TlsConfig {
                 check_revocation: false,
                 allow_self_signed: true,
                 max_chain_depth: 10,
+                enable_webpki: false,
+                enable_caching: false,
+                cache_ttl_seconds: 3600,
+                cache_size: 1000,
+                enable_batch_validation: false,
+                performance_target_us: 245,
             },
             alpn_protocols: vec!["h3".to_string()],
         }

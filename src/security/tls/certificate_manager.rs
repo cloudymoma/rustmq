@@ -13,7 +13,7 @@ use crate::storage::{ObjectStorage, LocalObjectStorage};
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, Duration, UNIX_EPOCH};
+use std::time::{SystemTime, Duration, UNIX_EPOCH, Instant};
 use std::path::PathBuf;
 use rustls::Certificate;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,175 @@ use uuid::Uuid;
 use tracing::{info, warn, error, debug};
 use tokio::sync::Mutex;
 use base64::{Engine, engine::general_purpose};
+use webpki::{EndEntityCert, TrustAnchor};
+use sha2::{Sha256, Digest};
+use lru::LruCache;
+use std::num::NonZeroUsize;
+
+/// Certificate cache entry with parsing metrics
+#[derive(Debug, Clone)]
+pub struct CertificateCacheEntry {
+    /// Parsed webpki certificate
+    pub cert_der: Vec<u8>,
+    /// Cache timestamp
+    pub cached_at: Instant,
+    /// Parse duration metrics
+    pub parse_duration_micros: u64,
+    /// Validation status
+    pub is_valid: bool,
+    /// Expiration time
+    pub expires_at: SystemTime,
+    /// Subject key identifier for cache key
+    pub subject_key_id: Option<Vec<u8>>,
+}
+
+/// Certificate cache key based on webpki parsing
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CertificateCacheKey {
+    /// SHA256 hash of certificate DER
+    pub cert_hash: [u8; 32],
+    /// Subject key identifier
+    pub subject_key_id: Option<Vec<u8>>,
+}
+
+impl CertificateCacheKey {
+    /// Create cache key from certificate DER
+    pub fn from_der(cert_der: &[u8]) -> Result<Self> {
+        let mut hasher = Sha256::new();
+        hasher.update(cert_der);
+        let cert_hash: [u8; 32] = hasher.finalize().into();
+
+        // Extract subject key identifier using webpki
+        let subject_key_id = Self::extract_subject_key_id(cert_der)?;
+
+        Ok(Self {
+            cert_hash,
+            subject_key_id,
+        })
+    }
+
+    fn extract_subject_key_id(cert_der: &[u8]) -> Result<Option<Vec<u8>>> {
+        // Parse with x509_parser to extract subject key ID
+        let (_, cert) = X509Certificate::from_der(cert_der)
+            .map_err(|_| RustMqError::InvalidCertificate {
+                reason: "Failed to parse certificate for cache key".to_string(),
+            })?;
+
+        for ext in cert.extensions() {
+            // Subject Key Identifier OID: 2.5.29.14
+            if ext.oid.to_string() == "2.5.29.14" {
+                return Ok(Some(ext.value.to_vec()));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Certificate cache with smart invalidation
+#[derive(Debug)]
+pub struct CertificateCache {
+    /// LRU cache for certificates
+    cache: RwLock<LruCache<CertificateCacheKey, CertificateCacheEntry>>,
+    /// Cache statistics
+    stats: RwLock<CertificateCacheStats>,
+    /// Cache configuration
+    max_entries: usize,
+    ttl_seconds: u64,
+}
+
+/// Certificate cache statistics
+#[derive(Debug, Default, Clone)]
+pub struct CertificateCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub invalidations: u64,
+    pub parse_time_total_micros: u64,
+    pub parse_count: u64,
+    pub last_invalidation: Option<Instant>,
+}
+
+impl CertificateCache {
+    /// Create new certificate cache
+    pub fn new(max_entries: usize, ttl_seconds: u64) -> Self {
+        Self {
+            cache: RwLock::new(LruCache::new(NonZeroUsize::new(max_entries).unwrap())),
+            stats: RwLock::new(CertificateCacheStats::default()),
+            max_entries,
+            ttl_seconds,
+        }
+    }
+
+    /// Get certificate from cache
+    pub fn get(&self, key: &CertificateCacheKey) -> Option<CertificateCacheEntry> {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+
+        if let Some(entry) = cache.get(key) {
+            // Check if entry is still valid
+            if entry.cached_at.elapsed().as_secs() < self.ttl_seconds {
+                stats.hits += 1;
+                return Some(entry.clone());
+            } else {
+                // Entry expired, remove it
+                cache.pop(key);
+                stats.invalidations += 1;
+            }
+        }
+
+        stats.misses += 1;
+        None
+    }
+
+    /// Put certificate into cache
+    pub fn put(&self, key: CertificateCacheKey, entry: CertificateCacheEntry) {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+
+        cache.put(key, entry.clone());
+        stats.parse_time_total_micros += entry.parse_duration_micros;
+        stats.parse_count += 1;
+    }
+
+    /// Invalidate certificates by predicate
+    pub fn invalidate_by<F>(&self, predicate: F) -> usize 
+    where 
+        F: Fn(&CertificateCacheKey, &CertificateCacheEntry) -> bool,
+    {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+        
+        let mut removed_count = 0;
+        let keys_to_remove: Vec<_> = cache.iter()
+            .filter(|(k, v)| predicate(k, v))
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in keys_to_remove {
+            cache.pop(&key);
+            removed_count += 1;
+        }
+
+        stats.invalidations += removed_count as u64;
+        stats.last_invalidation = Some(Instant::now());
+        removed_count
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> CertificateCacheStats {
+        self.stats.read().unwrap().clone()
+    }
+
+    /// Clear cache
+    pub fn clear(&self) {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+        
+        let cleared_count = cache.len();
+        cache.clear();
+        stats.invalidations += cleared_count as u64;
+        stats.last_invalidation = Some(Instant::now());
+    }
+}
 
 /// Serde-compatible wrapper for SanType since rcgen::SanType doesn't implement Deserialize
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,7 +351,6 @@ pub enum ExtendedKeyUsage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CertificateRole {
     RootCa,
-    IntermediateCa,
     Broker,
     Controller,
     Client,
@@ -411,6 +579,47 @@ pub struct CertificateManager {
     crl: Arc<RwLock<RevocationList>>,
     audit_log: Arc<Mutex<Vec<CertificateAuditEntry>>>,
     renewal_task: Option<tokio::task::JoinHandle<()>>,
+    /// Certificate cache with webpki-based keys
+    cert_cache: Arc<CertificateCache>,
+    /// CA certificate cache for chain validation
+    ca_cache: Arc<CertificateCache>,
+}
+
+/// Batch certificate validation request
+#[derive(Debug, Clone)]
+pub struct BatchValidationRequest {
+    /// Certificates to validate (DER format)
+    pub certificates: Vec<Vec<u8>>,
+    /// Trust anchors for validation
+    pub trust_anchors: Vec<Vec<u8>>,
+    /// Validation time (None for current time)
+    pub validation_time: Option<SystemTime>,
+}
+
+/// Batch certificate validation result
+#[derive(Debug, Clone)]
+pub struct BatchValidationResult {
+    /// Individual certificate results
+    pub results: Vec<CertificateValidationResult>,
+    /// Total validation time
+    pub validation_duration_micros: u64,
+    /// Cache hit rate during validation
+    pub cache_hit_rate: f64,
+}
+
+/// Individual certificate validation result
+#[derive(Debug, Clone)]
+pub struct CertificateValidationResult {
+    /// Certificate index in batch
+    pub index: usize,
+    /// Validation success
+    pub is_valid: bool,
+    /// Error message if invalid
+    pub error: Option<String>,
+    /// Parse duration
+    pub parse_duration_micros: u64,
+    /// Cache hit
+    pub cache_hit: bool,
 }
 
 impl CertificateManager {
@@ -444,6 +653,10 @@ impl CertificateManager {
         
         let audit_log = Arc::new(Mutex::new(Vec::new()));
         
+        // Initialize certificate caches
+        let cert_cache = Arc::new(CertificateCache::new(1000, 300)); // 1000 entries, 5 min TTL
+        let ca_cache = Arc::new(CertificateCache::new(100, 1800));   // 100 entries, 30 min TTL
+        
         let mut manager = Self {
             config,
             storage,
@@ -451,6 +664,8 @@ impl CertificateManager {
             crl,
             audit_log,
             renewal_task: None,
+            cert_cache,
+            ca_cache,
         };
         
         // Load existing certificates
@@ -516,82 +731,7 @@ impl CertificateManager {
         Ok(cert_info)
     }
     
-    /// Generate a new intermediate CA certificate
-    pub async fn generate_intermediate_ca(&self, issuer_id: &str, params: CaGenerationParams) -> Result<CertificateInfo> {
-        self.audit_log("generate_intermediate_ca", None, &params.common_name, "STARTED", HashMap::new()).await;
-        
-        // Get the issuer certificate (root CA)
-        let issuer_cert = self.get_certificate_by_id(issuer_id).await?
-            .ok_or_else(|| RustMqError::CertificateNotFound { 
-                identifier: issuer_id.to_string() 
-            })?;
-        
-        if !issuer_cert.is_ca {
-            return Err(RustMqError::CertificateValidation {
-                reason: "Issuer certificate is not a CA".to_string(),
-            });
-        }
-        
-        let key_pair = self.generate_key_pair(params.key_type.unwrap_or(self.config.ca_settings.key_type), 
-                                              params.key_size.unwrap_or(self.config.ca_settings.key_size))?;
-        
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(rcgen::DnType::CommonName, params.common_name.clone());
-        
-        if let Some(org) = params.organization.or_else(|| Some(self.config.ca_settings.organization.clone())) {
-            distinguished_name.push(rcgen::DnType::OrganizationName, org);
-        }
-        
-        let mut cert_params = CertificateParams::new(vec![]);
-        cert_params.distinguished_name = distinguished_name;
-        cert_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
-        cert_params.key_usages = vec![
-            rcgen::KeyUsagePurpose::KeyCertSign,
-            rcgen::KeyUsagePurpose::CrlSign,
-            rcgen::KeyUsagePurpose::DigitalSignature,
-        ];
-        
-        let validity_years = params.validity_years.unwrap_or(self.config.ca_settings.intermediate_ca_validity_years);
-        // Set certificate validity period
-        cert_params.not_before = ::time::OffsetDateTime::now_utc();
-        cert_params.not_after = cert_params.not_before + ::time::Duration::days(validity_years as i64 * 365);
-        
-        cert_params.key_pair = Some(key_pair);
-        
-        // Create the certificate parameters first
-        let certificate = RcgenCertificate::from_params(cert_params)
-            .map_err(|e| RustMqError::CertificateGeneration { 
-                reason: format!("Failed to create intermediate CA params: {}", e) 
-            })?;
-        
-        // Get the issuer CA certificate for signing
-        let issuer_cert = self.reconstruct_rcgen_certificate(issuer_id).await?;
-        
-        // Sign the intermediate CA certificate with the issuer
-        let signed_der = certificate.serialize_der_with_signer(&issuer_cert)
-            .map_err(|e| RustMqError::CertificateGeneration {
-                reason: format!("Failed to sign intermediate CA certificate: {}", e),
-            })?;
-        
-        // Convert signed DER back to PEM for storage
-        let signed_pem = format!(
-            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
-            general_purpose::STANDARD.encode(&signed_der)
-        );
-        
-        let cert_info = self.store_signed_certificate(
-            signed_pem,
-            certificate.serialize_private_key_pem(),
-            CertificateRole::IntermediateCa, 
-            Some(issuer_id.to_string()), 
-            "system"
-        ).await?;
-        
-        self.audit_log("generate_intermediate_ca", Some(&cert_info.id), &params.common_name, "SUCCESS", HashMap::new()).await;
-        info!("Generated intermediate CA certificate: {}", cert_info.id);
-        
-        Ok(cert_info)
-    }
+    // Intermediate CA generation removed - only root CA supported for simplicity
     
     /// Issue a new end-entity certificate
     pub async fn issue_certificate(&self, request: CertificateRequest) -> Result<CertificateInfo> {
@@ -658,10 +798,16 @@ impl CertificateManager {
             })?;
         
         let cert_info = if let Some(ref issuer_id) = request.issuer_id {
-            // This is a CA-signed certificate (end-entity or intermediate)
+            // This is a CA-signed certificate (end-entity only - no intermediate CAs)
+            if request.role == CertificateRole::RootCa {
+                return Err(RustMqError::CertificateValidation {
+                    reason: "Root CA certificates must be self-signed".to_string(),
+                });
+            }
+            
             let issuer_cert = self.reconstruct_rcgen_certificate(issuer_id).await?;
             
-            // Sign the certificate with the issuer
+            // Sign the certificate with the root CA
             let signed_der = certificate.serialize_der_with_signer(&issuer_cert)
                 .map_err(|e| RustMqError::CertificateGeneration {
                     reason: format!("Failed to sign certificate: {}", e),
@@ -683,7 +829,9 @@ impl CertificateManager {
         } else {
             // This is a self-signed certificate (should only be root CA)
             if request.role != CertificateRole::RootCa {
-                warn!("Creating self-signed certificate for non-root CA role: {:?}", request.role);
+                return Err(RustMqError::CertificateValidation {
+                    reason: "Only root CA certificates can be self-signed".to_string(),
+                });
             }
             self.store_certificate(certificate, request.role, None, "user").await?
         };
@@ -770,24 +918,22 @@ impl CertificateManager {
             }
         }
         
-        // Update CRL
-        {
+        // Update CRL - get certificate first, then acquire lock
+        if let Some(cert) = self.get_certificate_by_id(cert_id).await? {
             let mut crl = self.crl.write().map_err(|_| {
                 RustMqError::Storage("Failed to acquire CRL lock for revocation".to_string())
             })?;
             
-            if let Some(cert) = self.get_certificate_by_id(cert_id).await? {
-                crl.revoked_certificates.insert(
-                    cert.serial_number.clone(),
-                    RevokedCertificate {
-                        serial_number: cert.serial_number,
-                        revocation_date: SystemTime::now(),
-                        reason,
-                    }
-                );
-                crl.this_update = SystemTime::now();
-                crl.next_update = SystemTime::now() + Duration::from_secs(86400 * 7); // 7 days
-            }
+            crl.revoked_certificates.insert(
+                cert.serial_number.clone(),
+                RevokedCertificate {
+                    serial_number: cert.serial_number,
+                    revocation_date: SystemTime::now(),
+                    reason,
+                }
+            );
+            crl.this_update = SystemTime::now();
+            crl.next_update = SystemTime::now() + Duration::from_secs(86400 * 7); // 7 days
         }
         
         // Persist the updated certificate and CRL
@@ -1243,7 +1389,7 @@ impl CertificateManager {
             renewal_threshold,
             key_type: KeyType::Ecdsa, // TODO: Detect from certificate
             key_size: 256, // TODO: Extract from certificate
-            is_ca: matches!(role, CertificateRole::RootCa | CertificateRole::IntermediateCa),
+            is_ca: matches!(role, CertificateRole::RootCa),
             issuer_id,
             revocation_reason: None,
             san_entries,
@@ -1348,7 +1494,7 @@ impl CertificateManager {
             renewal_threshold,
             key_type: KeyType::Ecdsa, // TODO: Detect from certificate
             key_size: 256, // TODO: Extract from certificate
-            is_ca: matches!(role, CertificateRole::RootCa | CertificateRole::IntermediateCa),
+            is_ca: matches!(role, CertificateRole::RootCa),
             issuer_id,
             revocation_reason: None,
             san_entries,
@@ -1472,12 +1618,14 @@ impl CertificateManager {
     
     /// Persist CRL to storage
     async fn persist_crl(&self) -> Result<()> {
-        let crl = self.crl.read().map_err(|_| {
-            RustMqError::Storage("Failed to acquire CRL lock for persistence".to_string())
-        })?;
-        
-        let data = serde_json::to_vec(&*crl)
-            .map_err(|e| RustMqError::Storage(format!("Failed to serialize CRL: {}", e)))?;
+        let data = {
+            let crl = self.crl.read().map_err(|_| {
+                RustMqError::Storage("Failed to acquire CRL lock for persistence".to_string())
+            })?;
+            
+            serde_json::to_vec(&*crl)
+                .map_err(|e| RustMqError::Storage(format!("Failed to serialize CRL: {}", e)))?
+        }; // RwLockReadGuard is dropped here
         
         self.storage.put("certificates/crl.json", data.into()).await
             .map_err(|e| RustMqError::Storage(format!("Failed to persist CRL: {}", e)))?;
@@ -1601,6 +1749,194 @@ impl CertificateManager {
             .collect();
             
         Ok(revoked_fingerprints)
+    }
+
+    // ===== Certificate Caching Improvements =====
+
+    /// Validate certificate with cache optimization
+    pub async fn validate_certificate_cached(&self, cert_der: &[u8]) -> Result<CertificateValidationResult> {
+        let _start_time = Instant::now();
+        
+        // Create cache key using webpki parsing
+        let cache_key = CertificateCacheKey::from_der(cert_der)?;
+        
+        // Check cache first
+        if let Some(cached_entry) = self.cert_cache.get(&cache_key) {
+            return Ok(CertificateValidationResult {
+                index: 0,
+                is_valid: cached_entry.is_valid,
+                error: None,
+                parse_duration_micros: cached_entry.parse_duration_micros,
+                cache_hit: true,
+            });
+        }
+        
+        // Parse and validate certificate
+        let parse_start = Instant::now();
+        let cert = EndEntityCert::try_from(cert_der)
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Failed to parse certificate: {}", e),
+            })?;
+        let parse_duration = parse_start.elapsed().as_micros() as u64;
+        
+        // Basic validation
+        let is_valid = self.validate_cert_basic(&cert).is_ok();
+        
+        // Cache the result
+        let cache_entry = CertificateCacheEntry {
+            cert_der: cert_der.to_vec(),
+            cached_at: Instant::now(),
+            parse_duration_micros: parse_duration,
+            is_valid,
+            expires_at: SystemTime::now() + Duration::from_secs(86400), // TODO: Extract actual expiry
+            subject_key_id: cache_key.subject_key_id.clone(),
+        };
+        
+        self.cert_cache.put(cache_key, cache_entry);
+        
+        Ok(CertificateValidationResult {
+            index: 0,
+            is_valid,
+            error: if is_valid { None } else { Some("Certificate validation failed".to_string()) },
+            parse_duration_micros: parse_duration,
+            cache_hit: false,
+        })
+    }
+
+    /// Basic certificate validation
+    fn validate_cert_basic(&self, _cert: &EndEntityCert) -> Result<()> {
+        // TODO: Implement actual validation logic
+        Ok(())
+    }
+
+    // ===== Batch Certificate Operations =====
+
+    /// Validate multiple certificates in a batch with optimized caching
+    pub async fn validate_certificates_batch(&self, request: BatchValidationRequest) -> Result<BatchValidationResult> {
+        let batch_start = Instant::now();
+        let mut results = Vec::with_capacity(request.certificates.len());
+        let mut cache_hits = 0;
+        
+        for (index, cert_der) in request.certificates.iter().enumerate() {
+            let validation_result = self.validate_certificate_cached(cert_der).await?;
+            
+            if validation_result.cache_hit {
+                cache_hits += 1;
+            }
+            
+            results.push(CertificateValidationResult {
+                index,
+                ..validation_result
+            });
+        }
+        
+        let total_duration = batch_start.elapsed().as_micros() as u64;
+        let cache_hit_rate = if !request.certificates.is_empty() {
+            cache_hits as f64 / request.certificates.len() as f64
+        } else {
+            0.0
+        };
+
+        Ok(BatchValidationResult {
+            results,
+            validation_duration_micros: total_duration,
+            cache_hit_rate,
+        })
+    }
+
+    /// Prefetch certificates into cache
+    pub async fn prefetch_certificates(&self, cert_ders: Vec<Vec<u8>>) -> Result<usize> {
+        let mut prefetched = 0;
+        
+        for cert_der in cert_ders {
+            // Only prefetch if not already cached
+            let cache_key = CertificateCacheKey::from_der(&cert_der)?;
+            if self.cert_cache.get(&cache_key).is_none() {
+                // Parse and cache the certificate
+                let _ = self.validate_certificate_cached(&cert_der).await?;
+                prefetched += 1;
+            }
+        }
+        
+        Ok(prefetched)
+    }
+
+    /// Optimize CA chain loading with caching
+    pub async fn load_ca_chain_cached(&self, ca_cert_ders: Vec<Vec<u8>>) -> Result<usize> {
+        let mut loaded_count = 0;
+        
+        for ca_der in ca_cert_ders {
+            let cache_key = CertificateCacheKey::from_der(&ca_der)?;
+            
+            // Check CA cache first
+            if let Some(_cached) = self.ca_cache.get(&cache_key) {
+                // Already cached, skip
+                continue;
+            }
+            
+            // Parse and validate CA certificate using webpki
+            let _cert = EndEntityCert::try_from(ca_der.as_slice())
+                .map_err(|e| RustMqError::InvalidCertificate {
+                    reason: format!("Failed to parse CA certificate: {}", e),
+                })?;
+            
+            // Cache the CA certificate
+            let cache_entry = CertificateCacheEntry {
+                cert_der: ca_der.clone(),
+                cached_at: Instant::now(),
+                parse_duration_micros: 0, // CA parsing is typically fast
+                is_valid: true,
+                expires_at: SystemTime::now() + Duration::from_secs(86400 * 365), // CAs have long validity
+                subject_key_id: cache_key.subject_key_id.clone(),
+            };
+            
+            self.ca_cache.put(cache_key, cache_entry);
+            loaded_count += 1;
+        }
+        
+        Ok(loaded_count)
+    }
+
+    // ===== Certificate Cache Management =====
+
+    /// Get certificate cache statistics
+    pub fn get_cert_cache_stats(&self) -> CertificateCacheStats {
+        self.cert_cache.stats()
+    }
+
+    /// Get CA cache statistics
+    pub fn get_ca_cache_stats(&self) -> CertificateCacheStats {
+        self.ca_cache.stats()
+    }
+
+    /// Invalidate certificates by issuer
+    pub fn invalidate_certificates_by_issuer(&self, _issuer: &str) -> usize {
+        self.cert_cache.invalidate_by(|_key, _entry| {
+            // TODO: Extract issuer from certificate and compare
+            // For now, invalidate based on heuristics
+            false
+        })
+    }
+
+    /// Invalidate expired certificates
+    pub fn invalidate_expired_certificates(&self) -> usize {
+        let now = SystemTime::now();
+        
+        let cert_invalidated = self.cert_cache.invalidate_by(|_key, entry| {
+            entry.expires_at <= now
+        });
+        
+        let ca_invalidated = self.ca_cache.invalidate_by(|_key, entry| {
+            entry.expires_at <= now
+        });
+        
+        cert_invalidated + ca_invalidated
+    }
+
+    /// Clear all certificate caches
+    pub fn clear_certificate_caches(&self) {
+        self.cert_cache.clear();
+        self.ca_cache.clear();
     }
 }
 

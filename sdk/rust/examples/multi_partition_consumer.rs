@@ -81,28 +81,28 @@ async fn main() -> Result<()> {
     // Demonstrate multi-partition capabilities
     println!("\n🎯 Starting multi-partition consumption demonstration...");
 
-    // Phase 1: Partition Discovery and Assignment
-    println!("\n--- Phase 1: Partition Discovery ---");
+    // Step 1: Partition Discovery and Assignment
+    println!("\n--- Step 1: Partition Discovery ---");
     demonstrate_partition_discovery(&consumer).await?;
 
-    // Phase 2: Multi-Partition Message Processing
-    println!("\n--- Phase 2: Multi-Partition Message Processing ---");
+    // Step 2: Multi-Partition Message Processing
+    println!("\n--- Step 2: Multi-Partition Message Processing ---");
     demonstrate_multi_partition_processing(&consumer).await?;
 
-    // Phase 3: Advanced Seeking Capabilities
-    println!("\n--- Phase 3: Advanced Seeking ---");
+    // Step 3: Advanced Seeking Capabilities
+    println!("\n--- Step 3: Advanced Seeking ---");
     demonstrate_advanced_seeking(&consumer).await?;
 
-    // Phase 4: Partition Management
-    println!("\n--- Phase 4: Partition Management ---");
+    // Step 4: Partition Management
+    println!("\n--- Step 4: Partition Management ---");
     demonstrate_partition_management(&consumer).await?;
 
-    // Phase 5: Error Handling and Recovery
-    println!("\n--- Phase 5: Error Handling ---");
+    // Step 5: Error Handling and Recovery
+    println!("\n--- Step 5: Error Handling ---");
     demonstrate_error_handling(&consumer).await?;
 
-    // Phase 6: Performance Optimization
-    println!("\n--- Phase 6: Performance Optimization ---");
+    // Step 6: Performance Optimization
+    println!("\n--- Step 6: Performance Optimization ---");
     demonstrate_performance_optimization(&consumer).await?;
 
     // Clean shutdown

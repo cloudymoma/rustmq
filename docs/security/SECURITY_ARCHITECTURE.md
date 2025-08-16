@@ -144,12 +144,13 @@ pub struct CertificateManager {
 ```
 
 **Key Features:**
-- **CA Operations**: Root CA creation, intermediate CA delegation
-- **Certificate Lifecycle**: Issue, renew, rotate, revoke certificates
+- **Root CA Operations**: Root CA creation and management (simplified, no intermediate CAs)
+- **Certificate Lifecycle**: Issue, renew, rotate, revoke certificates directly from root CA
 - **Template System**: Role-based certificate templates (broker, client, admin)
 - **Automated Renewal**: Configurable automatic certificate renewal
 - **Revocation Management**: CRL and OCSP revocation checking
 - **Audit Trail**: Comprehensive logging of all certificate operations
+- **Simplified Trust Chain**: Direct root CA signing for improved performance and reduced complexity
 
 ### 2. Authentication Manager
 
@@ -284,10 +285,10 @@ Client Certificate Validation Flow:
 **Previous Issue**: The certificate manager was creating all certificates as self-signed using `RcgenCertificate::from_params()`, causing the authentication manager to fail validation with "Invalid certificate signature" errors.
 
 **Current Implementation**: 
-- **Root CA**: Correctly remains self-signed
-- **Intermediate CA**: Now properly signed by the root CA using `ca_cert.serialize_der_with_signer(&issuer_cert)`
-- **End-Entity Certificates**: Now properly signed by their issuing CA (root or intermediate)
-- **Certificate Chain Validation**: Authentication manager now successfully validates the complete trust chain
+- **Root CA**: Correctly remains self-signed for trust anchor
+- **End-Entity Certificates**: Now properly signed by the root CA using `ca_cert.serialize_der_with_signer(&issuer_cert)`
+- **Certificate Chain Validation**: Authentication manager now successfully validates the simplified trust chain
+- **Simplified Architecture**: Removed intermediate CA complexity for improved performance and easier management
 
 This fix resolves all previous authentication test failures and ensures production-ready mTLS functionality.
 
@@ -436,32 +437,19 @@ if !bloom_filter.might_contain(&acl_key) {
 
 ### Certificate Authority (CA) Architecture
 
-RustMQ supports hierarchical CA structures for enterprise certificate management:
+RustMQ uses a simplified root CA-only architecture for streamlined certificate management:
 
 ```
-Certificate Authority Hierarchy:
+Simplified Certificate Authority Structure:
 ┌─────────────────────────────────────────────────────────────────┐
 │                       Root CA                                   │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │  • Self-signed root certificate                            ││
 │  │  • Long validity period (10+ years)                        ││
-│  │  │  • Offline storage for security                         ││
-│  │  • Signs intermediate CAs only                             ││
+│  │  • Signs all end-entity certificates directly             ││
+│  │  • Simplified trust chain for improved performance        ││
+│  │  • Reduced complexity for easier management               ││
 │  └─────────────────────────────────────────────────────────────┘│
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  Intermediate CAs                               │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────────┐│
-│  │   Production    │ │   Staging       │ │    Development      ││
-│  │      CA         │ │     CA          │ │        CA           ││
-│  │                 │ │                 │ │                     ││
-│  │ • Shorter       │ │ • Environment   │ │ • Shorter validity  ││
-│  │   validity      │ │   specific      │ │ • Relaxed policies  ││
-│  │ • Strict        │ │ • Testing       │ │ • Development use   ││
-│  │   policies      │ │   friendly      │ │                     ││
-│  └─────────────────┘ └─────────────────┘ └─────────────────────┘│
 └─────────────────────────┬───────────────────────────────────────┘
                           │
                           ▼
@@ -470,6 +458,11 @@ Certificate Authority Hierarchy:
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐│
 │  │   Broker    │ │   Client    │ │    Admin    │ │   Service   ││
 │  │    Certs    │ │    Certs    │ │    Certs    │ │    Certs    ││
+│  │             │ │             │ │             │ │             ││
+│  │ • Signed by │ │ • Signed by │ │ • Signed by │ │ • Signed by ││
+│  │   Root CA   │ │   Root CA   │ │   Root CA   │ │   Root CA   ││
+│  │ • Role-based│ │ • Role-based│ │ • Role-based│ │ • Role-based││
+│  │   templates │ │   templates │ │   templates │ │   templates ││
 │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘│
 └─────────────────────────────────────────────────────────────────┘
 ```

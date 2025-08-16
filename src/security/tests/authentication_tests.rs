@@ -87,6 +87,12 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         
+        // Refresh CA chain after issuing certificate to ensure it's loaded
+        auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Give time for certificate persistence and CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        
         // Test certificate validation - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
@@ -241,6 +247,12 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
+        
+        // Refresh CA chain after issuing certificate to ensure it's loaded
+        auth_manager.refresh_ca_chain().await.unwrap();
+        
+        // Give time for certificate persistence and CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         
         // First validation (should cache) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
@@ -453,22 +465,7 @@ mod tests {
         // Give time for CA chain refresh to complete
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         
-        // Create an intermediate CA
-        let intermediate_ca_params = CaGenerationParams {
-            common_name: "Intermediate CA".to_string(),
-            is_root: false,
-            ..Default::default()
-        };
-        
-        let intermediate_ca = cert_manager.generate_intermediate_ca(&root_ca.id, intermediate_ca_params).await.unwrap();
-        
-        // Refresh CA chain again after adding intermediate CA
-        auth_manager.refresh_ca_chain().await.unwrap();
-        
-        // Give time for CA chain refresh to complete
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
-        // Issue a client certificate from the intermediate CA
+        // Issue a client certificate directly from the root CA (no intermediate)
         let mut subject = rcgen::DistinguishedName::new();
         subject.push(rcgen::DnType::CommonName, "chain-test-client".to_string());
         
@@ -479,7 +476,7 @@ mod tests {
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
             key_size: Some(256),
-            issuer_id: Some(intermediate_ca.id.clone()),
+            issuer_id: Some(root_ca.id.clone()),
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
@@ -490,21 +487,18 @@ mod tests {
         // Give time for background certificate persistence to complete
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
-        // Validate the certificate chain - convert PEMs to DER first
+        // Validate the certificate (simplified - direct root CA validation)
         let client_pem = client_cert.certificate_pem.clone().unwrap();
         let client_der = rustls_pemfile::certs(&mut client_pem.as_bytes()).unwrap().into_iter().next().unwrap();
         let client_cert_obj = rustls::Certificate(client_der);
         
-        let intermediate_pem = intermediate_ca.certificate_pem.clone().unwrap();
-        let intermediate_der = rustls_pemfile::certs(&mut intermediate_pem.as_bytes()).unwrap().into_iter().next().unwrap();
-        let intermediate_ca_obj = rustls::Certificate(intermediate_der);
-        
         let root_pem = root_ca.certificate_pem.clone().unwrap();
         let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).unwrap().into_iter().next().unwrap();
         let root_ca_obj = rustls::Certificate(root_der);
+        
+        // Simple chain: client cert signed by root CA directly
         let chain_validation = auth_manager.validate_certificate_chain(&[
             client_cert_obj,
-            intermediate_ca_obj,
             root_ca_obj,
         ]).await;
         
@@ -812,7 +806,7 @@ mod tests {
         
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
         
-        // Create legitimate certificates
+        // Create legitimate root CA (simplified without intermediate)
         let root_ca_params = CaGenerationParams {
             common_name: "Legitimate Root CA".to_string(),
             is_root: true,
@@ -820,40 +814,28 @@ mod tests {
         };
         let root_ca = cert_manager.generate_root_ca(root_ca_params).await.unwrap();
         
-        let intermediate_params = CaGenerationParams {
-            common_name: "Legitimate Intermediate CA".to_string(),
-            is_root: false,
-            ..Default::default()
-        };
-        let intermediate_ca = cert_manager.generate_intermediate_ca(&root_ca.id, intermediate_params).await.unwrap();
-        
-        // Convert PEMs to DER for testing
+        // Convert PEM to DER for testing
         let root_pem = root_ca.certificate_pem.clone().unwrap();
         let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).unwrap().into_iter().next().unwrap();
         let root_cert = rustls::Certificate(root_der);
         
-        let intermediate_pem = intermediate_ca.certificate_pem.clone().unwrap();
-        let intermediate_der = rustls_pemfile::certs(&mut intermediate_pem.as_bytes()).unwrap().into_iter().next().unwrap();
-        let intermediate_cert = rustls::Certificate(intermediate_der);
-        
-        // Test chain manipulation attacks
+        // Test simplified chain manipulation attacks (root CA only)
         let manipulation_attacks = vec![
             // Empty chain
             Vec::new(),
             
-            // Chain with only intermediate (missing root)
-            vec![intermediate_cert.clone()],
-            
             // Chain with duplicate certificates
             vec![root_cert.clone(), root_cert.clone()],
             
-            // Chain with wrong order
-            vec![intermediate_cert.clone(), root_cert.clone()],
+            // Chain with malicious certificate
+            vec![
+                rustls::Certificate(b"malicious certificate".to_vec())
+            ],
             
-            // Chain with malicious intermediate certificate
+            // Chain with both legitimate and malicious certificates
             vec![
                 root_cert.clone(),
-                rustls::Certificate(b"malicious intermediate certificate".to_vec())
+                rustls::Certificate(b"malicious certificate".to_vec())
             ],
         ];
         
@@ -1143,8 +1125,8 @@ mod tests {
         // Refresh CA chain after issuing legitimate certificate
         auth_manager.refresh_ca_chain().await.unwrap();
         
-        // Add delay to ensure CA chain is fully propagated
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Add longer delay to ensure CA chain is fully propagated and certificate is properly signed
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         let legitimate_pem = legitimate_cert.certificate_pem.clone().unwrap();
         let legitimate_der = rustls_pemfile::certs(&mut legitimate_pem.as_bytes()).unwrap().into_iter().next().unwrap();

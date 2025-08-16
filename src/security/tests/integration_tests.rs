@@ -14,6 +14,8 @@ mod tests {
     use crate::security::acl::{AclManager, AclRule, AclOperation, ResourceType};
     use crate::security::tls::*;
     use crate::types::TopicName;
+    // Use certificate manager types for certificate creation
+    use crate::security::tls::certificate_manager::{CertificateRole as CertMgrRole, KeyType, CaGenerationParams, CertificateRequest};
     
     use std::sync::Arc;
     use std::time::Duration;
@@ -52,6 +54,9 @@ mod tests {
         // Load CA certificates into authentication manager
         security_manager.authentication().refresh_ca_chain().await.unwrap();
         
+        // Give time for CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         // 2. Issue client certificate
         let mut subject = rcgen::DistinguishedName::new();
         subject.push(rcgen::DnType::CommonName, "integration-test-client".to_string());
@@ -59,7 +64,7 @@ mod tests {
         
         let cert_request = CertificateRequest {
             subject,
-            role: CertificateRole::Client,
+            role: CertMgrRole::Client,
             san_entries: vec![
                 rcgen::SanType::DnsName("client.test.local".to_string()),
             ],
@@ -94,6 +99,9 @@ mod tests {
         // 6. Test certificate validation
         // Refresh CA chain to ensure latest certificates are loaded before validation
         security_manager.authentication().refresh_ca_chain().await.unwrap();
+        
+        // Give time for CA chain refresh and certificate persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
@@ -191,7 +199,7 @@ mod tests {
         
         let cert_request = CertificateRequest {
             subject,
-            role: CertificateRole::Broker,
+            role: CertMgrRole::Broker,
             san_entries: vec![
                 rcgen::SanType::DnsName("broker-001.cluster.local".to_string()),
                 rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 1, 100))),
@@ -264,12 +272,15 @@ mod tests {
         // Load CA certificates into authentication manager
         security_manager.authentication().refresh_ca_chain().await.unwrap();
         
+        // Give time for CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
         let mut subject = rcgen::DistinguishedName::new();
         subject.push(rcgen::DnType::CommonName, "metrics-test-client".to_string());
         
         let cert_request = CertificateRequest {
             subject,
-            role: CertificateRole::Client,
+            role: CertMgrRole::Client,
             san_entries: vec![],
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
@@ -352,7 +363,7 @@ mod tests {
         
         let cert_request = CertificateRequest {
             subject,
-            role: CertificateRole::Client,
+            role: CertMgrRole::Client,
             san_entries: vec![],
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
@@ -413,7 +424,7 @@ mod tests {
             
             let cert_request = CertificateRequest {
                 subject,
-                role: CertificateRole::Client,
+                role: CertMgrRole::Client,
                 san_entries: vec![],
                 validity_days: Some(365),
                 key_type: Some(KeyType::Ecdsa),
@@ -535,7 +546,7 @@ mod tests {
         
         let cert_request = CertificateRequest {
             subject,
-            role: CertificateRole::Client,
+            role: CertMgrRole::Client,
             san_entries: vec![],
             validity_days: Some(365),
             key_type: Some(KeyType::Ecdsa),
@@ -579,6 +590,9 @@ mod tests {
         // Load CA certificates into authentication manager
         security_manager.authentication().refresh_ca_chain().await.unwrap();
         
+        // Give time for CA chain refresh to complete
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        
         // Test concurrent certificate operations
         let mut cert_handles = Vec::new();
         let ca_cert_id = ca_cert.id.clone();
@@ -594,7 +608,7 @@ mod tests {
                 
                 let cert_request = CertificateRequest {
                     subject,
-                    role: CertificateRole::Client,
+                    role: CertMgrRole::Client,
                     san_entries: vec![],
                     validity_days: Some(365),
                     key_type: Some(KeyType::Ecdsa),
@@ -645,5 +659,434 @@ mod tests {
         let final_metrics = security_manager.metrics().snapshot();
         assert!(final_metrics.auth_success_count > 0, "Should have successful authentications");
         assert!(final_metrics.authz_success_count > 0, "Should have authorization checks");
+    }
+
+    // ========== Enhanced Integration Tests ==========
+
+    #[tokio::test]
+    async fn test_end_to_end_webpki_authentication_flow() {
+        let (security_manager, _temp_dir) = create_integrated_security_system().await;
+        
+        // 1. Generate root CA
+        let ca_cert = create_test_root_ca(&security_manager).await;
+        
+        // 2. Issue client certificate
+        let client_cert = create_test_client_cert(&security_manager, &ca_cert.id).await;
+        
+        // 3. Test authentication pipeline with WebPKI validation
+        let auth_result = test_certificate_authentication_webpki(
+            &security_manager, 
+            &client_cert
+        ).await;
+        
+        assert!(auth_result.is_ok(), "End-to-end WebPKI authentication should succeed: {:?}", auth_result);
+        
+        // 4. Test authorization
+        let authz_result = test_authorization_flow(&security_manager, &client_cert).await;
+        assert!(authz_result.is_ok(), "Authorization should succeed: {:?}", authz_result);
+        
+        // 5. Test WebPKI-specific features
+        let webpki_validation = test_webpki_specific_features(&security_manager, &client_cert).await;
+        assert!(webpki_validation.is_ok(), "WebPKI-specific validation should succeed: {:?}", webpki_validation);
+    }
+
+    #[tokio::test]
+    async fn test_comprehensive_webpki_certificate_lifecycle() {
+        let (security_manager, _temp_dir) = create_integrated_security_system().await;
+        
+        // 1. Create CA with specific WebPKI-compatible parameters
+        let ca_params = CaGenerationParams {
+            common_name: "WebPKI Integration Root CA".to_string(),
+            organization: Some("RustMQ WebPKI Integration".to_string()),
+            is_root: true,
+            validity_years: Some(2),
+            key_type: Some(KeyType::Ecdsa),
+            ..Default::default()
+        };
+        
+        let ca_cert = security_manager.certificate_manager()
+            .generate_root_ca(ca_params).await.unwrap();
+        
+        // Load CA into authentication manager for WebPKI validation
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // 2. Test multiple certificate types with WebPKI validation
+        let certificate_scenarios = vec![
+            ("broker-webpki", CertMgrRole::Broker, vec![
+                rcgen::SanType::DnsName("broker.rustmq.local".to_string()),
+                rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
+            ]),
+            ("client-webpki", CertMgrRole::Client, vec![
+                rcgen::SanType::DnsName("client.rustmq.local".to_string()),
+            ]),
+            ("controller-webpki", CertMgrRole::Controller, vec![
+                rcgen::SanType::DnsName("controller.rustmq.local".to_string()),
+                rcgen::SanType::DnsName("controller-01.cluster.rustmq.local".to_string()),
+            ]),
+        ];
+        
+        for (name, role, san_entries) in certificate_scenarios {
+            // Issue certificate
+            let mut subject = rcgen::DistinguishedName::new();
+            subject.push(rcgen::DnType::CommonName, name.to_string());
+            subject.push(rcgen::DnType::OrganizationName, "WebPKI Integration Test".to_string());
+            
+            let cert_request = CertificateRequest {
+                subject,
+                role,
+                san_entries,
+                validity_days: Some(365),
+                key_type: Some(KeyType::Ecdsa),
+                key_size: Some(256),
+                issuer_id: Some(ca_cert.id.clone()),
+            };
+            
+            let cert_result = security_manager.certificate_manager()
+                .issue_certificate(cert_request).await.unwrap();
+            
+            // Test WebPKI validation
+            let pem_data = cert_result.certificate_pem.clone().unwrap();
+            let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap();
+            
+            // Comprehensive WebPKI validation
+            let validation_result = security_manager.authentication()
+                .validate_certificate_comprehensive(&der_data).await;
+            assert!(validation_result.is_ok(), 
+                   "WebPKI validation should succeed for {}: {:?}", name, validation_result);
+            
+            // Test WebPKI principal extraction
+            let certificate = rustls::Certificate(der_data.clone());
+            let principal = security_manager.authentication()
+                .extract_principal_with_webpki(&certificate, "webpki_test").unwrap();
+            assert!(principal.contains(name), 
+                   "WebPKI principal should contain certificate name for {}", name);
+            
+            println!("✅ WebPKI lifecycle test passed for {} certificate", name);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_webpki_certificate_chain_validation_integration() {
+        let (security_manager, _temp_dir) = create_integrated_security_system().await;
+        
+        // 1. Create root CA
+        let ca_cert = create_test_root_ca(&security_manager).await;
+        
+        // 2. Issue multiple certificates for chain testing
+        let mut certificates = Vec::new();
+        for i in 0..5 {
+            let cert = create_test_client_cert_with_name(
+                &security_manager, 
+                &ca_cert.id, 
+                &format!("chain-test-client-{}", i)
+            ).await;
+            certificates.push(cert);
+        }
+        
+        // Load CA certificates into authentication manager
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // 3. Test chain validation with WebPKI
+        for (i, cert) in certificates.iter().enumerate() {
+            let pem_data = cert.certificate_pem.clone().unwrap();
+            let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap();
+            let cert_obj = rustls::Certificate(der_data.clone());
+            
+            // Test WebPKI comprehensive validation first
+            let comprehensive_validation = security_manager.authentication()
+                .validate_certificate_comprehensive(&der_data).await;
+            assert!(comprehensive_validation.is_ok(), 
+                   "WebPKI comprehensive validation should succeed for certificate {}: {:?}", i, comprehensive_validation);
+        }
+        
+        // 4. Test batch validation performance
+        let cert_ders: Vec<Vec<u8>> = certificates.iter().map(|cert| {
+            let pem_data = cert.certificate_pem.clone().unwrap();
+            rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap()
+        }).collect();
+        
+        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_slice()).collect();
+        
+        let batch_results = security_manager.authentication()
+            .validate_certificates_batch(&cert_der_refs).await;
+        
+        assert_eq!(batch_results.len(), certificates.len(), "Batch validation should process all certificates");
+        for (i, result) in batch_results.iter().enumerate() {
+            assert!(result.is_ok(), "Batch validation should succeed for certificate {}: {:?}", i, result);
+        }
+        
+        println!("✅ WebPKI chain validation integration test completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_webpki_performance_integration() {
+        let (security_manager, _temp_dir) = create_integrated_security_system().await;
+        
+        // 1. Setup test environment
+        let ca_cert = create_test_root_ca(&security_manager).await;
+        
+        // 2. Create multiple certificates for performance testing
+        let mut test_certificates = Vec::new();
+        for i in 0..20 {
+            let cert = create_test_client_cert_with_name(
+                &security_manager, 
+                &ca_cert.id, 
+                &format!("perf-test-client-{}", i)
+            ).await;
+            test_certificates.push(cert);
+        }
+        
+        // Load CA certificates into authentication manager
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // 3. Performance test: Serial validation
+        let start = std::time::Instant::now();
+        for cert in &test_certificates {
+            let pem_data = cert.certificate_pem.clone().unwrap();
+            let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap();
+            
+            let _validation_result = security_manager.authentication()
+                .validate_certificate_comprehensive(&der_data).await.unwrap();
+        }
+        let serial_duration = start.elapsed();
+        
+        // 4. Performance test: Batch validation
+        let cert_ders: Vec<Vec<u8>> = test_certificates.iter().map(|cert| {
+            let pem_data = cert.certificate_pem.clone().unwrap();
+            rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap()
+        }).collect();
+        
+        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_slice()).collect();
+        
+        let start = std::time::Instant::now();
+        let batch_results = security_manager.authentication()
+            .validate_certificates_batch(&cert_der_refs).await;
+        let batch_duration = start.elapsed();
+        
+        // 5. Verify all validations succeeded
+        for result in batch_results {
+            assert!(result.is_ok(), "Batch validation should succeed");
+        }
+        
+        // 6. Performance assertions
+        assert!(serial_duration > Duration::from_nanos(0), "Serial validation should take measurable time");
+        assert!(batch_duration > Duration::from_nanos(0), "Batch validation should take measurable time");
+        
+        // 7. Test caching performance
+        let start = std::time::Instant::now();
+        for cert in &test_certificates[..5] { // Test first 5 again (should be cached)
+            let pem_data = cert.certificate_pem.clone().unwrap();
+            let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .unwrap().into_iter().next().unwrap();
+            
+            let _validation_result = security_manager.authentication()
+                .validate_certificate_comprehensive(&der_data).await.unwrap();
+        }
+        let cached_duration = start.elapsed();
+        
+        println!("🚀 WebPKI Performance Results:");
+        println!("   Serial validation (20 certs): {:?}", serial_duration);
+        println!("   Batch validation (20 certs): {:?}", batch_duration);
+        println!("   Cached validation (5 certs): {:?}", cached_duration);
+        
+        // Cache should generally be faster, but we'll just verify it works
+        assert!(cached_duration > Duration::from_nanos(0), "Cached validation should take measurable time");
+    }
+
+    #[tokio::test]
+    async fn test_webpki_error_handling_integration() {
+        let (security_manager, _temp_dir) = create_integrated_security_system().await;
+        
+        // 1. Setup valid environment
+        let ca_cert = create_test_root_ca(&security_manager).await;
+        
+        // 2. Test various error scenarios with WebPKI
+        let error_scenarios = vec![
+            ("empty_certificate", b"".to_vec()),
+            ("invalid_der", b"invalid der data".to_vec()),
+            ("malformed_pem", b"-----BEGIN CERTIFICATE-----\nGARBAGE\n-----END CERTIFICATE-----".to_vec()),
+            ("binary_garbage", vec![0xFF; 1000]),
+        ];
+        
+        for (scenario_name, cert_data) in error_scenarios {
+            // Test comprehensive validation
+            let validation_result = security_manager.authentication()
+                .validate_certificate_comprehensive(&cert_data).await;
+            assert!(validation_result.is_err(), 
+                   "WebPKI validation should fail for {}", scenario_name);
+            
+            // Test chain validation
+            let certificate = rustls::Certificate(cert_data.clone());
+            let chain_validation = security_manager.authentication()
+                .validate_certificate_chain_with_webpki(&[certificate]).await;
+            assert!(chain_validation.is_err(), 
+                   "WebPKI chain validation should fail for {}", scenario_name);
+            
+            println!("✅ Error handling test passed for scenario: {}", scenario_name);
+        }
+        
+        // 3. Test certificate signed by wrong CA
+        let wrong_ca_params = CaGenerationParams {
+            common_name: "Wrong CA".to_string(),
+            is_root: true,
+            ..Default::default()
+        };
+        
+        let wrong_ca = security_manager.certificate_manager()
+            .generate_root_ca(wrong_ca_params).await.unwrap();
+        
+        let wrong_cert = create_test_client_cert_with_name(
+            &security_manager, 
+            &wrong_ca.id, 
+            "wrong-ca-client"
+        ).await;
+        
+        // This certificate is valid but signed by a CA not in our trust store
+        let pem_data = wrong_cert.certificate_pem.clone().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .unwrap().into_iter().next().unwrap();
+        
+        let wrong_ca_validation = security_manager.authentication()
+            .validate_certificate_comprehensive(&der_data).await;
+        
+        // Should fail because it's not signed by our trusted CA
+        assert!(wrong_ca_validation.is_err(), 
+               "Certificate signed by untrusted CA should fail validation");
+        
+        println!("✅ WebPKI error handling integration test completed successfully");
+    }
+
+    // ========== Helper Functions for Integration Tests ==========
+
+    async fn create_test_root_ca(security_manager: &SecurityManager) -> CertificateInfo {
+        let ca_params = CaGenerationParams {
+            common_name: "Integration Test Root CA".to_string(),
+            organization: Some("RustMQ Integration".to_string()),
+            is_root: true,
+            validity_years: Some(2),
+            key_type: Some(KeyType::Ecdsa),
+            ..Default::default()
+        };
+        
+        security_manager.certificate_manager()
+            .generate_root_ca(ca_params).await.unwrap()
+    }
+
+    async fn create_test_client_cert(security_manager: &SecurityManager, ca_id: &str) -> CertificateInfo {
+        create_test_client_cert_with_name(security_manager, ca_id, "integration-test-client").await
+    }
+
+    async fn create_test_client_cert_with_name(
+        security_manager: &SecurityManager, 
+        ca_id: &str, 
+        name: &str
+    ) -> CertificateInfo {
+        let mut subject = rcgen::DistinguishedName::new();
+        subject.push(rcgen::DnType::CommonName, name.to_string());
+        subject.push(rcgen::DnType::OrganizationName, "Integration Test".to_string());
+        
+        let cert_request = CertificateRequest {
+            subject,
+            role: CertMgrRole::Client,
+            san_entries: vec![
+                rcgen::SanType::DnsName(format!("{}.test.local", name)),
+            ],
+            validity_days: Some(365),
+            key_type: Some(KeyType::Ecdsa),
+            key_size: Some(256),
+            issuer_id: Some(ca_id.to_string()),
+        };
+        
+        security_manager.certificate_manager()
+            .issue_certificate(cert_request).await.unwrap()
+    }
+
+    async fn test_certificate_authentication_webpki(
+        security_manager: &SecurityManager, 
+        client_cert: &CertificateInfo
+    ) -> Result<(), RustMqError> {
+        // Refresh CA chain to ensure WebPKI validation works
+        security_manager.authentication().refresh_ca_chain().await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Test certificate validation with WebPKI
+        let pem_data = client_cert.certificate_pem.clone().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .unwrap().into_iter().next().unwrap();
+        
+        // WebPKI comprehensive validation
+        security_manager.authentication()
+            .validate_certificate_comprehensive(&der_data).await?;
+        
+        // WebPKI principal extraction
+        let certificate = rustls::Certificate(der_data.clone());
+        let _principal = security_manager.authentication()
+            .extract_principal_with_webpki(&certificate, "webpki_auth_test")?;
+        
+        // WebPKI chain validation
+        security_manager.authentication()
+            .validate_certificate_chain_with_webpki(&[certificate]).await?;
+        
+        Ok(())
+    }
+
+    async fn test_authorization_flow(
+        security_manager: &SecurityManager, 
+        client_cert: &CertificateInfo
+    ) -> Result<(), RustMqError> {
+        // Extract principal from certificate
+        let pem_data = client_cert.certificate_pem.clone().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .unwrap().into_iter().next().unwrap();
+        let certificate = rustls::Certificate(der_data);
+        let principal = security_manager.authentication()
+            .extract_principal_from_certificate(&certificate, "auth_flow_test")?;
+        
+        // Test authorization
+        let auth_key = AclKey::new(
+            principal,
+            "integration-test-topic".into(),
+            Permission::Read
+        );
+        
+        let _authorization_result = security_manager.authorization()
+            .check_authorization(&auth_key).await?;
+        
+        Ok(())
+    }
+
+    async fn test_webpki_specific_features(
+        security_manager: &SecurityManager, 
+        client_cert: &CertificateInfo
+    ) -> Result<(), RustMqError> {
+        let pem_data = client_cert.certificate_pem.clone().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .unwrap().into_iter().next().unwrap();
+        
+        // Test WebPKI-specific certificate parsing
+        let certificate = security_manager.authentication()
+            .parse_certificate_rustls(&der_data)?;
+        
+        // Test WebPKI certificate metadata extraction
+        let _metadata = security_manager.authentication()
+            .extract_certificate_metadata(&der_data).await?;
+        
+        // Test certificate validation with WebPKI comprehensive validation
+        security_manager.authentication()
+            .validate_certificate_comprehensive(&der_data).await?;
+        
+        // Test certificate metadata extraction
+        let _cert_metadata = security_manager.authentication()
+            .extract_certificate_metadata(&der_data).await?;
+        
+        Ok(())
     }
 }

@@ -25,22 +25,22 @@ RustMQ provides comprehensive certificate management capabilities designed for e
 
 The system supports:
 
-- **Complete CA Operations**: Root and intermediate CA management with proper certificate signing chains
+- **Simplified CA Operations**: Root CA management with direct certificate signing (no intermediate CAs)
 - **Automated Lifecycle**: Certificate issuance, renewal, and revocation with validated signing
 - **Role-Based Templates**: Different certificate types for various use cases
 - **Performance Optimization**: Certificate caching and validation optimization  
 - **Audit Trail**: Complete audit logging of all certificate operations
-- **Proper X.509 Certificate Chains**: End-entity certificates correctly signed by their issuing CA
+- **Simplified X.509 Certificate Chains**: End-entity certificates directly signed by root CA for improved performance
 
 ### Certificate Types
 
 RustMQ uses different certificate types for different components:
 
-1. **Root CA Certificate**: Self-signed certificate for the organization
-2. **Intermediate CA Certificates**: Delegated CAs for different environments
-3. **Broker Certificates**: Server certificates for RustMQ brokers
-4. **Client Certificates**: Client authentication certificates
-5. **Admin Certificates**: Administrative access certificates
+1. **Root CA Certificate**: Self-signed certificate for the organization (trust anchor)
+2. **Broker Certificates**: Server certificates for RustMQ brokers (signed by root CA)
+3. **Client Certificates**: Client authentication certificates (signed by root CA)
+4. **Admin Certificates**: Administrative access certificates (signed by root CA)
+5. **Controller Certificates**: Controller service certificates (signed by root CA)
 
 ## Certificate Authority Management
 
@@ -80,30 +80,22 @@ The CA initialization creates several important files:
 
 **Security Note**: The root CA private key (`root-ca.key`) should be stored securely and backed up. Consider using a Hardware Security Module (HSM) for production environments.
 
-### Creating Intermediate CAs
+### Managing Root CA
 
-For better security and operational flexibility, create intermediate CAs for different environments:
+RustMQ uses a simplified approach with only root CA certificates for improved performance and reduced complexity:
 
 ```bash
-# Create intermediate CA for production
-rustmq-admin ca intermediate \
-  --parent-ca root_ca_1 \
-  --cn "RustMQ Production CA" \
-  --org "Your Organization" \
-  --ou "Production" \
-  --validity-years 5 \
-  --path-length 0 \
-  --output-dir /etc/rustmq/ca/production
+# List existing CAs
+rustmq-admin ca list
 
-# Create intermediate CA for development
-rustmq-admin ca intermediate \
-  --parent-ca root_ca_1 \
-  --cn "RustMQ Development CA" \
-  --org "Your Organization" \
-  --ou "Development" \
-  --validity-years 2 \
-  --path-length 0 \
-  --output-dir /etc/rustmq/ca/development
+# View CA information
+rustmq-admin ca info root_ca_1
+
+# Backup CA certificates and keys
+rustmq-admin ca backup \
+  --ca-id root_ca_1 \
+  --output-file /secure/backup/ca-backup.tar.gz.enc \
+  --encrypt
 ```
 
 ### CA Management Operations
@@ -121,8 +113,8 @@ rustmq-admin ca export --ca-id root_ca_1 --output ca-cert.pem
 # Update CA configuration
 rustmq-admin ca update-config --ca-id root_ca_1 --config-file ca-config.toml
 
-# Rotate CA certificate (advanced operation)
-rustmq-admin ca rotate --ca-id root_ca_1 --transition-days 90
+# Note: CA rotation is simplified in the root-only architecture
+# All certificates are signed directly by the root CA
 ```
 
 ### Certificate Signing Architecture

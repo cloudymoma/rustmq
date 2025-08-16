@@ -1,7 +1,11 @@
 //! Secure Consumer Example with mTLS Authentication
 //!
 //! This example demonstrates how to create a secure consumer using mTLS authentication
-//! with the RustMQ Rust SDK, including ACL-based topic authorization.
+//! with the RustMQ Rust SDK, including:
+//! - WebPKI-based certificate validation with advanced caching (target: 245μs)
+//! - ACL-based topic authorization with intelligent caching (target: 1200ns)
+//! - Performance monitoring and metrics collection
+//! - Batch certificate operations and prefetching optimization
 
 use rustmq_client::{
     ClientConfig, TlsConfig, AuthConfig, ConsumerConfig, 

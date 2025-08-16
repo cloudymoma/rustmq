@@ -1,195 +1,37 @@
-# RustMQ Intermediate CA Configuration Example - v2.0
-# Compatible with RustMQ 1.0.0+ Certificate Signing Implementation
-# Updated: August 2025 - Enhanced for production certificate chains
-# This is a template for production intermediate CAs
+# RustMQ Simplified CA Configuration - v2.0 
+# Compatible with RustMQ 1.0.0+ Simplified Certificate Signing Implementation
+# Updated: August 2025 - Simplified to root CA only for improved performance
 
-[intermediate_ca]
-# Basic CA Information
-common_name = "{{COMPANY_NAME}} RustMQ {{ENVIRONMENT}} CA"
-organization = "{{COMPANY_NAME}}"
-organizational_unit = "{{ENVIRONMENT}} Infrastructure"
-country = "US"
-state = "California"
-city = "San Francisco"
+# IMPORTANT NOTE: RustMQ now uses a simplified architecture with only root CAs
+# Intermediate CAs have been removed to improve performance and reduce complexity
+# All certificates are now signed directly by the root CA
 
-# Parent CA Information
-parent_ca_id = "root_ca_1"
-parent_ca_name = "{{COMPANY_NAME}} RustMQ Root CA"
+# This file is kept for reference purposes. For actual configuration,
+# see root-ca-config.toml
 
-# Security Parameters
-key_algorithm = "RSA"
-key_size = 3072  # Smaller than root CA but still secure
-signature_algorithm = "SHA256WithRSA"
-validity_years = 10  # Shorter than root CA
+[legacy_notice]
+# Previous versions of RustMQ supported intermediate CAs
+# The current simplified architecture provides:
+# - Improved performance with direct root CA signing
+# - Reduced certificate chain validation complexity  
+# - Simplified trust chain management
+# - Better caching performance
+# - Easier certificate management operations
 
-# Certificate Policies
-[intermediate_ca.policies]
-certificate_policy_oid = "1.3.6.1.4.1.99999.1.2"
-certificate_policy_name = "{{COMPANY_NAME}} {{ENVIRONMENT}} Certificate Policy"
-cps_uri = "https://pki.{{DOMAIN}}/cps/{{ENVIRONMENT}}"
+# Migration from intermediate CA architecture:
+# 1. All certificates are now issued directly from root CA
+# 2. Certificate validation is simplified to root CA + end entity
+# 3. Trust chain is shortened for better performance
+# 4. Certificate templates remain the same but use root CA signing
 
-# Key Usage Restrictions
-[intermediate_ca.key_usage]
-digital_signature = true   # Can sign certificates and CRLs
-key_encipherment = false
-key_agreement = false
-key_cert_sign = true       # Can issue certificates
-crl_sign = true           # Can sign CRLs
-data_encipherment = false
-content_commitment = false
+[simplified_architecture]
+ca_types_supported = ["root_ca"]
+intermediate_ca_support = false
+certificate_chain_depth = 1  # Root CA + End Entity only
+performance_improvement = "Significant reduction in validation latency"
+management_complexity = "Greatly simplified"
 
-# Basic Constraints
-[intermediate_ca.basic_constraints]
-ca = true
-path_length_constraint = 0  # Cannot create sub-CAs (end-entity certificates only)
-
-# Security Features
-[intermediate_ca.security]
-# Use HSM for production intermediate CAs
-use_hsm = false  # Set to true for production
-hsm_type = "pkcs11"
-hsm_library = "/usr/lib/softhsm2/libsofthsm2.so"
-hsm_slot_id = 1  # Different slot than root CA
-hsm_pin_file = "/etc/rustmq/secrets/intermediate-hsm-pin"
-
-# Key protection
-encrypt_private_key = true
-private_key_password_file = "/etc/rustmq/secrets/intermediate-ca-password"
-
-# Operational settings
-max_certificates_per_day = 1000
-certificate_lifetime_limits = {
-    "broker" = "365d",
-    "client" = "90d", 
-    "admin" = "7d"
-}
-
-# Certificate Revocation List (CRL)
-[intermediate_ca.crl]
-crl_distribution_points = ["http://crl.{{DOMAIN}}/rustmq-{{ENVIRONMENT}}-ca.crl"]
-crl_validity_hours = 12  # More frequent updates than root CA
-auto_generate_crl = true
-crl_generation_interval_hours = 2
-
-# Online Certificate Status Protocol (OCSP)
-[intermediate_ca.ocsp]
-ocsp_responder_url = "http://ocsp.{{DOMAIN}}/rustmq-{{ENVIRONMENT}}-ca"
-enable_ocsp_signing = true
-ocsp_response_validity_hours = 12
-
-# Certificate Templates
-[intermediate_ca.templates]
-# Default certificate template for this CA
-default_template = "standard_{{ENVIRONMENT}}"
-
-# Allowed certificate templates
-allowed_templates = [
-    "{{ENVIRONMENT}}_broker",
-    "{{ENVIRONMENT}}_client", 
-    "{{ENVIRONMENT}}_admin"
-]
-
-# Template-specific overrides
-[intermediate_ca.templates.overrides]
-"{{ENVIRONMENT}}_broker" = {
-    max_validity_days = 365,
-    require_san = true,
-    allowed_key_sizes = [2048, 3072, 4096]
-}
-
-"{{ENVIRONMENT}}_client" = {
-    max_validity_days = 90,
-    require_san = false,
-    allowed_key_sizes = [2048, 3072]
-}
-
-"{{ENVIRONMENT}}_admin" = {
-    max_validity_days = 7,
-    require_san = false,
-    require_approval = true,
-    allowed_key_sizes = [2048, 3072, 4096]
-}
-
-# Extensions
-[intermediate_ca.extensions]
-# Authority Key Identifier (links to parent CA)
-authority_key_identifier = true
-
-# Subject Key Identifier
-subject_key_identifier = true
-
-# Certificate Policies
-certificate_policies = true
-
-# Authority Information Access (where to find parent CA)
-authority_info_access = {
-    ca_issuers = "http://certs.{{DOMAIN}}/rustmq-root-ca.crt",
-    ocsp = "http://ocsp.{{DOMAIN}}/rustmq-root-ca"
-}
-
-# CRL Distribution Points
-crl_distribution_points = true
-
-# Name Constraints (restrict what this CA can issue)
-[intermediate_ca.name_constraints]
-permitted_dns_domains = [
-    ".{{ENVIRONMENT}}.{{DOMAIN}}", 
-    ".{{ENVIRONMENT}}.internal.{{DOMAIN}}",
-    ".k8s.local"
-]
-excluded_dns_domains = [
-    ".prod.{{DOMAIN}}",  # Production intermediate cannot issue for other environments
-    ".staging.{{DOMAIN}}",
-    ".dev.{{DOMAIN}}"
-]
-permitted_ip_ranges = ["{{IP_RANGE}}"]  # Environment-specific IP range
-
-# Monitoring and Alerting
-[intermediate_ca.monitoring]
-enable_certificate_monitoring = true
-alert_on_high_issuance_rate = true
-max_certificates_per_hour = 100
-alert_on_unusual_requests = true
-
-# Integration with external systems
-[intermediate_ca.integration]
-# Active Directory integration
-ad_enabled = false
-ad_server = "ad.{{DOMAIN}}"
-ad_base_dn = "DC={{DOMAIN_COMPONENT}},DC=com"
-
-# Vault integration for secret management
-vault_enabled = false
-vault_address = "https://vault.{{DOMAIN}}"
-vault_role = "rustmq-{{ENVIRONMENT}}-ca"
-
-# RustMQ 1.0.0+ Compatibility Features
-[intermediate_ca.rustmq_integration]
-# Certificate chain validation improvements (August 2025)
-enforce_proper_signing_chains = true
-validate_ca_signed_certificates = true
-reject_self_signed_end_entities = true
-
-# Certificate performance optimizations
-enable_certificate_caching = true
-certificate_cache_ttl_minutes = 30  # Shorter TTL for intermediate CA
-enable_principal_extraction_cache = true
-principal_cache_size = 10000
-
-# Authorization system integration
-support_sub_microsecond_authorization = true
-expected_authorization_latency_ns = 1310  # L2 cache performance
-certificate_validation_performance_target = "245μs average"
-
-# Production readiness features
-certificate_infrastructure_version = "1.0.0+"
-signing_method = "CA-signed X.509 chains"
-authentication_compatibility = "Full mTLS support"
-production_deployment_ready = true
-
-# Performance tracking and metrics
-[intermediate_ca.performance]
-track_certificate_validation_latency = true
-track_principal_extraction_performance = true
-enable_performance_metrics_export = true
-performance_alert_threshold_ms = 1.0
+# For current CA configuration, see:
+# - root-ca-config.toml (primary CA configuration)
+# - ../cert-templates/ (certificate templates)
+# - ../../CERTIFICATE_MANAGEMENT.md (documentation)

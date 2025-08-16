@@ -1,10 +1,18 @@
-# RustMQ Broker Development Configuration
+# RustMQ Broker Development Configuration - Enhanced
+# Updated with advanced security features, WebPKI integration, and SDK compatibility
 
 [broker]
 broker_id = "broker-01"
 host = "127.0.0.1"
 port = 9092
 grpc_port = 9093
+rack_id = "dev-rack-1"
+
+[network]
+quic_listen = "127.0.0.1:9092"
+rpc_listen = "127.0.0.1:9093"
+max_connections = 1000
+connection_timeout_ms = 10000
 
 [cluster]
 controller_endpoints = ["127.0.0.1:9094"]
@@ -21,14 +29,73 @@ base_path = "./data/segments"
 [storage.cache]
 enabled = true
 max_size_mb = 256
-eviction_policy = "Moka"
+eviction_policy = "Moka"  # High-performance cache with TinyLFU algorithm
 
+# Security Configuration - Development
 [security]
 enabled = true
+security_level = "development"
 tls_cert_path = "./certs/server.pem"
 tls_key_path = "./certs/server.key"
 ca_cert_path = "./certs/ca.pem"
 require_client_cert = true
+fail_open = true  # Development convenience
+
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = false
+validation_timeout_ms = 3000
+allow_rcgen_certificates = true
+allow_self_signed_for_testing = true
+log_fallback_events = true
+
+# Certificate Caching
+[security.certificate_caching]
+cert_cache_size = 1000
+cert_cache_ttl_hours = 1
+enable_batch_validation = true
+enable_certificate_prefetch = true
+webpki_cache_enabled = true
+enable_certificate_metrics = true
+cache_hit_rate_target = 0.70
+
+# Authentication Configuration
+[security.auth]
+enabled = true
+default_mechanism = "certificate"
+require_authentication = true
+fail_open = true
+
+# Authorization with ACL
+[security.acl]
+enabled = true
+cache_enabled = true
+cache_size = 10000
+cache_ttl_seconds = 60
+ultra_fast_enabled = true
+l1_cache_size = 1024
+l1_cache_ttl_seconds = 120
+max_l1_latency_ns = 1200  # Performance target
+
+# Performance Configuration
+[security.performance]
+certificate_validation_target_us = 245
+auth_cache_size = 5000
+auth_cache_ttl_seconds = 60
+max_connections = 1000
+auth_thread_pool_size = 4
+cert_validation_thread_pool_size = 2
+
+# Audit Configuration
+[security.audit]
+enabled = true
+audit_level = "debug"
+log_successful_auth = true
+log_failed_auth = true
+log_certificate_events = true
+audit_log_path = "./logs/security-audit.log"
 
 [logging]
 level = "debug"
@@ -37,3 +104,8 @@ file = "./logs/broker.log"
 [metrics]
 enabled = true
 port = 8080
+
+# Development-specific settings
+[development]
+enable_hot_reload = true
+enable_debug_endpoints = true

@@ -8,6 +8,7 @@ pub mod authentication;
 pub mod authorization;
 pub mod cache;
 pub mod certificates;
+pub mod certificate_metadata;
 pub mod principal;
 
 pub use authentication::AuthenticationManager;

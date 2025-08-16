@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tracing::{info, debug, error};
 use chrono::{DateTime, Utc};
 
-use super::api_client::{AdminApiClient, GenerateCaRequest, GenerateIntermediateCaRequest, 
+use super::api_client::{AdminApiClient, GenerateCaRequest, 
                         IssueCertificateRequest, CreateAclRuleRequest, UpdateAclRuleRequest,
                         AclEvaluationRequest, BulkAclEvaluationRequest, SecurityAuditLogRequest,
                         CertificateValidationRequest, RevokeCertificateRequest, MaintenanceRequest};
@@ -23,8 +23,6 @@ pub enum CaCommands {
     List(CaListCommand),
     /// Get information about a specific CA
     Info(CaInfoCommand),
-    /// Create an intermediate CA
-    Intermediate(CaIntermediateCommand),
 }
 
 #[derive(Args)]
@@ -59,21 +57,7 @@ pub struct CaInfoCommand {
     pub ca_id: String,
 }
 
-#[derive(Args)]
-pub struct CaIntermediateCommand {
-    /// Parent CA ID
-    #[arg(long)]
-    pub parent_ca: String,
-    /// Common Name for the intermediate CA
-    #[arg(long)]
-    pub cn: String,
-    /// Organization name
-    #[arg(long)]
-    pub org: Option<String>,
-    /// Validity period in days
-    #[arg(long, default_value = "1825")]
-    pub validity_days: u32,
-}
+// Intermediate CA commands removed - only root CA supported for simplicity
 
 pub async fn execute_ca_command(
     cmd: &CaCommands,
@@ -156,35 +140,7 @@ pub async fn execute_ca_command(
                 std::process::exit(1);
             }
         }
-        CaCommands::Intermediate(args) => {
-            info!("Creating intermediate CA: {} from parent: {}", args.cn, args.parent_ca);
-            
-            let request = GenerateIntermediateCaRequest {
-                parent_ca_id: args.parent_ca.clone(),
-                common_name: args.cn.clone(),
-                organization: args.org.clone(),
-                validity_days: Some(args.validity_days),
-            };
-            
-            let progress = ProgressIndicator::new("Generating intermediate CA certificate", cli.no_color);
-            progress.start();
-            
-            let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/ca/intermediate", &request).await?;
-            
-            if response.success {
-                progress.finish(true);
-                if let Some(data) = &response.data {
-                    print_output(data, cli.format, cli.no_color)?;
-                } else {
-                    print_success("Intermediate CA generated successfully", cli.no_color);
-                }
-            } else {
-                progress.finish(false);
-                let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
-                print_error(&error_msg, cli.no_color);
-                std::process::exit(1);
-            }
-        }
+        // Intermediate CA command removed - only root CA supported for simplicity
     }
     
     Ok(())
@@ -1252,6 +1208,107 @@ pub enum SecurityCommands {
     Backup(SecurityBackupCommand),
     /// Restore security configuration
     Restore(SecurityRestoreCommand),
+    /// WebPKI certificate validation and management
+    #[command(subcommand)]
+    Webpki(WebpkiCommands),
+}
+
+// ==================== WebPKI Certificate Validation Commands ====================
+
+#[derive(Subcommand)]
+pub enum WebpkiCommands {
+    /// Validate certificate using WebPKI
+    Validate(WebpkiValidateCommand),
+    /// Validate certificate chain
+    ValidateChain(WebpkiValidateChainCommand),
+    /// Manage trust anchors
+    TrustAnchors(WebpkiTrustAnchorsCommand),
+    /// Test WebPKI performance
+    Benchmark(WebpkiBenchmarkCommand),
+    /// Get WebPKI status and configuration
+    Status,
+    /// Test certificate against multiple validation methods
+    Compare(WebpkiCompareCommand),
+}
+
+#[derive(Args)]
+pub struct WebpkiValidateCommand {
+    /// Path to certificate file (PEM format)
+    #[arg(long)]
+    pub cert_file: PathBuf,
+    /// Path to CA certificate file (optional)
+    #[arg(long)]
+    pub ca_file: Option<PathBuf>,
+    /// Enable strict validation (no fallback)
+    #[arg(long)]
+    pub strict: bool,
+    /// Check certificate expiry
+    #[arg(long)]
+    pub check_expiry: bool,
+    /// Expected hostname for validation
+    #[arg(long)]
+    pub hostname: Option<String>,
+}
+
+#[derive(Args)]
+pub struct WebpkiValidateChainCommand {
+    /// Path to certificate chain file (PEM format)
+    #[arg(long)]
+    pub chain_file: PathBuf,
+    /// Path to trust anchor file
+    #[arg(long)]
+    pub trust_anchors_file: Option<PathBuf>,
+    /// Verification time (RFC3339 format, defaults to now)
+    #[arg(long)]
+    pub verification_time: Option<String>,
+    /// Check entire chain expiry
+    #[arg(long)]
+    pub check_expiry: bool,
+}
+
+#[derive(Args)]
+pub struct WebpkiTrustAnchorsCommand {
+    /// List current trust anchors
+    #[arg(long)]
+    pub list: bool,
+    /// Add trust anchor from file
+    #[arg(long)]
+    pub add_file: Option<PathBuf>,
+    /// Remove trust anchor by thumbprint
+    #[arg(long)]
+    pub remove: Option<String>,
+    /// Validate trust anchor configuration
+    #[arg(long)]
+    pub validate: bool,
+}
+
+#[derive(Args)]
+pub struct WebpkiBenchmarkCommand {
+    /// Number of validation iterations
+    #[arg(long, default_value = "1000")]
+    pub iterations: u32,
+    /// Path to test certificate file
+    #[arg(long)]
+    pub cert_file: PathBuf,
+    /// Compare with legacy validation
+    #[arg(long)]
+    pub compare_legacy: bool,
+    /// Output detailed timing information
+    #[arg(long)]
+    pub detailed: bool,
+}
+
+#[derive(Args)]
+pub struct WebpkiCompareCommand {
+    /// Path to certificate file
+    #[arg(long)]
+    pub cert_file: PathBuf,
+    /// Show detailed validation results
+    #[arg(long)]
+    pub verbose: bool,
+    /// Test specific hostname
+    #[arg(long)]
+    pub hostname: Option<String>,
 }
 
 #[derive(Args)]
@@ -1466,6 +1523,290 @@ pub async fn execute_security_command(
             } else {
                 progress.finish(false);
                 let error_msg = response.error.unwrap_or_else(|| "Failed to restore configuration".to_string());
+                print_error(&error_msg, cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        SecurityCommands::Webpki(webpki_cmd) => {
+            execute_webpki_command(webpki_cmd, api_client, cli).await?
+        }
+    }
+    
+    Ok(())
+}
+
+// ==================== WebPKI Command Implementation ====================
+
+pub async fn execute_webpki_command(
+    cmd: &WebpkiCommands,
+    api_client: &AdminApiClient,
+    cli: &Cli,
+) -> Result<()> {
+    match cmd {
+        WebpkiCommands::Validate(args) => {
+            info!("Validating certificate using WebPKI: {:?}", args.cert_file);
+            
+            // Read certificate file
+            let cert_pem = std::fs::read_to_string(&args.cert_file)
+                .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read certificate file: {}", e)))?;
+            
+            // Read CA file if provided
+            let ca_pem = if let Some(ca_file) = &args.ca_file {
+                Some(std::fs::read_to_string(ca_file)
+                    .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read CA file: {}", e)))?)
+            } else {
+                None
+            };
+            
+            // Build request
+            let mut request = serde_json::json!({
+                "certificate_pem": cert_pem,
+                "validation_method": "webpki",
+                "strict_mode": args.strict,
+                "check_expiry": args.check_expiry
+            });
+            
+            if let Some(ca) = ca_pem {
+                request["ca_certificate_pem"] = serde_json::Value::String(ca);
+            }
+            
+            if let Some(hostname) = &args.hostname {
+                request["expected_hostname"] = serde_json::Value::String(hostname.clone());
+            }
+            
+            let progress = ProgressIndicator::new("Validating certificate with WebPKI", cli.no_color);
+            progress.start();
+            
+            let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/webpki/validate", &request).await?;
+            
+            if response.success {
+                progress.finish(true);
+                if let Some(data) = &response.data {
+                    print_output(data, cli.format, cli.no_color)?;
+                } else {
+                    print_success("Certificate validation completed successfully", cli.no_color);
+                }
+            } else {
+                progress.finish(false);
+                let error_msg = response.error.unwrap_or_else(|| "WebPKI validation failed".to_string());
+                print_error(&error_msg, cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        WebpkiCommands::ValidateChain(args) => {
+            info!("Validating certificate chain using WebPKI: {:?}", args.chain_file);
+            
+            // Read certificate chain file
+            let chain_pem = std::fs::read_to_string(&args.chain_file)
+                .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read certificate chain file: {}", e)))?;
+            
+            // Read trust anchors file if provided
+            let trust_anchors_pem = if let Some(trust_file) = &args.trust_anchors_file {
+                Some(std::fs::read_to_string(trust_file)
+                    .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read trust anchors file: {}", e)))?)
+            } else {
+                None
+            };
+            
+            // Parse verification time if provided
+            let verification_time = if let Some(time_str) = &args.verification_time {
+                Some(DateTime::parse_from_rfc3339(time_str)
+                    .map_err(|e| rustmq::error::RustMqError::Config(format!("Invalid verification time format: {}", e)))?
+                    .with_timezone(&Utc))
+            } else {
+                None
+            };
+            
+            // Build request
+            let mut request = serde_json::json!({
+                "certificate_chain_pem": chain_pem,
+                "validation_method": "webpki",
+                "check_expiry": args.check_expiry
+            });
+            
+            if let Some(trust_anchors) = trust_anchors_pem {
+                request["trust_anchors_pem"] = serde_json::Value::String(trust_anchors);
+            }
+            
+            if let Some(verification_time) = verification_time {
+                request["verification_time"] = serde_json::Value::String(verification_time.to_rfc3339());
+            }
+            
+            let progress = ProgressIndicator::new("Validating certificate chain with WebPKI", cli.no_color);
+            progress.start();
+            
+            let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/webpki/validate-chain", &request).await?;
+            
+            if response.success {
+                progress.finish(true);
+                if let Some(data) = &response.data {
+                    print_output(data, cli.format, cli.no_color)?;
+                } else {
+                    print_success("Certificate chain validation completed successfully", cli.no_color);
+                }
+            } else {
+                progress.finish(false);
+                let error_msg = response.error.unwrap_or_else(|| "WebPKI chain validation failed".to_string());
+                print_error(&error_msg, cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        WebpkiCommands::TrustAnchors(args) => {
+            if args.list {
+                debug!("Listing WebPKI trust anchors");
+                
+                let response = api_client.get::<serde_json::Value>("/api/v1/security/webpki/trust-anchors").await?;
+                
+                if response.success {
+                    if let Some(data) = &response.data {
+                        print_output(data, cli.format, cli.no_color)?;
+                    } else {
+                        print_info("No trust anchors configured", cli.no_color);
+                    }
+                } else {
+                    let error_msg = response.error.unwrap_or_else(|| "Failed to list trust anchors".to_string());
+                    print_error(&error_msg, cli.no_color);
+                    std::process::exit(1);
+                }
+            } else if let Some(add_file) = &args.add_file {
+                info!("Adding trust anchor from file: {:?}", add_file);
+                
+                let trust_anchor_pem = std::fs::read_to_string(add_file)
+                    .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read trust anchor file: {}", e)))?;
+                
+                let request = serde_json::json!({
+                    "trust_anchor_pem": trust_anchor_pem
+                });
+                
+                let progress = ProgressIndicator::new("Adding trust anchor", cli.no_color);
+                progress.start();
+                
+                let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/webpki/trust-anchors", &request).await?;
+                
+                if response.success {
+                    progress.finish(true);
+                    print_success("Trust anchor added successfully", cli.no_color);
+                    if let Some(data) = &response.data {
+                        print_output(data, cli.format, cli.no_color)?;
+                    }
+                } else {
+                    progress.finish(false);
+                    let error_msg = response.error.unwrap_or_else(|| "Failed to add trust anchor".to_string());
+                    print_error(&error_msg, cli.no_color);
+                    std::process::exit(1);
+                }
+            } else if let Some(thumbprint) = &args.remove {
+                info!("Removing trust anchor with thumbprint: {}", thumbprint);
+                
+                let path = format!("/api/v1/security/webpki/trust-anchors/{}", thumbprint);
+                let response = api_client.delete::<serde_json::Value>(&path).await?;
+                
+                if response.success {
+                    print_success(&format!("Trust anchor '{}' removed successfully", thumbprint), cli.no_color);
+                } else {
+                    let error_msg = response.error.unwrap_or_else(|| "Failed to remove trust anchor".to_string());
+                    print_error(&error_msg, cli.no_color);
+                    std::process::exit(1);
+                }
+            } else if args.validate {
+                info!("Validating trust anchor configuration");
+                
+                let response = api_client.post::<serde_json::Value, serde_json::Value>("/api/v1/security/webpki/trust-anchors/validate", &serde_json::json!({})).await?;
+                
+                if response.success {
+                    print_success("Trust anchor configuration is valid", cli.no_color);
+                    if let Some(data) = &response.data {
+                        print_output(data, cli.format, cli.no_color)?;
+                    }
+                } else {
+                    let error_msg = response.error.unwrap_or_else(|| "Trust anchor validation failed".to_string());
+                    print_error(&error_msg, cli.no_color);
+                    std::process::exit(1);
+                }
+            } else {
+                print_error("No trust anchor operation specified. Use --list, --add-file, --remove, or --validate", cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        WebpkiCommands::Benchmark(args) => {
+            info!("Running WebPKI validation benchmark with {} iterations", args.iterations);
+            
+            // Read certificate file
+            let cert_pem = std::fs::read_to_string(&args.cert_file)
+                .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read certificate file: {}", e)))?;
+            
+            let request = serde_json::json!({
+                "certificate_pem": cert_pem,
+                "iterations": args.iterations,
+                "compare_legacy": args.compare_legacy,
+                "detailed": args.detailed
+            });
+            
+            let progress = ProgressIndicator::new(&format!("Running {} validation iterations", args.iterations), cli.no_color);
+            progress.start();
+            
+            let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/webpki/benchmark", &request).await?;
+            
+            if response.success {
+                progress.finish(true);
+                if let Some(data) = &response.data {
+                    print_output(data, cli.format, cli.no_color)?;
+                } else {
+                    print_success("WebPKI benchmark completed successfully", cli.no_color);
+                }
+            } else {
+                progress.finish(false);
+                let error_msg = response.error.unwrap_or_else(|| "WebPKI benchmark failed".to_string());
+                print_error(&error_msg, cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        WebpkiCommands::Status => {
+            debug!("Getting WebPKI status and configuration");
+            
+            let response = api_client.get::<serde_json::Value>("/api/v1/security/webpki/status").await?;
+            
+            if response.success {
+                if let Some(data) = &response.data {
+                    print_output(data, cli.format, cli.no_color)?;
+                }
+            } else {
+                let error_msg = response.error.unwrap_or_else(|| "Failed to get WebPKI status".to_string());
+                print_error(&error_msg, cli.no_color);
+                std::process::exit(1);
+            }
+        }
+        WebpkiCommands::Compare(args) => {
+            info!("Comparing validation methods for certificate: {:?}", args.cert_file);
+            
+            // Read certificate file
+            let cert_pem = std::fs::read_to_string(&args.cert_file)
+                .map_err(|e| rustmq::error::RustMqError::Config(format!("Failed to read certificate file: {}", e)))?;
+            
+            let mut request = serde_json::json!({
+                "certificate_pem": cert_pem,
+                "verbose": args.verbose
+            });
+            
+            if let Some(hostname) = &args.hostname {
+                request["hostname"] = serde_json::Value::String(hostname.clone());
+            }
+            
+            let progress = ProgressIndicator::new("Comparing validation methods", cli.no_color);
+            progress.start();
+            
+            let response: super::api_client::ApiResponse<serde_json::Value> = api_client.post("/api/v1/security/webpki/compare", &request).await?;
+            
+            if response.success {
+                progress.finish(true);
+                if let Some(data) = &response.data {
+                    print_output(data, cli.format, cli.no_color)?;
+                } else {
+                    print_success("Validation comparison completed successfully", cli.no_color);
+                }
+            } else {
+                progress.finish(false);
+                let error_msg = response.error.unwrap_or_else(|| "Validation comparison failed".to_string());
                 print_error(&error_msg, cli.no_color);
                 std::process::exit(1);
             }

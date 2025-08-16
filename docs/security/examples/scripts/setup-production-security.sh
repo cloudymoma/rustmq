@@ -230,27 +230,9 @@ generate_production_certificates() {
         -out "$SECURITY_DIR/certs/ca.pem" \
         -subj "/C=US/ST=California/L=San Francisco/O=$COMPANY_NAME/OU=IT Security/CN=$COMPANY_NAME RustMQ Production Root CA"
     
-    # Generate intermediate CA key and certificate
-    openssl genrsa -out "$SECURITY_DIR/private/intermediate-ca.key" 3072
-    chmod 600 "$SECURITY_DIR/private/intermediate-ca.key"
-    
-    # Create intermediate CA CSR
-    openssl req -new -key "$SECURITY_DIR/private/intermediate-ca.key" \
-        -out "$SECURITY_DIR/certs/intermediate-ca.csr" \
-        -subj "/C=US/ST=California/L=San Francisco/O=$COMPANY_NAME/OU=IT Security/CN=$COMPANY_NAME RustMQ Production Intermediate CA"
-    
-    # Sign intermediate CA with root CA
-    openssl x509 -req -in "$SECURITY_DIR/certs/intermediate-ca.csr" \
-        -CA "$SECURITY_DIR/certs/ca.pem" \
-        -CAkey "$SECURITY_DIR/private/ca.key" \
-        -CAcreateserial -out "$SECURITY_DIR/certs/intermediate-ca.pem" \
-        -days 3650 -extensions v3_ca
-    
-    # Create certificate bundle
-    cat "$SECURITY_DIR/certs/intermediate-ca.pem" "$SECURITY_DIR/certs/ca.pem" > "$SECURITY_DIR/certs/ca-bundle.pem"
-    
-    # Clean up CSR
-    rm "$SECURITY_DIR/certs/intermediate-ca.csr"
+    # RustMQ uses simplified root CA only architecture (no intermediate CAs)
+    # Create certificate bundle (just root CA for simplified architecture)
+    cp "$SECURITY_DIR/certs/ca.pem" "$SECURITY_DIR/certs/ca-bundle.pem"
     
     log "Production certificates generated successfully"
 }
@@ -554,7 +536,7 @@ Domain: $DOMAIN
 Environment: $ENVIRONMENT
 
 Security Components Installed:
-- Certificate Authority (Root + Intermediate)
+- Certificate Authority (Root CA with simplified architecture)
 - Production-grade certificates
 - ACL system with default rules
 - Comprehensive audit logging
@@ -570,8 +552,7 @@ Directory Structure:
 
 Certificate Information:
 - CA Certificate: $SECURITY_DIR/certs/ca.pem
-- Intermediate CA: $SECURITY_DIR/certs/intermediate-ca.pem
-- Certificate Bundle: $SECURITY_DIR/certs/ca-bundle.pem
+- Certificate Bundle: $SECURITY_DIR/certs/ca-bundle.pem (simplified root CA only)
 
 Configuration Files:
 - Main Security Config: $CONFIG_DIR/security.toml

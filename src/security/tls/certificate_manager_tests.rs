@@ -30,7 +30,7 @@ fn create_test_ca_params(cn: &str) -> CaGenerationParams {
     }
 }
 
-fn create_test_certificate_request(role: CertificateRole) -> CertificateRequest {
+fn create_test_certificate_request(role: CertificateRole, issuer_id: Option<String>) -> CertificateRequest {
     let mut subject = DistinguishedName::new();
     subject.push(rcgen::DnType::CommonName, "test.example.com".to_string());
     subject.push(rcgen::DnType::OrganizationName, "Test Org".to_string());
@@ -42,8 +42,20 @@ fn create_test_certificate_request(role: CertificateRole) -> CertificateRequest 
         validity_days: Some(365),
         key_type: Some(KeyType::Ecdsa),
         key_size: Some(256),
-        issuer_id: None,
+        issuer_id,
     }
+}
+
+async fn create_test_certificate_with_ca(manager: &CertificateManager, role: CertificateRole) -> (CertificateInfo, CertificateInfo) {
+    // First create a root CA
+    let ca_params = create_test_ca_params("Test Root CA");
+    let ca_cert = manager.generate_root_ca(ca_params).await.unwrap();
+    
+    // Then create the requested certificate signed by the CA
+    let request = create_test_certificate_request(role, Some(ca_cert.id.clone()));
+    let cert_info = manager.issue_certificate(request).await.unwrap();
+    
+    (ca_cert, cert_info)
 }
 
 #[tokio::test]
@@ -100,48 +112,14 @@ async fn test_generate_root_ca() {
     assert!(cert_info.revocation_reason.is_none());
 }
 
-#[tokio::test]
-async fn test_generate_intermediate_ca() {
-    let (manager, _temp_dir) = create_test_certificate_manager().await;
-    
-    // First create a root CA
-    let root_params = create_test_ca_params("Test Root CA");
-    let root_cert = manager.generate_root_ca(root_params).await.unwrap();
-    
-    // Then create an intermediate CA
-    let intermediate_params = create_test_ca_params("Test Intermediate CA");
-    let intermediate_cert = manager.generate_intermediate_ca(&root_cert.id, intermediate_params).await.unwrap();
-    
-    assert!(!intermediate_cert.id.is_empty());
-    assert_ne!(intermediate_cert.id, root_cert.id);
-    assert!(intermediate_cert.subject.contains("Test Intermediate CA"));
-    assert_eq!(intermediate_cert.role, CertificateRole::IntermediateCa);
-    assert_eq!(intermediate_cert.status, CertificateStatus::Active);
-    assert!(intermediate_cert.is_ca);
-    assert_eq!(intermediate_cert.issuer_id, Some(root_cert.id));
-}
+// Intermediate CA test removed - only root CA supported for simplicity
 
-#[tokio::test]
-async fn test_generate_intermediate_ca_invalid_issuer() {
-    let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let params = create_test_ca_params("Test Intermediate CA");
-    
-    let result = manager.generate_intermediate_ca("invalid-id", params).await;
-    assert!(result.is_err());
-    
-    if let Err(RustMqError::CertificateNotFound { identifier }) = result {
-        assert_eq!(identifier, "invalid-id");
-    } else {
-        panic!("Expected CertificateNotFound error");
-    }
-}
+// Intermediate CA invalid issuer test removed - only root CA supported for simplicity
 
 #[tokio::test]
 async fn test_issue_broker_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     assert!(!cert_info.id.is_empty());
     assert!(cert_info.subject.contains("test.example.com"));
@@ -154,9 +132,7 @@ async fn test_issue_broker_certificate() {
 #[tokio::test]
 async fn test_issue_controller_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Controller);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Controller).await;
     
     assert_eq!(cert_info.role, CertificateRole::Controller);
     assert!(!cert_info.is_ca);
@@ -165,9 +141,7 @@ async fn test_issue_controller_certificate() {
 #[tokio::test]
 async fn test_issue_client_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Client);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Client).await;
     
     assert_eq!(cert_info.role, CertificateRole::Client);
     assert!(!cert_info.is_ca);
@@ -176,9 +150,7 @@ async fn test_issue_client_certificate() {
 #[tokio::test]
 async fn test_issue_admin_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Admin);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Admin).await;
     
     assert_eq!(cert_info.role, CertificateRole::Admin);
     assert!(!cert_info.is_ca);
@@ -187,9 +159,8 @@ async fn test_issue_admin_certificate() {
 #[tokio::test]
 async fn test_certificate_status() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
-    let cert_info = manager.issue_certificate(request).await.unwrap();
     let status = manager.get_certificate_status(&cert_info.id).await.unwrap();
     
     assert_eq!(status, CertificateStatus::Active);
@@ -212,9 +183,7 @@ async fn test_certificate_status_not_found() {
 #[tokio::test]
 async fn test_revoke_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Revoke the certificate
     manager.revoke_certificate(&cert_info.id, RevocationReason::KeyCompromise).await.unwrap();
@@ -241,9 +210,7 @@ async fn test_revoke_certificate_not_found() {
 #[tokio::test]
 async fn test_renew_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let original_cert = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, original_cert) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Renew the certificate
     let renewed_cert = manager.renew_certificate(&original_cert.id).await.unwrap();
@@ -275,9 +242,7 @@ async fn test_renew_certificate_not_found() {
 #[tokio::test]
 async fn test_rotate_certificate() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let original_cert = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, original_cert) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Rotate the certificate
     let rotated_cert = manager.rotate_certificate(&original_cert.id).await.unwrap();
@@ -292,13 +257,8 @@ async fn test_rotate_certificate() {
 async fn test_get_expiring_certificates() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
     
-    // Generate a root CA first
-    let ca_params = create_test_ca_params("Test CA");
-    let _ca_cert = manager.generate_root_ca(ca_params).await.unwrap();
-    
-    // Issue a certificate
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    // Generate a root CA first and issue a certificate properly
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // List all certificates to verify they were created
     let all_certs = manager.list_all_certificates().await.unwrap();
@@ -317,10 +277,9 @@ async fn test_get_expiring_certificates() {
 #[tokio::test]
 async fn test_get_expiring_certificates_empty() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
     
     // Issue a certificate
-    let _cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, _cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Get expiring certificates (using a small threshold)
     let expiring = manager.get_expiring_certificates(1).await.unwrap(); // 1 day
@@ -373,10 +332,9 @@ async fn test_audit_logging_enabled() {
     config.storage_path = temp_dir.path().to_string_lossy().to_string();
     
     let manager = CertificateManager::new_with_enhanced_config(config).await.unwrap();
-    let request = create_test_certificate_request(CertificateRole::Broker);
     
     // Issue a certificate (this should generate audit logs)
-    let _cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, _cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Verify audit log has entries
     let audit_log = manager.audit_log.lock().await;
@@ -392,10 +350,9 @@ async fn test_audit_logging_disabled() {
     config.storage_path = temp_dir.path().to_string_lossy().to_string();
     
     let manager = CertificateManager::new_with_enhanced_config(config).await.unwrap();
-    let request = create_test_certificate_request(CertificateRole::Broker);
     
     // Issue a certificate (this should not generate audit logs)
-    let _cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, _cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Verify audit log is empty
     let audit_log = manager.audit_log.lock().await;
@@ -405,9 +362,7 @@ async fn test_audit_logging_disabled() {
 #[tokio::test]
 async fn test_certificate_fingerprint_generation() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Fingerprint should be non-empty and have expected length (SHA256 hex)
     assert!(!cert_info.fingerprint.is_empty());
@@ -417,11 +372,8 @@ async fn test_certificate_fingerprint_generation() {
 #[tokio::test]
 async fn test_certificate_serial_number_generation() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request1 = create_test_certificate_request(CertificateRole::Broker);
-    let request2 = create_test_certificate_request(CertificateRole::Controller);
-    
-    let cert1 = manager.issue_certificate(request1).await.unwrap();
-    let cert2 = manager.issue_certificate(request2).await.unwrap();
+    let (_ca_cert1, cert1) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
+    let (_ca_cert2, cert2) = create_test_certificate_with_ca(&manager, CertificateRole::Controller).await;
     
     // Serial numbers should be unique
     assert_ne!(cert1.serial_number, cert2.serial_number);
@@ -440,8 +392,7 @@ async fn test_certificate_persistence() {
     let cert_id = {
         // Create manager and issue certificate
         let manager = CertificateManager::new_with_enhanced_config(config.clone()).await.unwrap();
-        let request = create_test_certificate_request(CertificateRole::Broker);
-        let cert_info = manager.issue_certificate(request).await.unwrap();
+        let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
         cert_info.id
     };
     
@@ -456,9 +407,7 @@ async fn test_certificate_persistence() {
 #[tokio::test]
 async fn test_revocation_list_updates() {
     let (manager, _temp_dir) = create_test_certificate_manager().await;
-    let request = create_test_certificate_request(CertificateRole::Broker);
-    
-    let cert_info = manager.issue_certificate(request).await.unwrap();
+    let (_ca_cert, cert_info) = create_test_certificate_with_ca(&manager, CertificateRole::Broker).await;
     
     // Revoke the certificate
     manager.revoke_certificate(&cert_info.id, RevocationReason::KeyCompromise).await.unwrap();

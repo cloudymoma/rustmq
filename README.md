@@ -230,7 +230,7 @@ RustMQ now includes a comprehensive security command suite that extends the admi
 
 ### Key Security Features
 
-- **Certificate Authority Management**: Create and manage root and intermediate CAs
+- **Certificate Authority Management**: Create and manage root CAs with simplified architecture
 - **Certificate Lifecycle**: Issue, renew, rotate, revoke, and validate certificates  
 - **Access Control Lists (ACL)**: Create, manage, and test authorization rules
 - **Security Auditing**: View audit logs, real-time events, and operation history
@@ -269,10 +269,11 @@ rustmq-admin ca init \
 # List CAs with filtering
 rustmq-admin ca list --status active --format table
 
-# Create intermediate CA
-rustmq-admin ca intermediate \
-  --parent-ca root_ca_1 \
-  --cn "RustMQ Intermediate CA"
+# View CA information
+rustmq-admin ca info root_ca_1
+
+# Export CA certificate for client distribution
+rustmq-admin ca export --ca-id root_ca_1 --output ca-cert.pem
 ```
 
 ### Certificate Management
@@ -407,11 +408,12 @@ RustMQ provides enterprise-grade security with Zero Trust architecture, deliveri
 - **Zero Trust Architecture**: Every request authenticated and authorized with comprehensive audit trails
 - **Performance-Oriented Design**: String interning, batch fetching, and intelligent caching for production workloads
 - **✅ Production-Ready X.509**: Proper certificate signing chains ensuring enterprise-grade security
+- **✅ Advanced Certificate Caching**: WebPKI-based cache keys with intelligent invalidation and batch operations
 
 ### ⚡ Measured Performance Characteristics
 
 **Benchmark Results (Verified in Production)**:
-- **L1 Cache**: **547ns** (45% better than 1μs target) - 1.8M ops/sec capacity
+- **L1 Cache**: **547ns** (54% better than 1200ns target) - 1.8M ops/sec capacity
 - **L2 Cache**: **1,310ns** (74% better than 5μs target) - 763K ops/sec capacity  
 - **Bloom Filter**: **754ns** (25% better than 1μs target) - 1.3M ops/sec capacity
 - **System Throughput**: **2.08M operations/second** (108% better than 1M target)
@@ -567,7 +569,7 @@ examples/security/kubernetes/
 
 #### Certificate Management
 - **Automated Lifecycle**: Automated certificate renewal and rotation capabilities
-- **CA Hierarchies**: Support for root and intermediate certificate authorities
+- **Simplified CA Architecture**: Root CA only for improved performance and reduced complexity
 - **Revocation Management**: Real-time certificate revocation and status checking
 - **Role-Based Certificates**: Different certificate types for brokers, clients, and admins
 
@@ -1589,7 +1591,7 @@ cargo run --bin rustmq-broker -- --config config/my-production.toml
 - **📁 Environment-Specific**: Separate configs for test/dev/prod with optimal defaults
 - **🔧 No New Files Needed**: Existing configurations cover all use cases
 - **⚡ Performance Optimized**: Test configs use `/tmp` storage and disabled fsync for speed
-- **🔒 Security Ready**: Development configs include mTLS with proper certificate chains
+- **🔒 Security Ready**: Development configs include mTLS with simplified certificate chains
 - **☁️ Cloud Native**: Production configs optimized for GCP with proper storage backends
 
 ### Broker Configuration (`broker.toml`)
@@ -2766,7 +2768,7 @@ Set up a complete local development environment with certificates, configuration
 ```
 
 **What the development setup provides:**
-- ✅ Self-signed development certificates with proper CA chain
+- ✅ Self-signed development certificates with simplified CA chain
 - ✅ Development configuration files for broker, controller, and admin
 - ✅ Local data directories and startup scripts
 - ✅ Example applications and test clients
@@ -2823,7 +2825,7 @@ Get comprehensive guidance for production deployment:
 
 ### 🔐 Development Certificates
 
-The development environment automatically generates certificates with proper signing chains:
+The development environment automatically generates certificates with simplified signing chains:
 
 - `certs/ca.pem` - Root CA certificate (self-signed for development)
 - `certs/server.pem` + `certs/server.key` - Server certificate and private key (CA-signed)

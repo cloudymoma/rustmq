@@ -214,7 +214,7 @@ async fn test_performance_under_load() {
         ))
         .collect();
     
-    // Warmup phase to ensure consistent cache state
+    // Warmup to ensure consistent cache state
     for key in keys.iter().take(1000) {
         let _result = system.authorize_fast(key);
     }

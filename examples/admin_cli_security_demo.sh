@@ -42,12 +42,8 @@ run_admin_cmd ca init \
 echo "2. List Certificate Authorities"
 run_admin_cmd ca list --format table
 
-echo "3. Create Intermediate CA"
-run_admin_cmd ca intermediate \
-    --parent-ca root_ca_1 \
-    --cn "RustMQ Intermediate CA" \
-    --org "RustMQ Corp" \
-    --validity-days 1825
+echo "3. View CA Information"
+run_admin_cmd ca info root_ca_1
 
 echo "📜 CERTIFICATE LIFECYCLE MANAGEMENT"
 echo "=================================="
@@ -345,7 +341,7 @@ echo
 echo "📝 SUMMARY"
 echo "========="
 echo "This demo showcased:"
-echo "• Certificate Authority management (init, list, intermediate)"
+echo "• Certificate Authority management (init, list, info)"
 echo "• Complete certificate lifecycle (issue, renew, rotate, revoke, validate)"
 echo "• Comprehensive ACL management (create, list, test, sync)"
 echo "• Security auditing (logs, events, operation history)"

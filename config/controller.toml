@@ -1,7 +1,8 @@
-# RustMQ Controller Configuration
-# This configuration is for the controller binary
+# RustMQ Controller Configuration - Enhanced
+# This configuration is for the controller binary with advanced security features
+# Updated: August 2025 - Production controller with OpenRaft and WebPKI integration
 
-[broker]
+[controller]
 id = "controller-001"
 rack_id = "us-central1-a"
 
@@ -163,10 +164,11 @@ default_auth_mode = "mTLS"
 max_auth_cache_size = 10000
 auth_cache_ttl_seconds = 300
 
+# Security Configuration
 [security.tls]
-enabled = false  # Disabled for development
+enabled = true  # Enable for production security features
 ca_cert_path = "/etc/certs/ca.crt"
-ca_cert_chain_path = "/etc/certs/ca-chain.crt"
+# ca_cert_chain_path = "/etc/certs/ca-chain.crt"  # Not needed with simplified root CA only architecture
 server_cert_path = "/etc/certs/controller.crt"
 server_key_path = "/etc/certs/controller.key"
 client_cert_required = true
@@ -177,6 +179,31 @@ min_tls_version = "1.3"
 cert_refresh_interval_hours = 24
 cipher_suites = ["TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256"]
 
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = true
+validation_timeout_ms = 5000
+allow_rcgen_certificates = false  # Production setting
+allow_self_signed_for_testing = false
+log_fallback_events = true
+enable_detailed_metrics = true
+track_validation_methods = true
+
+# Certificate Caching
+[security.certificate_caching]
+cert_cache_size = 5000
+cert_cache_ttl_hours = 24
+ca_cache_size = 100
+ca_cache_ttl_hours = 168
+enable_batch_validation = true
+enable_certificate_prefetch = true
+webpki_cache_enabled = true
+enable_certificate_metrics = true
+cache_hit_rate_target = 0.90
+
+# ACL Configuration
 [security.acl]
 enabled = true
 cache_size_mb = 10
@@ -186,6 +213,23 @@ bloom_filter_size = 100000
 batch_fetch_size = 50
 enable_audit_logging = true
 negative_cache_enabled = true
+# Performance targets
+ultra_fast_enabled = true
+l1_cache_size = 2048
+l1_cache_ttl_seconds = 300
+max_l1_latency_ns = 1200
+max_l2_latency_ns = 5000
+min_throughput_ops_per_sec = 1000000
+
+# Performance Configuration
+[security.performance]
+certificate_validation_target_us = 245
+trust_anchor_conversion_target_us = 50
+webpki_validation_target_us = 180
+fallback_validation_target_us = 300
+admin_thread_pool_size = 10
+acl_thread_pool_size = 20
+cert_validation_thread_pool_size = 5
 
 [security.audit]
 enabled = true

@@ -36,7 +36,7 @@ l1_cache_ttl_seconds = 600      # 10 minutes
 enable_statistics = true         # Performance monitoring
 
 [security.performance_targets]
-max_l1_latency_ns = 1000        # Realistic target
+max_l1_latency_ns = 1200        # Current target
 max_l2_latency_ns = 5000        # Production target
 min_throughput_ops_per_sec = 1_000_000  # 1M ops/sec
 ```
@@ -138,7 +138,7 @@ enable_statistics = true        # Performance tracking
 
 # Performance Targets
 [security.performance_targets]
-max_l1_latency_ns = 1000       # L1 cache target
+max_l1_latency_ns = 1200       # L1 cache target
 max_l2_latency_ns = 5000       # L2 cache target
 max_total_latency_ns = 10000   # End-to-end target
 min_throughput_ops_per_sec = 500_000  # Minimum performance
@@ -336,6 +336,38 @@ rustmq_security_total_memory_bytes
 ```
 
 ## Cache Optimization
+
+### **Advanced Certificate Caching**
+
+RustMQ features advanced certificate caching capabilities that significantly improve certificate validation performance:
+
+```toml
+[security.certificate_caching]
+# Certificate cache settings
+cert_cache_size = 10000              # Maximum cached certificates
+cert_cache_ttl_hours = 24           # Certificate cache TTL
+ca_cache_size = 100                 # Maximum cached CA chains
+ca_cache_ttl_hours = 168            # CA cache TTL (1 week)
+
+# Performance tuning
+enable_batch_validation = true      # Enable batch operations
+enable_certificate_prefetch = true  # Enable prefetching
+prefetch_recently_used_count = 50   # Prefetch top N recently used
+
+# Cache invalidation
+auto_invalidate_expired = true      # Auto-invalidate expired certificates
+invalidation_check_interval_minutes = 30  # Check interval
+
+# WebPKI integration
+webpki_cache_enabled = true         # Enable WebPKI-based caching
+webpki_fallback_cache_enabled = true # Cache fallback results
+trust_anchor_cache_size = 50       # Trust anchor cache size
+
+# Metrics collection
+enable_certificate_metrics = true   # Enable detailed metrics
+parse_timing_enabled = true        # Track certificate parsing times
+cache_hit_rate_target = 0.90       # Target 90% hit rate
+```
 
 ### **L1 Cache Tuning**
 

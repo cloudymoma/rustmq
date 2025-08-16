@@ -89,58 +89,7 @@ impl CertificateHandlers {
         Ok(response)
     }
 
-    /// Generate an intermediate CA certificate
-    pub async fn generate_intermediate_ca(
-        &self,
-        parent_ca_id: String,
-        common_name: String,
-        organization: Option<String>,
-        validity_days: Option<u32>,
-    ) -> Result<CertificateCreationResponse> {
-        info!("Generating intermediate CA certificate: {} from parent: {}", 
-              common_name, parent_ca_id);
-
-        // Verify parent CA exists and is valid
-        let parent_ca_status = self.certificate_manager.get_certificate_status(&parent_ca_id).await?;
-        if parent_ca_status != CertificateStatus::Active {
-            return Err(crate::error::RustMqError::CaNotAvailable(
-                format!("Parent CA '{}' is not active", parent_ca_id)
-            ));
-        }
-
-        // Create intermediate CA parameters
-        let ca_params = CaGenerationParams {
-            common_name: common_name.clone(),
-            organization: organization.clone(),
-            organizational_unit: None,
-            country: None,
-            state_province: None,
-            locality: None,
-            validity_years: validity_days.map(|days| days / 365),
-            key_size: Some(256),
-            key_type: Some(KeyType::Ecdsa),
-            is_root: false,
-        };
-
-        // Generate the intermediate CA
-        let ca_info = self.certificate_manager
-            .generate_intermediate_ca(&parent_ca_id, ca_params).await?;
-
-        let response = CertificateCreationResponse {
-            certificate_id: ca_info.id.clone(),
-            subject: ca_info.subject.clone(),
-            serial_number: ca_info.serial_number.clone(),
-            not_before: ca_info.not_before.into(),
-            not_after: ca_info.not_after.into(),
-            status: "Active".to_string(),
-            fingerprint: ca_info.fingerprint.clone(),
-            certificate_pem: ca_info.certificate_pem.clone().unwrap_or_default(),
-            private_key_pem: ca_info.private_key_pem.clone(),
-        };
-
-        info!("Successfully generated intermediate CA: {}", ca_info.id);
-        Ok(response)
-    }
+    // Intermediate CA generation removed - only root CA supported for simplicity
 
     /// Issue a new certificate
     pub async fn issue_certificate(
@@ -438,7 +387,7 @@ impl CertificateHandlers {
         Ok(validation_result)
     }
 
-    /// Get certificate chain
+    /// Get certificate chain (simplified: certificate + root CA only)
     pub async fn get_certificate_chain(
         &self,
         cert_id: String,
@@ -446,6 +395,7 @@ impl CertificateHandlers {
         debug!("Getting certificate chain for: {}", cert_id);
 
         // TODO: Implement get_certificate_chain method in CertificateManager
+        // Simplified architecture: returns [end_entity_cert, root_ca_cert] only
         Ok(Vec::new())
     }
 
