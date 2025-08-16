@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="1200" height="1220" xmlns="http://www.w3.org/2000/svg">
+<svg width="1200" height="1270" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <!-- Hand-drawn style filters -->
     <filter id="roughPaper" x="0%" y="0%" width="100%" height="100%">
@@ -53,7 +53,7 @@
   </defs>
   
   <!-- Background -->
-  <rect width="1200" height="1220" fill="#FAFAFA" filter="url(#roughPaper)"/>
+  <rect width="1200" height="1270" fill="#FAFAFA" filter="url(#roughPaper)"/>
   
   <!-- Title -->
   <text x="600" y="40" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#2E3440">
@@ -95,13 +95,15 @@
     <text x="75" y="180" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#F57F17">ENTERPRISE SECURITY LAYER</text>
     <text x="75" y="195" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#F57F17">(Zero Trust Architecture)</text>
     
-    <!-- mTLS Authentication -->
+    <!-- WebPKI + mTLS Authentication -->
     <rect x="100" y="210" width="160" height="60" rx="10" fill="#FDD835" stroke="#F9A825" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="180" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="white">mTLS Authentication</text>
-    <rect x="110" y="235" width="140" height="12" rx="3" fill="#FBC02D" stroke="#F57F17" stroke-width="1"/>
-    <text x="180" y="245" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Certificate Validation</text>
-    <rect x="110" y="250" width="140" height="12" rx="3" fill="#F9A825" stroke="#F57F17" stroke-width="1"/>
-    <text x="180" y="260" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Principal Extraction</text>
+    <text x="180" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="white">WebPKI + mTLS Auth</text>
+    <rect x="110" y="235" width="140" height="8" rx="3" fill="#FBC02D" stroke="#F57F17" stroke-width="1"/>
+    <text x="180" y="242" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">WebPKI Certificate Validation</text>
+    <rect x="110" y="245" width="140" height="8" rx="3" fill="#F9A825" stroke="#F57F17" stroke-width="1"/>
+    <text x="180" y="252" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Graceful Fallback to Legacy</text>
+    <rect x="110" y="255" width="140" height="8" rx="3" fill="#FFB300" stroke="#F57F17" stroke-width="1"/>
+    <text x="180" y="262" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Principal Extraction</text>
     
     <!-- Multi-Level ACL Cache -->
     <rect x="300" y="210" width="160" height="60" rx="10" fill="#FDD835" stroke="#F9A825" stroke-width="2" filter="url(#roughPaper)"/>
@@ -111,20 +113,23 @@
     <rect x="310" y="250" width="140" height="12" rx="3" fill="#F9A825" stroke="#F57F17" stroke-width="1"/>
     <text x="380" y="260" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">2M+ ops/sec capacity</text>
     
-    <!-- Certificate Management -->
+    <!-- ACME Protocol Integration -->
     <rect x="500" y="210" width="160" height="60" rx="10" fill="#FDD835" stroke="#F9A825" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="580" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="white">Certificate Management</text>
-    <rect x="510" y="235" width="140" height="12" rx="3" fill="#FBC02D" stroke="#F57F17" stroke-width="1"/>
-    <text x="580" y="245" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">CA Operations</text>
-    <rect x="510" y="250" width="140" height="12" rx="3" fill="#F9A825" stroke="#F57F17" stroke-width="1"/>
-    <text x="580" y="260" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Lifecycle Management</text>
+    <text x="580" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="white">ACME Protocol</text>
+    <rect x="510" y="235" width="140" height="8" rx="3" fill="#FBC02D" stroke="#F57F17" stroke-width="1"/>
+    <text x="580" y="242" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Automated Certificate Lifecycle</text>
+    <rect x="510" y="245" width="140" height="8" rx="3" fill="#F9A825" stroke="#F57F17" stroke-width="1"/>
+    <text x="580" y="252" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Let's Encrypt + Custom CAs</text>
+    <rect x="510" y="255" width="140" height="8" rx="3" fill="#FFB300" stroke="#F57F17" stroke-width="1"/>
+    <text x="580" y="262" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">DNS/HTTP Challenge Support</text>
     
     <!-- Security metrics box -->
     <rect x="700" y="210" width="180" height="60" rx="8" fill="#FFFDE7" stroke="#F9A825" stroke-width="2" filter="url(#roughPaper)"/>
     <text x="790" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="#F57F17">SECURITY METRICS</text>
-    <text x="710" y="240" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Sub-microsecond authorization</text>
-    <text x="710" y="252" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Zero Trust architecture</text>
-    <text x="710" y="264" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Enterprise-grade compliance</text>
+    <text x="710" y="237" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Sub-microsecond authorization (547ns)</text>
+    <text x="710" y="247" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• WebPKI + fallback validation</text>
+    <text x="710" y="257" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Automated cert provisioning</text>
+    <text x="710" y="267" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#F57F17">• Enterprise-grade compliance</text>
   </g>
   
   <!-- Protocol connectors -->
@@ -213,13 +218,16 @@
     <text x="175" y="585" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="white">DirectIO</text>
     <text x="175" y="595" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="white">Circular Buffer</text>
     
-    <!-- Cache Layer -->
+    <!-- High-Performance Cache Layer -->
     <rect x="300" y="530" width="150" height="80" rx="10" fill="#FFB74D" stroke="#F57C00" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="375" y="550" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Cache Layer</text>
-    <rect x="310" y="560" width="130" height="18" rx="3" fill="#FFA726" stroke="#E65100" stroke-width="1"/>
-    <text x="375" y="572" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Write Cache (Hot Data)</text>
-    <rect x="310" y="585" width="130" height="18" rx="3" fill="#FFCC02" stroke="#E65100" stroke-width="1"/>
-    <text x="375" y="597" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Read Cache (Historical)</text>
+    <text x="375" y="545" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="bold" fill="white">High-Perf Cache</text>
+    <text x="375" y="557" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="white">(Moka TinyLFU)</text>
+    <rect x="310" y="565" width="130" height="12" rx="3" fill="#FFA726" stroke="#E65100" stroke-width="1"/>
+    <text x="375" y="574" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Lock-Free Reads + Superior Hit Ratio</text>
+    <rect x="310" y="580" width="130" height="12" rx="3" fill="#FF9800" stroke="#E65100" stroke-width="1"/>
+    <text x="375" y="589" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Default Feature (Legacy LRU Optional)</text>
+    <rect x="310" y="595" width="130" height="12" rx="3" fill="#FFCC02" stroke="#E65100" stroke-width="1"/>
+    <text x="375" y="604" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">TTL + Size-Based Eviction</text>
     
     <!-- Object Storage -->
     <rect x="500" y="530" width="150" height="80" rx="10" fill="#FFB74D" stroke="#F57C00" stroke-width="2" filter="url(#roughPaper)"/>
@@ -254,7 +262,7 @@
           fill="url(#controllerGradient)" stroke="#7B1FA2" stroke-width="3" filter="url(#roughPaper)"/>
     
     <text x="75" y="670" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#6A1B9A">CONTROLLER CLUSTER</text>
-    <text x="75" y="685" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6A1B9A">(Raft Consensus + ACL Storage)</text>
+    <text x="75" y="685" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#6A1B9A">(Production OpenRaft + ACL Storage)</text>
     
     <!-- Controller instances -->
     <g id="controller1">
@@ -262,7 +270,7 @@
       <text x="175" y="720" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Controller-1</text>
       <text x="175" y="735" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="white">(Leader + ACL Master)</text>
       <rect x="110" y="745" width="130" height="10" rx="3" fill="#9C27B0" stroke="#6A1B9A" stroke-width="1"/>
-      <text x="175" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Raft Node - Metadata + ACL Storage</text>
+      <text x="175" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">OpenRaft Leader - WAL + Log Compaction</text>
       <rect x="110" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
       <text x="140" y="768" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="6" fill="white">gRPC:9094</text>
       <rect x="180" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
@@ -276,7 +284,7 @@
       <text x="375" y="720" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Controller-2</text>
       <text x="375" y="735" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="white">(Follower + ACL Replica)</text>
       <rect x="310" y="745" width="130" height="10" rx="3" fill="#9C27B0" stroke="#6A1B9A" stroke-width="1"/>
-      <text x="375" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Raft Node - ACL Replication</text>
+      <text x="375" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">OpenRaft Follower - gRPC Network Layer</text>
       <rect x="310" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
       <text x="340" y="768" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="6" fill="white">gRPC:9094</text>
       <rect x="380" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
@@ -290,7 +298,7 @@
       <text x="575" y="720" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Controller-3</text>
       <text x="575" y="735" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="white">(Follower + ACL Replica)</text>
       <rect x="510" y="745" width="130" height="10" rx="3" fill="#9C27B0" stroke="#6A1B9A" stroke-width="1"/>
-      <text x="575" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">Raft Node - Log Replica</text>
+      <text x="575" y="753" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7" fill="white">OpenRaft Follower - Snapshot + Recovery</text>
       <rect x="510" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
       <text x="540" y="768" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="6" fill="white">gRPC:9094</text>
       <rect x="580" y="760" width="60" height="10" rx="3" fill="#BA68C8" stroke="#6A1B9A" stroke-width="1"/>
@@ -302,7 +310,7 @@
     <!-- Raft connections -->
     <path d="M 250 740 Q 275 735 300 740" stroke="#9C27B0" stroke-width="3" fill="none"/>
     <path d="M 450 740 Q 475 735 500 740" stroke="#9C27B0" stroke-width="3" fill="none"/>
-    <text x="375" y="800" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#6A1B9A">Raft Consensus + Distributed ACL Storage</text>
+    <text x="375" y="800" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#6A1B9A">Production OpenRaft - Full Consensus Implementation</text>
   </g>
   
   <!-- OPERATIONAL LAYER -->
@@ -348,48 +356,48 @@
   
   <!-- INTEGRATION LAYER -->
   <g id="integrationLayer">
-    <path d="M 50 940 Q 60 935 1140 940 Q 1145 945 1140 960 L 1138 1070 Q 1140 1075 1130 1075 L 60 1072 Q 55 1070 50 1065 Q 48 1055 50 940 Z" 
+    <path d="M 50 990 Q 60 985 1140 990 Q 1145 995 1140 1010 L 1138 1120 Q 1140 1125 1130 1125 L 60 1122 Q 55 1120 50 1115 Q 48 1105 50 990 Z" 
           fill="url(#integrationGradient)" stroke="#00796B" stroke-width="3" filter="url(#roughPaper)"/>
     
-    <text x="75" y="960" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#004D40">INTEGRATION LAYER</text>
+    <text x="75" y="1010" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#004D40">INTEGRATION LAYER</text>
     
     <!-- ETL Processing -->
-    <rect x="100" y="980" width="150" height="60" rx="10" fill="#4DB6AC" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="175" y="1000" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">ETL</text>
-    <text x="175" y="1015" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Processing</text>
-    <rect x="110" y="1005" width="130" height="12" rx="3" fill="#26A69A" stroke="#004D40" stroke-width="1"/>
-    <text x="175" y="1015" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">WebAssembly Modules</text>
-    <rect x="110" y="1020" width="130" height="12" rx="3" fill="#80CBC4" stroke="#004D40" stroke-width="1"/>
-    <text x="175" y="1030" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Sandboxed Execution</text>
+    <rect x="100" y="1030" width="150" height="60" rx="10" fill="#4DB6AC" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
+    <text x="175" y="1050" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">ETL</text>
+    <text x="175" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Processing</text>
+    <rect x="110" y="1055" width="130" height="12" rx="3" fill="#26A69A" stroke="#004D40" stroke-width="1"/>
+    <text x="175" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">WebAssembly Modules</text>
+    <rect x="110" y="1070" width="130" height="12" rx="3" fill="#80CBC4" stroke="#004D40" stroke-width="1"/>
+    <text x="175" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Sandboxed Execution</text>
     
     <!-- BigQuery Subscriber -->
-    <rect x="300" y="980" width="150" height="60" rx="10" fill="#4DB6AC" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="375" y="1000" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">BigQuery</text>
-    <text x="375" y="1015" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Subscriber</text>
-    <rect x="310" y="1005" width="130" height="12" rx="3" fill="#26A69A" stroke="#004D40" stroke-width="1"/>
-    <text x="375" y="1015" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Streaming Inserts</text>
-    <rect x="310" y="1020" width="130" height="12" rx="3" fill="#80CBC4" stroke="#004D40" stroke-width="1"/>
-    <text x="375" y="1030" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Schema Mapping</text>
+    <rect x="300" y="1030" width="150" height="60" rx="10" fill="#4DB6AC" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
+    <text x="375" y="1050" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">BigQuery</text>
+    <text x="375" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="white">Subscriber</text>
+    <rect x="310" y="1055" width="130" height="12" rx="3" fill="#26A69A" stroke="#004D40" stroke-width="1"/>
+    <text x="375" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Streaming Inserts</text>
+    <rect x="310" y="1070" width="130" height="12" rx="3" fill="#80CBC4" stroke="#004D40" stroke-width="1"/>
+    <text x="375" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Schema Mapping</text>
     
     <!-- Monitoring &amp; Metrics -->
-    <rect x="500" y="980" width="150" height="60" rx="10" fill="#B2DFDB" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
-    <text x="575" y="1000" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">Monitoring</text>
-    <text x="575" y="1015" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">&amp; Metrics</text>
-    <text x="575" y="1030" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#004D40">(Future)</text>
-    <rect x="510" y="1020" width="130" height="12" rx="3" fill="#4DB6AC" stroke="#004D40" stroke-width="1"/>
-    <text x="575" y="1030" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Prometheus, Grafana</text>
+    <rect x="500" y="1030" width="150" height="60" rx="10" fill="#B2DFDB" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
+    <text x="575" y="1050" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">Monitoring</text>
+    <text x="575" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">&amp; Metrics</text>
+    <text x="575" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#004D40">(Future)</text>
+    <rect x="510" y="1070" width="130" height="12" rx="3" fill="#4DB6AC" stroke="#004D40" stroke-width="1"/>
+    <text x="575" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Prometheus, Grafana</text>
   </g>
   
   <!-- Key Architectural Principles -->
-  <rect x="700" y="990" width="400" height="120" rx="10" fill="#F5F5F5" stroke="#424242" stroke-width="2" filter="url(#roughPaper)"/>
-  <text x="900" y="1010" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#212121">Key Architectural Principles</text>
-  <text x="710" y="1025" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">1. Storage-Compute Separation: Stateless brokers with shared object storage</text>
-  <text x="710" y="1037" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">2. Zero Trust Security: mTLS authentication + sub-microsecond authorization</text>
-  <text x="710" y="1049" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">3. Intelligent Tiered Storage: Hot/cold optimization with intelligent caching</text>
-  <text x="710" y="1061" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">4. Multi-Level ACL Cache: L1/L2/L3 caching for 2M+ ops/sec capacity</text>
-  <text x="710" y="1073" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">5. Enterprise Operations: Rate limiting, auto-scaling, zero-downtime upgrades</text>
-  <text x="710" y="1085" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">6. QUIC/HTTP3 + Enhanced gRPC: Circuit breakers &amp; connection pooling</text>
-  <text x="710" y="1097" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">7. Production-Ready Admin: Comprehensive security &amp; cluster management</text>
+  <rect x="700" y="1020" width="400" height="120" rx="10" fill="#F5F5F5" stroke="#424242" stroke-width="2" filter="url(#roughPaper)"/>
+  <text x="900" y="1040" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#212121">Key Architectural Principles</text>
+  <text x="710" y="1055" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">1. Storage-Compute Separation: Stateless brokers with shared object storage</text>
+  <text x="710" y="1067" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">2. Zero Trust Security: mTLS authentication + sub-microsecond authorization</text>
+  <text x="710" y="1079" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">3. Intelligent Tiered Storage: Hot/cold optimization with intelligent caching</text>
+  <text x="710" y="1091" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">4. Multi-Level ACL Cache: L1/L2/L3 caching for 2M+ ops/sec capacity</text>
+  <text x="710" y="1103" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">5. Enterprise Operations: Rate limiting, auto-scaling, zero-downtime upgrades</text>
+  <text x="710" y="1115" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">6. QUIC/HTTP3 + Enhanced gRPC: Circuit breakers &amp; connection pooling</text>
+  <text x="710" y="1127" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="#424242">7. Production-Ready Admin: Comprehensive security &amp; cluster management</text>
   
   
   <!-- Main data flow arrows -->
@@ -416,11 +424,11 @@
   </g>
   
   <!-- Footer -->
-  <text x="600" y="1140" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#424242">
-    RustMQ: Enterprise-Grade Cloud-Native Message Queue with Zero Trust Security
+  <text x="600" y="1190" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#424242">
+    RustMQ: Production-Ready Cloud-Native Message Queue with Zero Trust Security
   </text>
-  <text x="600" y="1160" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#666666">
-    10x Cost Reduction • 100x Elasticity • Sub-microsecond Authorization • Optimized for Google Cloud Platform
+  <text x="600" y="1210" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#666666">
+    ACME Certs • Moka Cache • OpenRaft • WebPKI Auth • Sub-μs ACL • Google Cloud Optimized
   </text>
   
 </svg>
