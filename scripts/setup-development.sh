@@ -1,6 +1,13 @@
 #!/bin/bash
 # RustMQ Development Environment Setup Script
 # This script sets up a complete local development environment with certificates, configs, and services
+# 
+# Features:
+# - Self-signed development certificates with proper CA chain
+# - WebPKI integration with rcgen certificate compatibility
+# - High-performance Moka cache configuration
+# - Development-friendly security settings with fail_open
+# - Complete startup scripts for broker, controller, and cluster
 
 set -euo pipefail
 
@@ -255,14 +262,31 @@ base_path = "./data/segments"
 [storage.cache]
 enabled = true
 max_size_mb = 256
-eviction_policy = "Moka"
+eviction_policy = "Moka"  # High-performance cache with TinyLFU algorithm
 
 [security]
 enabled = true
+security_level = "development"
 tls_cert_path = "./certs/server.pem"
 tls_key_path = "./certs/server.key"
 ca_cert_path = "./certs/ca.pem"
 require_client_cert = true
+fail_open = true
+
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = false
+validation_timeout_ms = 3000
+allow_rcgen_certificates = true
+
+# Certificate caching for development
+[security.certificate_cache]
+enabled = true
+max_entries = 1000
+ttl_seconds = 300
+webpki_cache_enabled = true
 
 [logging]
 level = "debug"
@@ -295,9 +319,18 @@ initial_cluster = ["controller-01=127.0.0.1:9095"]
 
 [security]
 enabled = true
+security_level = "development"
 tls_cert_path = "./certs/server.pem"
 tls_key_path = "./certs/server.key"
 ca_cert_path = "./certs/ca.pem"
+
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = false
+validation_timeout_ms = 3000
+allow_rcgen_certificates = true
 
 [logging]
 level = "debug"
@@ -318,6 +351,12 @@ client_cert_path = "./certs/admin.pem"
 client_key_path = "./certs/admin.key"
 ca_cert_path = "./certs/ca.pem"
 verify_server_cert = true
+
+# WebPKI Integration
+[security.webpki]
+enabled = true
+fallback_to_legacy = true
+strict_trust_anchor_validation = false
 
 [output]
 format = "json"

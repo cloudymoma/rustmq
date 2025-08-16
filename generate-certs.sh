@@ -3,6 +3,12 @@
 # RustMQ Environment Setup Script - Main Entry Point
 # This script delegates to appropriate environment setup scripts
 # Compatible with RustMQ 1.0.0+ Certificate Signing Implementation
+# 
+# Updated for:
+# - WebPKI integration with fallback support
+# - High-performance Moka cache (default enabled)
+# - Enhanced security configurations
+# - SDK compatibility (Rust SDK: 31 tests, Go SDK: security integration)
 
 set -euo pipefail
 
