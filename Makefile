@@ -41,31 +41,31 @@ RESET := \033[0m
 # Default target
 .PHONY: all
 all: info build test
-	@echo "$(GREEN)✅ All builds and tests completed successfully!$(RESET)"
+	@printf "$(GREEN)✅ All builds and tests completed successfully!$(RESET)\n"
 
 # Show platform and feature information
 .PHONY: info
 info:
-	@echo "$(BLUE)🔍 Platform Detection:$(RESET)"
-	@echo "  Platform: $(PLATFORM_INFO)"
-	@echo "  Features: $(FEATURES)"
-	@echo "  Rust Version: $(shell rustc --version)"
-	@echo "  Cargo Version: $(shell cargo --version)"
-	@echo ""
+	@printf "$(BLUE)🔍 Platform Detection:$(RESET)\n"
+	@printf "  Platform: $(PLATFORM_INFO)\n"
+	@printf "  Features: $(FEATURES)\n"
+	@printf "  Rust Version: $(shell rustc --version)\n"
+	@printf "  Cargo Version: $(shell cargo --version)\n"
+	@printf "\n"
 
 # Build targets
 .PHONY: build build-debug build-release
 build: build-debug build-release
 
 build-debug:
-	@echo "$(YELLOW)🔨 Building debug mode...$(RESET)"
+	@printf "$(YELLOW)🔨 Building debug mode...$(RESET)\n"
 	cargo build $(FEATURES)
-	@echo "$(GREEN)✅ Debug build completed$(RESET)"
+	@printf "$(GREEN)✅ Debug build completed$(RESET)\n"
 
 build-release:
-	@echo "$(YELLOW)🔨 Building release mode...$(RESET)"
+	@printf "$(YELLOW)🔨 Building release mode...$(RESET)\n"
 	cargo build --release $(FEATURES)
-	@echo "$(GREEN)✅ Release build completed$(RESET)"
+	@printf "$(GREEN)✅ Release build completed$(RESET)\n"
 
 # Test targets
 .PHONY: test test-debug test-release test-miri
