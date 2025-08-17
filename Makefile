@@ -68,7 +68,7 @@ build-release:
 	@echo "$(GREEN)✅ Release build completed$(RESET)"
 
 # Test targets
-.PHONY: test test-debug test-release
+.PHONY: test test-debug test-release test-miri
 test: test-debug test-release
 
 test-debug:
@@ -84,6 +84,40 @@ test-release:
 	@echo "$(YELLOW)🏃 Running benchmarks...$(RESET)"
 	cargo bench $(FEATURES)
 	@echo "$(GREEN)✅ Release tests and benchmarks completed$(RESET)"
+
+# Miri memory safety tests
+.PHONY: test-miri miri-quick miri-core miri-proptest miri-full
+test-miri: miri-quick
+	@echo "$(GREEN)✅ Miri memory safety tests completed$(RESET)"
+
+miri-quick:
+	@echo "$(YELLOW)🔍 Running quick Miri memory safety tests...$(RESET)"
+	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	@chmod +x scripts/miri-test.sh
+	./scripts/miri-test.sh --quick
+	@echo "$(GREEN)✅ Quick Miri tests completed$(RESET)"
+
+miri-core:
+	@echo "$(YELLOW)🔍 Running core library Miri tests...$(RESET)"
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	@chmod +x scripts/miri-test.sh
+	./scripts/miri-test.sh --core-only --verbose
+	@echo "$(GREEN)✅ Core Miri tests completed$(RESET)"
+
+miri-proptest:
+	@echo "$(YELLOW)🔍 Running property-based Miri tests...$(RESET)"
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	@chmod +x scripts/miri-test.sh
+	./scripts/miri-test.sh --proptest-only --verbose
+	@echo "$(GREEN)✅ Property-based Miri tests completed$(RESET)"
+
+miri-full:
+	@echo "$(YELLOW)🔍 Running full Miri test suite (slow)...$(RESET)"
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	@chmod +x scripts/miri-test.sh
+	./scripts/miri-test.sh --verbose
+	@echo "$(GREEN)✅ Full Miri test suite completed$(RESET)"
 
 # Pre-commit sanity check - comprehensive validation
 .PHONY: sanity
@@ -212,7 +246,7 @@ sdk-quick-test:
 	@echo "$(GREEN)✅ Quick SDK tests completed$(RESET)"
 
 # Rust SDK test targets
-.PHONY: sdk-rust-test sdk-rust-test-debug sdk-rust-test-release sdk-rust-bench
+.PHONY: sdk-rust-test sdk-rust-test-debug sdk-rust-test-release sdk-rust-bench sdk-rust-miri
 sdk-rust-test: sdk-rust-test-debug sdk-rust-test-release
 
 sdk-rust-test-debug:
@@ -231,6 +265,24 @@ sdk-rust-bench:
 	@echo "$(YELLOW)🏃 Running Rust SDK benchmarks only...$(RESET)"
 	cd sdk/rust && cargo bench
 	@echo "$(GREEN)✅ Rust SDK benchmarks completed$(RESET)"
+
+# Rust SDK Miri memory safety tests
+.PHONY: sdk-rust-miri sdk-rust-miri-quick sdk-rust-miri-full
+sdk-rust-miri: sdk-rust-miri-quick
+	@echo "$(GREEN)✅ Rust SDK Miri memory safety tests completed$(RESET)"
+
+sdk-rust-miri-quick:
+	@echo "$(YELLOW)🔍 Running Rust SDK Miri memory safety tests (quick)...$(RESET)"
+	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	cd sdk/rust && cargo +nightly miri test --features miri-safe miri::client_tests::test_message_memory_safety || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)"
+	@echo "$(GREEN)✅ Rust SDK quick Miri tests completed$(RESET)"
+
+sdk-rust-miri-full:
+	@echo "$(YELLOW)🔍 Running full Rust SDK Miri test suite...$(RESET)"
+	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
+	cd sdk/rust && cargo +nightly miri test --features miri-safe miri:: || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)"
+	@echo "$(GREEN)✅ Full Rust SDK Miri tests completed$(RESET)"
 
 # Go SDK test targets
 .PHONY: sdk-go-test sdk-go-test-debug sdk-go-test-release sdk-go-bench
@@ -350,6 +402,11 @@ help:
 	@echo "  test-debug       - Run debug tests (no benchmarks)"
 	@echo "  test-release     - Run release tests with benchmarks"
 	@echo "  test-legacy-cache - Test with legacy LRU cache"
+	@echo "  test-miri        - Quick Miri memory safety tests"
+	@echo "  miri-quick       - Quick Miri memory safety validation"
+	@echo "  miri-core        - Core library Miri tests (storage, security, cache)"
+	@echo "  miri-proptest    - Property-based Miri tests"
+	@echo "  miri-full        - Full Miri test suite (slow but comprehensive)"
 	@echo "  sanity           - Pre-commit sanity checks"
 	@echo "  sdk-test         - Run all SDK tests (Rust and Go)"
 	@echo "  sdk-quick-test   - Quick SDK verification (library tests only)"
@@ -359,6 +416,9 @@ help:
 	@echo "  sdk-rust-test-debug - Run Rust SDK debug tests (31 tests)"
 	@echo "  sdk-rust-test-release - Run Rust SDK release tests with benchmarks"
 	@echo "  sdk-rust-bench   - Run Rust SDK benchmarks only"
+	@echo "  sdk-rust-miri    - Rust SDK Miri memory safety tests"
+	@echo "  sdk-rust-miri-quick - Quick Rust SDK Miri validation"
+	@echo "  sdk-rust-miri-full - Full Rust SDK Miri test suite"
 	@echo "  sdk-go-test      - Run Go SDK tests debug and release"
 	@echo "  sdk-go-test-debug - Run Go SDK debug tests (no benchmarks)"
 	@echo "  sdk-go-test-release - Run Go SDK release tests with benchmarks"

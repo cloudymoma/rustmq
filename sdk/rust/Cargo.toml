@@ -51,3 +51,6 @@ default = []
 compression = []
 encryption = []
 metrics = []
+# Miri testing features
+miri = []
+miri-safe = []

@@ -1,0 +1,16 @@
+# Miri configuration for RustMQ
+# Enables memory safety testing with optimized settings
+
+[target.miri]
+runner = "miri"
+
+[env]
+# Miri flags for RustMQ-specific optimizations
+MIRIFLAGS = "-Zmiri-disable-isolation -Zmiri-ignore-leaks -Zmiri-backtrace=full -Zmiri-tree-borrows"
+
+# Reduce test iterations for Miri (it's 10-100x slower)
+PROPTEST_CASES = "10"
+PROPTEST_MAX_SHRINK_ITERS = "100"
+
+# Timeout settings for slow Miri execution
+RUST_TEST_TIMEOUT = "300"

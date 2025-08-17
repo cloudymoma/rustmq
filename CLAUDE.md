@@ -43,6 +43,29 @@ cargo bench --bench cache_performance_bench
 # Benchmark legacy LRU vs moka comparison
 cargo bench --bench cache_performance_bench --no-default-features --features wasm
 
+# Miri memory safety tests (requires nightly Rust)
+rustup +nightly component add miri  # Install Miri (one-time setup)
+cargo +nightly miri setup           # Setup Miri environment
+
+# Run all Miri tests (slow - use for CI/weekly validation)
+./scripts/miri-test.sh
+
+# Run specific Miri test categories
+./scripts/miri-test.sh --core-only     # Core storage/security/cache tests
+./scripts/miri-test.sh --sdk-only      # SDK client library tests  
+./scripts/miri-test.sh --proptest-only # Property-based tests with Miri
+./scripts/miri-test.sh --quick         # Fast subset for development
+
+# Run Miri tests manually (examples)
+cargo +nightly miri test --features miri-safe miri::storage_tests
+cargo +nightly miri test --features miri-safe miri::security_tests
+cargo +nightly miri test --features miri-safe miri::cache_tests
+cargo +nightly miri test --features miri-safe miri::proptest_integration
+
+# SDK Miri tests
+cd sdk/rust
+cargo +nightly miri test --features miri-safe miri::client_tests
+
 # Run services
 cargo run --bin rustmq-broker -- --config config/broker.toml
 cargo run --bin rustmq-controller -- --config config/controller.toml
@@ -137,6 +160,7 @@ Client → QUIC → Broker → Local WAL → Cache → Cloud Storage
 - **Smart**: Process messages with WASM
 - **Cheap**: 90% less storage cost
 - **Reliable**: Production-grade distributed consensus
+- **Memory Safe**: Miri-validated memory safety across all core components
 
 ## Config Files
 
@@ -176,6 +200,16 @@ Transform messages in real-time:
 
 ## Latest Updates
 
+- **🚀 MIRI MEMORY SAFETY INTEGRATION**: **COMPLETED** - Comprehensive memory safety validation with:
+  - **✅ Complete Miri Test Suite**: 4 test modules covering storage, security, cache, and SDK components
+  - **✅ Property-Based Testing**: Integration with proptest for comprehensive input validation under Miri
+  - **✅ Automated Test Runner**: `scripts/miri-test.sh` with core-only, SDK-only, and quick test modes
+  - **✅ CI/CD Integration**: GitHub Actions workflow with weekly scheduled runs and PR validation
+  - **✅ Configuration Management**: Optimized `.cargo/config.toml` and Cargo features for Miri compatibility
+  - **✅ Concurrent Access Testing**: Multi-threaded safety validation for storage, security, and cache layers
+  - **✅ Edge Case Coverage**: Buffer overflows, use-after-free, and uninitialized memory detection
+  - **✅ SDK Memory Safety**: Client library validation including message serialization and connection management
+  - **✅ Documentation**: Complete setup and usage instructions in CLAUDE.md
 - **🚀 ACME PROTOCOL INTEGRATION**: **COMPLETED** - Enterprise certificate automation with:
   - **✅ Complete ACME Client**: Full RFC 8555 ACME protocol implementation with Let's Encrypt and custom CA support
   - **✅ DNS Challenge Providers**: Route53, CloudDNS, Cloudflare, and local DNS providers for DNS-01 challenges
