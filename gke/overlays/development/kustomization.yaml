@@ -1,0 +1,88 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rustmq-development
+  annotations:
+    description: "Development overlay for RustMQ GKE deployment"
+
+# Reference to base
+resources:
+- ../../base
+
+# Development-specific labels
+commonLabels:
+  environment: development
+  tier: development
+
+# Development-specific annotations
+commonAnnotations:
+  environment: development
+
+# Development namespace
+namespace: rustmq-dev
+
+# Development image tags (latest for rapid iteration)
+images:
+- name: gcr.io/PROJECT_ID/rustmq-controller
+  newTag: latest
+- name: gcr.io/PROJECT_ID/rustmq-broker
+  newTag: latest
+
+# Development configuration
+configMapGenerator:
+- name: development-config
+  behavior: merge
+  literals:
+  - ENVIRONMENT=development
+  - LOG_LEVEL=debug
+  - RUST_LOG=debug,rustmq=trace
+  - CONTROLLER_COUNT=1
+  - CONTROLLER_CPU_REQUEST=500m
+  - CONTROLLER_CPU_LIMIT=1
+  - CONTROLLER_MEMORY_REQUEST=1Gi
+  - CONTROLLER_MEMORY_LIMIT=2Gi
+  - CONTROLLER_DISK_SIZE=20Gi
+  - BROKER_MIN_COUNT=1
+  - BROKER_MAX_COUNT=3
+  - BROKER_CPU_REQUEST=500m
+  - BROKER_CPU_LIMIT=1
+  - BROKER_MEMORY_REQUEST=1Gi
+  - BROKER_MEMORY_LIMIT=2Gi
+  - ENABLE_MTLS=false
+  - ENABLE_QUIC=true
+  - ENABLE_HTTP3=false
+
+# Development-specific patches
+patches:
+- path: patches/development-resources.yaml
+  target:
+    kind: StatefulSet
+    name: rustmq-controller
+- path: patches/development-resources.yaml
+  target:
+    kind: DaemonSet
+    name: rustmq-broker
+- path: patches/development-security.yaml
+- path: patches/development-monitoring.yaml
+
+# Development secrets (self-signed)
+secretGenerator:
+- name: rustmq-tls
+  type: kubernetes.io/tls
+  options:
+    disableNameSuffixHash: true
+  files:
+  - tls.crt=certs/development/tls.crt
+  - tls.key=certs/development/tls.key
+- name: rustmq-ca
+  type: Opaque
+  options:
+    disableNameSuffixHash: true
+  files:
+  - ca.crt=certs/development/ca.crt
+
+# Replica overrides for development
+replicas:
+- name: rustmq-controller
+  count: 1

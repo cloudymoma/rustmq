@@ -1,0 +1,101 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rustmq-base
+  annotations:
+    description: "Base Kustomization for RustMQ GKE deployment"
+
+# Resource files to include
+resources:
+- namespace.yaml
+- storage.yaml
+- configmap-controller.yaml
+- configmap-broker.yaml
+- controller-statefulset.yaml
+- broker-daemonset.yaml
+- services.yaml
+- ingress.yaml
+- backend-config.yaml
+- monitoring.yaml
+- hpa.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: rustmq
+  app.kubernetes.io/version: v1.0.0
+  app.kubernetes.io/component: message-queue
+  app.kubernetes.io/part-of: rustmq-cluster
+  app.kubernetes.io/managed-by: kustomize
+
+# Common annotations
+commonAnnotations:
+  config.kubernetes.io/origin: |
+    configuredIn: gke/base/kustomization.yaml
+    configuredBy: kustomize
+
+# Namespace for all resources
+namespace: rustmq
+
+# Image transformations (to be overridden in overlays)
+images:
+- name: gcr.io/PROJECT_ID/rustmq-controller
+  newTag: latest
+- name: gcr.io/PROJECT_ID/rustmq-broker
+  newTag: latest
+
+# ConfigMap generator for deployment variables
+configMapGenerator:
+- name: deployment-config
+  literals:
+  - PROJECT_ID=${PROJECT_ID}
+  - GCS_BUCKET=${GCS_BUCKET}
+  - GCS_REGION=${GCS_REGION}
+  - CERT_DOMAIN=${CERT_DOMAIN}
+  - STATIC_IP_NAME=${STATIC_IP_NAME}
+  - SERVICE_ACCOUNT=${SERVICE_ACCOUNT}
+  - CONTROLLER_COUNT=${CONTROLLER_COUNT}
+  - CONTROLLER_CPU_REQUEST=${CONTROLLER_CPU_REQUEST}
+  - CONTROLLER_CPU_LIMIT=${CONTROLLER_CPU_LIMIT}
+  - CONTROLLER_MEMORY_REQUEST=${CONTROLLER_MEMORY_REQUEST}
+  - CONTROLLER_MEMORY_LIMIT=${CONTROLLER_MEMORY_LIMIT}
+  - CONTROLLER_DISK_SIZE=${CONTROLLER_DISK_SIZE}
+  - BROKER_MIN_COUNT=${BROKER_MIN_COUNT}
+  - BROKER_MAX_COUNT=${BROKER_MAX_COUNT}
+  - BROKER_CPU_REQUEST=${BROKER_CPU_REQUEST}
+  - BROKER_CPU_LIMIT=${BROKER_CPU_LIMIT}
+  - BROKER_MEMORY_REQUEST=${BROKER_MEMORY_REQUEST}
+  - BROKER_MEMORY_LIMIT=${BROKER_MEMORY_LIMIT}
+
+# Patches to apply
+patches:
+- path: patches/environment-variables.yaml
+  target:
+    kind: StatefulSet
+    name: rustmq-controller
+- path: patches/environment-variables.yaml
+  target:
+    kind: DaemonSet
+    name: rustmq-broker
+
+# Generators
+generators:
+- generators/certificate-generator.yaml
+
+# Replacements for environment variable substitution
+replacements:
+- source:
+    kind: ConfigMap
+    name: deployment-config
+    fieldPath: data.PROJECT_ID
+  targets:
+  - select:
+      kind: StatefulSet
+      name: rustmq-controller
+    fieldPaths:
+    - spec.template.spec.containers.[name=controller].image
+  - select:
+      kind: DaemonSet
+      name: rustmq-broker
+    fieldPaths:
+    - spec.template.spec.containers.[name=broker].image

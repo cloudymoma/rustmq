@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broker-config
+  namespace: rustmq
+data:
+  broker.toml: |
+    [broker]
+    id = "${HOSTNAME}"
+    rack_id = "${ZONE}"
+    
+    [network]
+    quic_listen = "0.0.0.0:9092"
+    rpc_listen = "0.0.0.0:9093"
+    admin_listen = "0.0.0.0:9643"
+    
+    # WAL Configuration for Local SSD
+    [wal]
+    path = "/var/lib/rustmq/wal"
+    capacity_bytes = 322122547200  # 300GB
+    segment_size_bytes = 1073741824  # 1GB segments
+    enable_direct_io = true
+    sync_mode = "Fdatasync"
+    
+    # Cache Configuration (Moka cache enabled by default)
+    [cache]
+    capacity_bytes = 8589934592  # 8GB
+    ttl_seconds = 3600  # 1 hour
+    eviction_policy = "TinyLFU"
+    
+    # Object Storage Configuration
+    [object_storage]
+    storage_type = { GCS = { bucket = "${GCS_BUCKET}" } }
+    region = "${GCS_REGION}"
+    upload_threshold_bytes = 134217728  # 128MB
+    download_buffer_size = 8388608  # 8MB
+    
+    # Controller endpoints for cluster coordination
+    [controller]
+    endpoints = [
+      "rustmq-controller-0.controller-service.rustmq.svc.cluster.local:9094",
+      "rustmq-controller-1.controller-service.rustmq.svc.cluster.local:9094",
+      "rustmq-controller-2.controller-service.rustmq.svc.cluster.local:9094"
+    ]
+    health_check_interval_ms = 5000
+    connection_timeout_ms = 10000
+    
+    # Replication Configuration
+    [replication]
+    min_replicas = 2
+    acknowledgment_level = "Durable"  # LocalOnly or Durable
+    sync_timeout_ms = 5000
+    
+    # Security Configuration
+    [security]
+    enabled = true
+    default_auth_mode = "mTLS"
+    ca_cert_path = "/etc/certs/ca.crt"
+    cert_path = "/etc/certs/tls.crt"
+    key_path = "/etc/certs/tls.key"
+    
+    # ETL Configuration for WASM processing
+    [etl]
+    enabled = true
+    wasm_runtime = "wasmtime"
+    max_modules = 10
+    module_timeout_ms = 30000
+    priority_stages = [0, 1, 2]
+    
+    # Performance Configuration
+    [performance]
+    max_concurrent_requests = 2000
+    request_timeout_ms = 30000
+    connection_pool_size = 100
+    io_uring_enabled = true
+    
+    # Monitoring Configuration
+    [monitoring]
+    prometheus_enabled = true
+    prometheus_port = 9643
+    log_level = "info"
+    metrics_interval_ms = 10000
+    
+    # Bandwidth limiting for cost optimization
+    [bandwidth]
+    upload_limit_mbps = 100
+    download_limit_mbps = 200
+    burst_allowance_mb = 50

@@ -1,0 +1,208 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+  zones: us-central1-a,us-central1-b,us-central1-c
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-ssd
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+# PersistentVolume for Local SSD (per node)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-ssd-pv-template
+spec:
+  capacity:
+    storage: 375Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-ssd
+  local:
+    path: /mnt/disks/ssd0
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: workload
+          operator: In
+          values:
+          - broker
+---
+# DaemonSet for Local SSD setup
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: local-ssd-provisioner
+  namespace: kube-system
+  labels:
+    app: local-ssd-provisioner
+spec:
+  selector:
+    matchLabels:
+      app: local-ssd-provisioner
+  template:
+    metadata:
+      labels:
+        app: local-ssd-provisioner
+    spec:
+      serviceAccount: local-ssd-provisioner
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: broker
+        effect: NoSchedule
+      nodeSelector:
+        workload: broker
+      initContainers:
+      - name: setup-local-ssd
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+          
+          # Create mount point
+          mkdir -p /mnt/host/mnt/disks/ssd0
+          
+          # Check if local SSD is available
+          if [ -b /dev/disk/by-id/google-local-ssd-0 ]; then
+            echo "Local SSD found, setting up..."
+            
+            # Check if already formatted
+            if ! blkid /dev/disk/by-id/google-local-ssd-0; then
+              echo "Formatting local SSD..."
+              mkfs.ext4 -F /dev/disk/by-id/google-local-ssd-0
+            fi
+            
+            # Mount if not already mounted
+            if ! mountpoint -q /mnt/host/mnt/disks/ssd0; then
+              echo "Mounting local SSD..."
+              mount /dev/disk/by-id/google-local-ssd-0 /mnt/host/mnt/disks/ssd0
+              
+              # Create WAL directory
+              mkdir -p /mnt/host/mnt/disks/ssd0/wal
+              chmod 755 /mnt/host/mnt/disks/ssd0/wal
+            fi
+            
+            echo "Local SSD setup complete"
+          else
+            echo "No local SSD found, skipping setup"
+          fi
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-mount
+          mountPath: /mnt/host
+          mountPropagation: Bidirectional
+        - name: dev
+          mountPath: /dev
+      containers:
+      - name: provisioner
+        image: quay.io/external_storage/local-volume-provisioner:v2.5.0
+        env:
+        - name: MY_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: MY_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: PROVISIONER_NAME
+          value: kubernetes.io/no-provisioner
+        - name: JOB_CONTAINER_IMAGE
+          value: quay.io/external_storage/local-volume-provisioner:v2.5.0
+        volumeMounts:
+        - name: provisioner-config
+          mountPath: /etc/provisioner/config
+          readOnly: true
+        - name: local-ssd
+          mountPath: /mnt/disks/ssd0
+          mountPropagation: HostToContainer
+        securityContext:
+          privileged: true
+      volumes:
+      - name: host-mount
+        hostPath:
+          path: /
+      - name: dev
+        hostPath:
+          path: /dev
+      - name: local-ssd
+        hostPath:
+          path: /mnt/disks/ssd0
+      - name: provisioner-config
+        configMap:
+          name: local-ssd-provisioner-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: local-ssd-provisioner
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: local-ssd-provisioner
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: local-ssd-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: local-ssd-provisioner
+subjects:
+- kind: ServiceAccount
+  name: local-ssd-provisioner
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-ssd-provisioner-config
+  namespace: kube-system
+data:
+  storageClassMap: |
+    local-ssd:
+       hostDir: /mnt/disks/ssd0
+       mountDir: /mnt/disks/ssd0
+       blockCleanerCommand:
+         - "/scripts/shred.sh"
+         - "2"
+       volumeMode: Filesystem
+       fsType: ext4
+       namePattern: "*"

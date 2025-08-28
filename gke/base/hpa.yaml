@@ -1,0 +1,246 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rustmq-broker-hpa
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: DaemonSet
+    name: rustmq-broker
+  minReplicas: ${BROKER_MIN_COUNT}
+  maxReplicas: ${BROKER_MAX_COUNT}
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  
+  # Custom metrics-based scaling
+  - type: Pods
+    pods:
+      metric:
+        name: rustmq_messages_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  
+  - type: Pods
+    pods:
+      metric:
+        name: rustmq_quic_connections
+      target:
+        type: AverageValue
+        averageValue: "500"
+  
+  # Scaling behavior configuration
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+---
+# Vertical Pod Autoscaler for controllers (optional)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: rustmq-controller-vpa
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: autoscaling
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: rustmq-controller
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: controller
+      minAllowed:
+        cpu: 1000m
+        memory: 2Gi
+      maxAllowed:
+        cpu: 8000m
+        memory: 16Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+---
+# Vertical Pod Autoscaler for brokers (optional)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: rustmq-broker-vpa
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: autoscaling
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: DaemonSet
+    name: rustmq-broker
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: broker
+      minAllowed:
+        cpu: 2000m
+        memory: 4Gi
+      maxAllowed:
+        cpu: 16000m
+        memory: 32Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+---
+# Pod Disruption Budget for controllers
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-controller-pdb
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: availability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rustmq-controller
+  maxUnavailable: 1
+---
+# Pod Disruption Budget for brokers
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-broker-pdb
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: availability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rustmq-broker
+  maxUnavailable: 30%
+---
+# Cluster Autoscaler annotations for node pools
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-autoscaler-config
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+data:
+  # Controller node pool configuration
+  controller-pool.yaml: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: controller-pool-config
+      annotations:
+        cluster-autoscaler/node-group-max-size: "${CONTROLLER_COUNT}"
+        cluster-autoscaler/node-group-min-size: "${CONTROLLER_COUNT}"
+        cluster-autoscaler/scale-down-enabled: "false"
+        cluster-autoscaler/scale-down-delay-after-add: "10m"
+        cluster-autoscaler/scale-down-unneeded-time: "10m"
+  
+  # Broker node pool configuration
+  broker-pool.yaml: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: broker-pool-config
+      annotations:
+        cluster-autoscaler/node-group-max-size: "${BROKER_MAX_COUNT}"
+        cluster-autoscaler/node-group-min-size: "${BROKER_MIN_COUNT}"
+        cluster-autoscaler/scale-down-enabled: "true"
+        cluster-autoscaler/scale-down-delay-after-add: "5m"
+        cluster-autoscaler/scale-down-unneeded-time: "5m"
+        cluster-autoscaler/max-node-provision-time: "15m"
+---
+# Resource quotas for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rustmq-quota
+  namespace: rustmq
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    requests.storage: 2Ti
+    limits.cpu: "100"
+    limits.memory: 200Gi
+    persistentvolumeclaims: "10"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# Limit ranges for pods
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: rustmq-limits
+  namespace: rustmq
+spec:
+  limits:
+  - default:
+      cpu: "2"
+      memory: "4Gi"
+      ephemeral-storage: "2Gi"
+    defaultRequest:
+      cpu: "1"
+      memory: "2Gi"
+      ephemeral-storage: "1Gi"
+    max:
+      cpu: "16"
+      memory: "32Gi"
+      ephemeral-storage: "10Gi"
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+      ephemeral-storage: "100Mi"
+    type: Container
+  - default:
+      storage: "10Gi"
+    max:
+      storage: "1Ti"
+    min:
+      storage: "1Gi"
+    type: PersistentVolumeClaim

@@ -9,6 +9,28 @@ RustMQ is a next-generation, cloud-native distributed message queue system that 
 
 **Optimized for Google Cloud Platform**: RustMQ is designed with Google Cloud services as the default target, leveraging Google Cloud Storage for cost-effective object storage and Google Kubernetes Engine for orchestration, with all configurations defaulting to the `us-central1` region for optimal performance and cost efficiency.
 
+## 🚀 Quick Start
+
+### Development Cluster (Single Zone)
+```bash
+# Build images locally
+cd docker/ && ./quick-deploy.sh dev-build
+
+# Deploy development cluster  
+cd ../gke/ && ./deploy-rustmq-gke.sh deploy --environment development
+```
+
+### Production Cluster (Single Zone)
+```bash
+# Build and push production images
+cd docker/ && PROJECT_ID=your-project ./quick-deploy.sh production-images
+
+# Deploy production cluster
+cd ../gke/ && PROJECT_ID=your-project ./deploy-rustmq-gke.sh deploy --environment production
+```
+
+For detailed setup, see [GKE Deployment Guide](docs/gke-deployment-guide.md).
+
 ## 🚀 Key Features
 
 - **10x Cost Reduction**: 90% storage cost savings through single-copy storage in Google Cloud Storage

@@ -1,0 +1,304 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: controller
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rustmq-controller
+  endpoints:
+  - port: admin
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: instance
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_annotation_topology_kubernetes_io_zone]
+      targetLabel: zone
+  namespaceSelector:
+    matchNames:
+    - rustmq
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: broker
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rustmq-broker
+  endpoints:
+  - port: admin
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: instance
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_annotation_topology_kubernetes_io_zone]
+      targetLabel: zone
+  namespaceSelector:
+    matchNames:
+    - rustmq
+---
+# PodMonitor for additional pod-level metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: rustmq-pods
+  namespace: rustmq
+  labels:
+    app: rustmq
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rustmq-controller
+  podMetricsEndpoints:
+  - port: admin
+    path: /metrics
+    interval: 30s
+  namespaceSelector:
+    matchNames:
+    - rustmq
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rustmq-alerts
+  namespace: rustmq
+  labels:
+    app: rustmq
+    monitoring: prometheus
+spec:
+  groups:
+  - name: rustmq.controller
+    interval: 30s
+    rules:
+    # Controller availability alerts
+    - alert: RustMQControllerDown
+      expr: up{job="rustmq-controller"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: controller
+      annotations:
+        summary: "RustMQ Controller {{ $labels.instance }} is down"
+        description: "RustMQ Controller {{ $labels.instance }} has been down for more than 1 minute"
+    
+    # Raft consensus alerts
+    - alert: RustMQRaftLeaderElection
+      expr: increase(rustmq_raft_leader_elections_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+        component: raft
+      annotations:
+        summary: "RustMQ Raft leader election detected"
+        description: "Raft cluster experienced {{ $value }} leader elections in the last 5 minutes"
+    
+    - alert: RustMQRaftNoLeader
+      expr: rustmq_raft_leader_id == 0
+      for: 30s
+      labels:
+        severity: critical
+        component: raft
+      annotations:
+        summary: "RustMQ Raft cluster has no leader"
+        description: "Raft cluster has no active leader for more than 30 seconds"
+    
+    # Storage alerts
+    - alert: RustMQControllerDiskUsage
+      expr: (rustmq_storage_disk_used_bytes / rustmq_storage_disk_total_bytes) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: storage
+      annotations:
+        summary: "RustMQ Controller disk usage high"
+        description: "Controller {{ $labels.instance }} disk usage is {{ $value | humanizePercentage }}"
+  
+  - name: rustmq.broker
+    interval: 30s
+    rules:
+    # Broker availability alerts
+    - alert: RustMQBrokerDown
+      expr: up{job="rustmq-broker"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: broker
+      annotations:
+        summary: "RustMQ Broker {{ $labels.instance }} is down"
+        description: "RustMQ Broker {{ $labels.instance }} has been down for more than 1 minute"
+    
+    # Message throughput alerts
+    - alert: RustMQBrokerLowThroughput
+      expr: rate(rustmq_messages_processed_total[5m]) < 100
+      for: 2m
+      labels:
+        severity: warning
+        component: broker
+      annotations:
+        summary: "RustMQ Broker low throughput"
+        description: "Broker {{ $labels.instance }} processing less than 100 messages/sec for 2 minutes"
+    
+    # WAL storage alerts
+    - alert: RustMQBrokerWALFull
+      expr: (rustmq_wal_used_bytes / rustmq_wal_capacity_bytes) > 0.90
+      for: 1m
+      labels:
+        severity: critical
+        component: wal
+      annotations:
+        summary: "RustMQ Broker WAL storage critical"
+        description: "Broker {{ $labels.instance }} WAL storage is {{ $value | humanizePercentage }} full"
+    
+    # Cache performance alerts
+    - alert: RustMQBrokerCacheHitRateLow
+      expr: rate(rustmq_cache_hits_total[5m]) / rate(rustmq_cache_requests_total[5m]) < 0.7
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "RustMQ Broker cache hit rate low"
+        description: "Broker {{ $labels.instance }} cache hit rate is {{ $value | humanizePercentage }}"
+    
+    # QUIC connection alerts
+    - alert: RustMQBrokerQUICConnectionsHigh
+      expr: rustmq_quic_active_connections > 1000
+      for: 2m
+      labels:
+        severity: warning
+        component: network
+      annotations:
+        summary: "RustMQ Broker high QUIC connections"
+        description: "Broker {{ $labels.instance }} has {{ $value }} active QUIC connections"
+  
+  - name: rustmq.cluster
+    interval: 30s
+    rules:
+    # Cluster health alerts
+    - alert: RustMQClusterPartitioned
+      expr: count(up{job="rustmq-controller"}) < 2
+      for: 1m
+      labels:
+        severity: critical
+        component: cluster
+      annotations:
+        summary: "RustMQ cluster potentially partitioned"
+        description: "Less than 2 controllers are available, cluster may be partitioned"
+    
+    # Replication lag alerts
+    - alert: RustMQReplicationLag
+      expr: rustmq_replication_lag_seconds > 10
+      for: 1m
+      labels:
+        severity: warning
+        component: replication
+      annotations:
+        summary: "RustMQ replication lag high"
+        description: "Replication lag is {{ $value }}s on {{ $labels.instance }}"
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustmq-dashboard
+  namespace: rustmq
+  labels:
+    grafana_dashboard: "1"
+data:
+  rustmq-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "RustMQ Overview",
+        "tags": ["rustmq"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Controller Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"rustmq-controller\"}",
+                "legendFormat": "{{instance}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Message Throughput",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(rustmq_messages_processed_total[5m])",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "WAL Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rustmq_wal_used_bytes / rustmq_wal_capacity_bytes",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Cache Hit Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(rustmq_cache_hits_total[5m]) / rate(rustmq_cache_requests_total[5m])",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }

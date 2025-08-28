@@ -1,0 +1,268 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: broker
+spec:
+  selector:
+    matchLabels:
+      app: rustmq-broker
+  template:
+    metadata:
+      labels:
+        app: rustmq-broker
+        component: broker
+        workload: broker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9643"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: rustmq-broker
+      terminationGracePeriodSeconds: 60
+      
+      # Pod placement and tolerations
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: broker
+        effect: NoSchedule
+      nodeSelector:
+        workload: broker
+      
+      # Init containers for Local SSD setup
+      initContainers:
+      - name: format-local-ssd
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+          
+          echo "Setting up Local SSD for broker..."
+          
+          # Check if local SSD device exists
+          if [ -b /dev/disk/by-id/google-local-ssd-0 ]; then
+            echo "Local SSD device found"
+            
+            # Create mount point
+            mkdir -p /mnt/local-ssd
+            
+            # Check if already formatted and mounted
+            if ! mountpoint -q /mnt/local-ssd; then
+              echo "Formatting and mounting Local SSD..."
+              
+              # Format if not already formatted
+              if ! blkid /dev/disk/by-id/google-local-ssd-0 | grep -q ext4; then
+                mkfs.ext4 -F /dev/disk/by-id/google-local-ssd-0
+              fi
+              
+              # Mount the device
+              mount /dev/disk/by-id/google-local-ssd-0 /mnt/local-ssd
+              
+              # Set up directory structure
+              mkdir -p /mnt/local-ssd/wal
+              mkdir -p /mnt/local-ssd/temp
+              mkdir -p /mnt/local-ssd/cache
+              
+              # Set permissions
+              chown -R 1000:1000 /mnt/local-ssd
+              chmod -R 755 /mnt/local-ssd
+              
+              # Mark as formatted
+              touch /mnt/local-ssd/formatted
+              
+              echo "Local SSD setup complete"
+            else
+              echo "Local SSD already mounted"
+            fi
+          else
+            echo "No Local SSD found, using emptyDir volume"
+            mkdir -p /var/lib/rustmq/wal
+            chown -R 1000:1000 /var/lib/rustmq
+            chmod -R 755 /var/lib/rustmq
+          fi
+        securityContext:
+          privileged: true
+          runAsUser: 0
+          runAsGroup: 0
+        volumeMounts:
+        - name: local-ssd
+          mountPath: /mnt/local-ssd
+          mountPropagation: Bidirectional
+        - name: dev
+          mountPath: /dev
+          readOnly: true
+        - name: fallback-storage
+          mountPath: /var/lib/rustmq
+      
+      containers:
+      - name: broker
+        image: gcr.io/${PROJECT_ID}/rustmq-broker:latest
+        imagePullPolicy: Always
+        
+        ports:
+        - containerPort: 9092
+          name: quic
+          protocol: UDP
+        - containerPort: 9093
+          name: rpc
+          protocol: TCP
+        - containerPort: 9643
+          name: admin
+          protocol: TCP
+        
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: ZONE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['topology.kubernetes.io/zone']
+        - name: GCS_BUCKET
+          value: ${GCS_BUCKET}
+        - name: GCS_REGION
+          value: ${GCS_REGION}
+        - name: PROJECT_ID
+          value: ${PROJECT_ID}
+        - name: RUST_LOG
+          value: "info,rustmq=debug"
+        - name: RUST_BACKTRACE
+          value: "1"
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: ${BROKER_CPU_REQUEST}
+            memory: ${BROKER_MEMORY_REQUEST}
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: ${BROKER_CPU_LIMIT}
+            memory: ${BROKER_MEMORY_LIMIT}
+            ephemeral-storage: 4Gi
+        
+        # Volume mounts
+        volumeMounts:
+        - name: local-ssd
+          mountPath: /var/lib/rustmq/wal
+          subPath: wal
+        - name: local-ssd
+          mountPath: /var/lib/rustmq/cache
+          subPath: cache
+        - name: local-ssd
+          mountPath: /tmp
+          subPath: temp
+        - name: config
+          mountPath: /etc/rustmq
+          readOnly: true
+        - name: certs
+          mountPath: /etc/certs
+          readOnly: true
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9643
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9643
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup probe for slow initialization
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 9643
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 60
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        
+        # Lifecycle hooks for graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Gracefully shutting down broker..."
+                # Send SIGTERM to allow graceful shutdown
+                kill -TERM 1
+                # Wait for up to 50 seconds
+                sleep 50
+      
+      # Volumes
+      volumes:
+      - name: local-ssd
+        hostPath:
+          path: /mnt/disks/ssd0
+          type: DirectoryOrCreate
+      - name: fallback-storage
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: config
+        configMap:
+          name: broker-config
+          defaultMode: 0644
+      - name: certs
+        secret:
+          secretName: rustmq-broker-tls
+          defaultMode: 0600
+      - name: dev
+        hostPath:
+          path: /dev
+          type: Directory
+  
+  # Update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0

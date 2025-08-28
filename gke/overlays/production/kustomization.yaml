@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rustmq-production
+  annotations:
+    description: "Production overlay for RustMQ GKE deployment"
+
+# Reference to base
+resources:
+- ../../base
+
+# Production-specific labels
+commonLabels:
+  environment: production
+  tier: production
+
+# Production-specific annotations
+commonAnnotations:
+  environment: production
+  deployment.kubernetes.io/revision: "1"
+
+# Production namespace
+namespace: rustmq-prod
+
+# Production image tags
+images:
+- name: gcr.io/PROJECT_ID/rustmq-controller
+  newTag: v1.0.0
+- name: gcr.io/PROJECT_ID/rustmq-broker
+  newTag: v1.0.0
+
+# Production configuration
+configMapGenerator:
+- name: production-config
+  behavior: merge
+  literals:
+  - ENVIRONMENT=production
+  - LOG_LEVEL=info
+  - RUST_LOG=info,rustmq=debug
+  - CONTROLLER_COUNT=3
+  - CONTROLLER_CPU_REQUEST=2
+  - CONTROLLER_CPU_LIMIT=4
+  - CONTROLLER_MEMORY_REQUEST=4Gi
+  - CONTROLLER_MEMORY_LIMIT=8Gi
+  - CONTROLLER_DISK_SIZE=100Gi
+  - BROKER_MIN_COUNT=3
+  - BROKER_MAX_COUNT=20
+  - BROKER_CPU_REQUEST=4
+  - BROKER_CPU_LIMIT=8
+  - BROKER_MEMORY_REQUEST=8Gi
+  - BROKER_MEMORY_LIMIT=16Gi
+  - ENABLE_MTLS=true
+  - ENABLE_QUIC=true
+  - ENABLE_HTTP3=true
+
+# Production-specific patches
+patches:
+- path: patches/production-resources.yaml
+  target:
+    kind: StatefulSet
+    name: rustmq-controller
+- path: patches/production-resources.yaml
+  target:
+    kind: DaemonSet
+    name: rustmq-broker
+- path: patches/production-security.yaml
+- path: patches/production-monitoring.yaml
+- path: patches/production-networking.yaml
+
+# Production secrets (externally managed)
+secretGenerator:
+- name: rustmq-tls
+  type: kubernetes.io/tls
+  options:
+    disableNameSuffixHash: true
+  files:
+  - tls.crt=certs/production/tls.crt
+  - tls.key=certs/production/tls.key
+- name: rustmq-ca
+  type: Opaque
+  options:
+    disableNameSuffixHash: true
+  files:
+  - ca.crt=certs/production/ca.crt
+
+# Replica overrides for production
+replicas:
+- name: rustmq-controller
+  count: 3

@@ -1,0 +1,218 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: controller
+spec:
+  serviceName: controller-service
+  replicas: ${CONTROLLER_COUNT}
+  selector:
+    matchLabels:
+      app: rustmq-controller
+  template:
+    metadata:
+      labels:
+        app: rustmq-controller
+        component: controller
+        workload: controller
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9642"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: rustmq-controller
+      terminationGracePeriodSeconds: 30
+      
+      # Pod placement and affinity
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: controller
+        effect: NoSchedule
+      nodeSelector:
+        workload: controller
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: rustmq-controller
+            topologyKey: topology.kubernetes.io/zone
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: rustmq-controller
+              topologyKey: kubernetes.io/hostname
+      
+      # Init container for data directory setup
+      initContainers:
+      - name: setup-data-dir
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /var/lib/rustmq/wal
+          mkdir -p /var/lib/rustmq/snapshots
+          mkdir -p /var/lib/rustmq/logs
+          chown -R 1000:1000 /var/lib/rustmq
+          chmod -R 755 /var/lib/rustmq
+        volumeMounts:
+        - name: controller-data
+          mountPath: /var/lib/rustmq
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+      
+      containers:
+      - name: controller
+        image: gcr.io/${PROJECT_ID}/rustmq-controller:latest
+        imagePullPolicy: Always
+        
+        ports:
+        - containerPort: 9094
+          name: quic
+          protocol: UDP
+        - containerPort: 9095
+          name: rpc
+          protocol: TCP
+        - containerPort: 9642
+          name: admin
+          protocol: TCP
+        
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: ZONE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['topology.kubernetes.io/zone']
+        - name: GCS_BUCKET
+          value: ${GCS_BUCKET}
+        - name: GCS_REGION
+          value: ${GCS_REGION}
+        - name: PROJECT_ID
+          value: ${PROJECT_ID}
+        - name: RUST_LOG
+          value: "info,rustmq=debug"
+        - name: RUST_BACKTRACE
+          value: "1"
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: ${CONTROLLER_CPU_REQUEST}
+            memory: ${CONTROLLER_MEMORY_REQUEST}
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: ${CONTROLLER_CPU_LIMIT}
+            memory: ${CONTROLLER_MEMORY_LIMIT}
+            ephemeral-storage: 2Gi
+        
+        # Volume mounts
+        volumeMounts:
+        - name: controller-data
+          mountPath: /var/lib/rustmq
+        - name: config
+          mountPath: /etc/rustmq
+          readOnly: true
+        - name: certs
+          mountPath: /etc/certs
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9642
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9642
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup probe for slow initialization
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 9642
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        
+        # Security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: controller-config
+          defaultMode: 0644
+      - name: certs
+        secret:
+          secretName: rustmq-tls
+          defaultMode: 0600
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+  
+  # Volume claim templates for persistent storage
+  volumeClaimTemplates:
+  - metadata:
+      name: controller-data
+      labels:
+        app: rustmq-controller
+        component: controller
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: ${CONTROLLER_DISK_SIZE}
+  
+  # Update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0

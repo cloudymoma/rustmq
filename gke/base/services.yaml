@@ -1,0 +1,203 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-service
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: controller
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9642"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: rustmq-controller
+  ports:
+  - name: quic
+    port: 9094
+    targetPort: 9094
+    protocol: UDP
+  - name: rpc
+    port: 9095
+    targetPort: 9095
+    protocol: TCP
+  - name: admin
+    port: 9642
+    targetPort: 9642
+    protocol: TCP
+  sessionAffinity: None
+  publishNotReadyAddresses: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-service
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: broker
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9643"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: rustmq-broker
+  ports:
+  - name: quic
+    port: 9092
+    targetPort: 9092
+    protocol: UDP
+  - name: rpc
+    port: 9093
+    targetPort: 9093
+    protocol: TCP
+  - name: admin
+    port: 9643
+    targetPort: 9643
+    protocol: TCP
+  sessionAffinity: None
+---
+# External LoadBalancer service for broker QUIC traffic
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-external
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: broker
+    service-type: external
+  annotations:
+    cloud.google.com/load-balancer-type: "External"
+    cloud.google.com/backend-config: '{"default": "rustmq-quic-backend-config"}'
+    cloud.google.com/neg: '{"ingress": true}'
+    service.beta.kubernetes.io/external-traffic: OnlyLocal
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 0.0.0.0/0  # Allow all IPs, restrict as needed
+  selector:
+    app: rustmq-broker
+  ports:
+  - name: quic
+    port: 9092
+    targetPort: 9092
+    protocol: UDP
+  - name: quic-alt
+    port: 443
+    targetPort: 9092
+    protocol: UDP
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300
+---
+# Internal LoadBalancer service for controller admin API
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-admin
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: controller
+    service-type: admin
+  annotations:
+    cloud.google.com/load-balancer-type: "Internal"
+    cloud.google.com/backend-config: '{"default": "rustmq-backend-config"}'
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 10.0.0.0/8     # Private networks only
+  - 172.16.0.0/12  # Private networks only
+  - 192.168.0.0/16 # Private networks only
+  selector:
+    app: rustmq-controller
+  ports:
+  - name: admin
+    port: 9642
+    targetPort: 9642
+    protocol: TCP
+  - name: admin-https
+    port: 443
+    targetPort: 9642
+    protocol: TCP
+  externalTrafficPolicy: Cluster
+  sessionAffinity: None
+---
+# Service for inter-broker communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-mesh
+  namespace: rustmq
+  labels:
+    app: rustmq-broker
+    component: broker
+    service-type: mesh
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for DaemonSet
+  selector:
+    app: rustmq-broker
+  ports:
+  - name: rpc
+    port: 9093
+    targetPort: 9093
+    protocol: TCP
+  sessionAffinity: None
+  publishNotReadyAddresses: false
+---
+# Service for controller-to-controller Raft communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-raft
+  namespace: rustmq
+  labels:
+    app: rustmq-controller
+    component: controller
+    service-type: raft
+spec:
+  type: ClusterIP
+  selector:
+    app: rustmq-controller
+  ports:
+  - name: raft-rpc
+    port: 9095
+    targetPort: 9095
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600  # 1 hour for Raft connections
+---
+# Discovery service for dynamic endpoint resolution
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustmq-discovery
+  namespace: rustmq
+  labels:
+    app: rustmq
+    component: discovery
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service
+  selector:
+    app: rustmq-broker
+  ports:
+  - name: discovery
+    port: 9092
+    targetPort: 9092
+    protocol: UDP
+  publishNotReadyAddresses: true

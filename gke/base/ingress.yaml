@@ -1,0 +1,208 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rustmq-admin-ingress
+  namespace: rustmq
+  labels:
+    app: rustmq
+    component: admin-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    cloud.google.com/load-balancer-type: "External"
+    ingress.gcp.kubernetes.io/frontend-config: "rustmq-frontend-config"
+    cloud.google.com/backend-config: '{"default": "rustmq-backend-config"}'
+    kubernetes.io/ingress.global-static-ip-name: "${STATIC_IP_NAME}"
+    networking.gke.io/managed-certificates: "rustmq-ssl-cert"
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  tls:
+  - hosts:
+    - ${CERT_DOMAIN}
+    secretName: rustmq-tls
+  rules:
+  - host: ${CERT_DOMAIN}
+    http:
+      paths:
+      # Admin API paths
+      - path: /api/v1/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: controller-admin
+            port:
+              number: 9642
+      # Health check endpoints
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: controller-admin
+            port:
+              number: 9642
+      - path: /ready
+        pathType: Exact
+        backend:
+          service:
+            name: controller-admin
+            port:
+              number: 9642
+      # Metrics endpoint (protected)
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: controller-admin
+            port:
+              number: 9642
+---
+# Frontend configuration for ingress
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: rustmq-frontend-config
+  namespace: rustmq
+spec:
+  sslPolicy: "rustmq-ssl-policy"
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT
+---
+# Managed certificate for automatic SSL
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: rustmq-ssl-cert
+  namespace: rustmq
+spec:
+  domains:
+  - ${CERT_DOMAIN}
+---
+# NetworkPolicy for ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-ingress-policy
+  namespace: rustmq
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    # Allow traffic from GCP load balancer
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    # Allow traffic from other rustmq components
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    # Allow traffic from monitoring
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9642
+    - protocol: UDP
+      port: 9094
+    - protocol: TCP
+      port: 9095
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS to GCS
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow communication with other rustmq components
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+    - protocol: UDP
+      port: 9092
+---
+# NetworkPolicy for broker external traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-broker-policy
+  namespace: rustmq
+spec:
+  podSelector:
+    matchLabels:
+      app: rustmq-broker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow QUIC traffic from anywhere (clients)
+  - from: []
+    ports:
+    - protocol: UDP
+      port: 9092
+  # Allow RPC traffic from controllers and other brokers
+  - from:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093
+    - protocol: TCP
+      port: 9643
+  # Allow monitoring traffic
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9643
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS to GCS
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow communication with controllers
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-controller
+    ports:
+    - protocol: UDP
+      port: 9094
+    - protocol: TCP
+      port: 9095
+  # Allow communication with other brokers
+  - to:
+    - podSelector:
+        matchLabels:
+          app: rustmq-broker
+    ports:
+    - protocol: TCP
+      port: 9093

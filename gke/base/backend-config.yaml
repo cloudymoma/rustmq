@@ -1,0 +1,255 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: rustmq-backend-config
+  namespace: rustmq
+  labels:
+    app: rustmq
+    component: backend-config
+spec:
+  # Health check configuration for controllers
+  healthCheck:
+    checkIntervalSec: 5
+    timeoutSec: 3
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 9642
+  
+  # Connection draining for graceful shutdowns
+  connectionDraining:
+    drainingTimeoutSec: 30
+  
+  # Session affinity for admin connections
+  sessionAffinity:
+    affinityType: "CLIENT_IP"
+    affinityCookieTtlSec: 3600
+  
+  # Timeout configuration
+  timeoutSec: 30
+  
+  # Security policy
+  securityPolicy:
+    name: "rustmq-security-policy"
+  
+  # Custom request headers
+  customRequestHeaders:
+    headers:
+    - "X-RustMQ-Version:v1.0.0"
+    - "X-Forwarded-Proto:https"
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: rustmq-quic-backend-config
+  namespace: rustmq
+  labels:
+    app: rustmq
+    component: quic-backend-config
+spec:
+  # Health check configuration for brokers (TCP fallback)
+  healthCheck:
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 9643
+  
+  # Connection draining for QUIC connections
+  connectionDraining:
+    drainingTimeoutSec: 60
+  
+  # QUIC/HTTP3 support headers
+  customRequestHeaders:
+    headers:
+    - "Alt-Svc:h3=\":9092\"; ma=86400"
+    - "X-RustMQ-Protocol:QUIC"
+    - "X-RustMQ-Version:v1.0.0"
+  
+  # Timeout configuration for long-lived QUIC connections
+  timeoutSec: 60
+  
+  # Load balancing configuration for QUIC
+  loadBalancingScheme: "EXTERNAL"
+  
+  # Security policy
+  securityPolicy:
+    name: "rustmq-quic-security-policy"
+---
+# Cloud Armor security policy for general traffic
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeSecurityPolicy
+metadata:
+  name: rustmq-security-policy
+  namespace: rustmq
+spec:
+  description: "Security policy for RustMQ admin API"
+  
+  # Default rule - allow
+  rule:
+  - action: "allow"
+    priority: 2147483647
+    match:
+      versionedExpr: "SRC_IPS_V1"
+      config:
+        srcIpRanges:
+        - "*"
+    description: "Default allow rule"
+  
+  # Rate limiting rule
+  - action: "rate_based_ban"
+    priority: 1000
+    match:
+      versionedExpr: "SRC_IPS_V1"
+      config:
+        srcIpRanges:
+        - "*"
+    description: "Rate limiting rule"
+    rateLimitOptions:
+      conformAction: "allow"
+      exceedAction: "deny(429)"
+      enforceOnKey: "IP"
+      rateLimitThreshold:
+        count: 100
+        intervalSec: 60
+      banDurationSec: 600
+  
+  # Block known bad IPs
+  - action: "deny(403)"
+    priority: 500
+    match:
+      versionedExpr: "SRC_IPS_V1"
+      config:
+        srcIpRanges:
+        - "0.0.0.0/32"  # Placeholder - add actual blocked IPs
+    description: "Block malicious IPs"
+  
+  # Geographic restriction (optional)
+  - action: "deny(403)"
+    priority: 1500
+    match:
+      expr:
+        expression: "origin.region_code == 'CN' || origin.region_code == 'RU'"
+    description: "Geographic restrictions"
+    preview: true  # Start in preview mode
+---
+# Cloud Armor security policy for QUIC traffic
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeSecurityPolicy
+metadata:
+  name: rustmq-quic-security-policy
+  namespace: rustmq
+spec:
+  description: "Security policy for RustMQ QUIC/UDP traffic"
+  
+  # Default rule - allow
+  rule:
+  - action: "allow"
+    priority: 2147483647
+    match:
+      versionedExpr: "SRC_IPS_V1"
+      config:
+        srcIpRanges:
+        - "*"
+    description: "Default allow rule for QUIC"
+  
+  # More permissive rate limiting for message traffic
+  - action: "rate_based_ban"
+    priority: 1000
+    match:
+      versionedExpr: "SRC_IPS_V1"
+      config:
+        srcIpRanges:
+        - "*"
+    description: "Rate limiting for QUIC traffic"
+    rateLimitOptions:
+      conformAction: "allow"
+      exceedAction: "deny(429)"
+      enforceOnKey: "IP"
+      rateLimitThreshold:
+        count: 1000
+        intervalSec: 60
+      banDurationSec: 300
+  
+  # DDoS protection for UDP
+  - action: "deny(403)"
+    priority: 800
+    match:
+      expr:
+        expression: "true"
+    description: "DDoS protection rule"
+    rateLimitOptions:
+      conformAction: "allow"
+      exceedAction: "deny(429)"
+      enforceOnKey: "ALL"
+      rateLimitThreshold:
+        count: 10000
+        intervalSec: 60
+      banDurationSec: 120
+---
+# SSL Policy for HTTPS/TLS
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeSSLPolicy
+metadata:
+  name: rustmq-ssl-policy
+  namespace: rustmq
+spec:
+  description: "SSL policy for RustMQ with modern TLS"
+  profile: "MODERN"
+  minTlsVersion: "TLS_1_2"
+  features:
+  - "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+  - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256"
+  - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+---
+# URL Map for custom routing (if needed)
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeURLMap
+metadata:
+  name: rustmq-url-map
+  namespace: rustmq
+spec:
+  description: "URL map for RustMQ ingress routing"
+  defaultService:
+    name: "controller-admin"
+    namespace: "rustmq"
+  
+  hostRule:
+  - hosts:
+    - "${CERT_DOMAIN}"
+    pathMatcher: "rustmq-path-matcher"
+  
+  pathMatcher:
+  - name: "rustmq-path-matcher"
+    defaultService:
+      name: "controller-admin"
+      namespace: "rustmq"
+    
+    pathRule:
+    # API routes
+    - paths:
+      - "/api/v1/*"
+      service:
+        name: "controller-admin"
+        namespace: "rustmq"
+    
+    # Health check routes
+    - paths:
+      - "/health"
+      - "/ready"
+      service:
+        name: "controller-admin"
+        namespace: "rustmq"
+    
+    # Metrics route (may want to restrict access)
+    - paths:
+      - "/metrics"
+      service:
+        name: "controller-admin"
+        namespace: "rustmq"
