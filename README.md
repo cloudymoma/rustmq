@@ -94,7 +94,6 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - [Quick Start](#-quick-start)
 - [Security Management CLI](#-security-management-cli)
 - [Enterprise Security](#-enterprise-security)
-- [Test Infrastructure Excellence](#-test-infrastructure-excellence)
 - [Admin REST API](#-admin-rest-api)
 - [BigQuery Subscriber](#-bigquery-subscriber)
 - [WebAssembly ETL Processing](#-webassembly-etl-processing)
@@ -602,82 +601,6 @@ examples/security/kubernetes/
 - **Controller Cluster**: Raft consensus integration for distributed ACL storage
 - **Broker Network**: Secure broker-to-broker communication with certificate validation
 - **Monitoring**: Security metrics integration with performance and health monitoring
-
-## ✅ Test Infrastructure Excellence
-
-RustMQ maintains exceptional test stability and coverage with comprehensive automated testing across all components. Recent test infrastructure improvements ensure reliable development and deployment workflows.
-
-### 🔧 Test Failure Resolution
-
-**All cargo test failures have been successfully resolved**, establishing a stable testing foundation:
-
-#### Critical Fixes Implemented
-- **✅ Certificate Signing Fix (August 2025)**: **RESOLVED CRITICAL SECURITY ISSUE** - Fixed certificate signing implementation where all certificates were being created as self-signed instead of properly signed by their issuing CA
-  - **Root Cause**: Certificate manager was using `RcgenCertificate::from_params()` which creates self-signed certificates
-  - **Solution**: Implemented proper certificate signing with `ca_cert.serialize_der_with_signer(&issuer_cert)` for CA-signed certificates
-  - **Impact**: All 9 failing authentication tests now pass, enabling production-ready mTLS functionality
-- **ACL Manager Panic Resolution**: Fixed critical zero-initialization panic in `test_parse_effect_standalone` by implementing static utility functions for parsing operations, eliminating unsafe memory operations
-- **Security Performance Test Optimization**: Adjusted performance thresholds to realistic values based on actual hardware capabilities:
-  - L1 cache latency: 50ns → 1000ns (realistic for HashMap operations)
-  - L2 cache latency: 100ns → 2000ns (realistic for DashMap operations under contention)
-  - Cache warming: 100ns → 5000ns (accounting for initialization overhead)
-- **Certificate Management Test Fixes**: Resolved certificate generation and expiration handling by implementing proper validity period setting using `time` crate with `OffsetDateTime`
-- **Cache System Test Corrections**: Fixed capacity checks and string interning validation to match actual implementation behavior
-
-### 📊 Test Coverage Statistics
-
-✅ **457+ tests passing** across all modules with zero failures (98.5% success rate):
-
-#### Component Test Breakdown
-- **Storage Layer**: 17 tests (WAL, object storage, tiered caching, race conditions)
-- **Replication System**: 16 tests (follower logic, high-watermark optimization, epoch validation)
-- **Network Layer**: 19 tests (QUIC server, gRPC services, circuit breaker patterns)
-- **Security Infrastructure**: 175+ tests (authentication, authorization, certificate management, ACL operations) - ALL PASSING after certificate signing fix
-- **Admin REST API**: 26 tests (health tracking, rate limiting, topic management)
-- **Admin CLI**: 11 tests (command-line operations, cluster health assessment)
-- **Controller Service**: 16 tests (Raft consensus, leadership, coordination)
-- **Broker Core**: 9 tests (producer/consumer APIs, message handling)
-- **Client SDKs**: 15+ tests (Go SDK connection management, Rust SDK functionality)
-
-#### Test Quality Features
-- **Comprehensive Error Scenarios**: All error paths tested with proper error propagation validation
-- **Performance Benchmarks**: Performance tests with realistic thresholds for production environments
-- **Race Condition Coverage**: Thread-safety tests for concurrent operations
-- **Integration Testing**: End-to-end workflows with mock implementations
-- **Property-Based Testing**: 500+ iterations validating correctness across random data patterns
-
-### 🚀 Testing Best Practices
-
-#### Continuous Integration
-- **Build Verification**: Both debug and release mode compilation testing
-- **Cross-Platform Testing**: Tests run on multiple environments with consistent results
-- **Feature Flag Testing**: Validation across different feature combinations (`io-uring`, `wasm`)
-- **Performance Monitoring**: Automated detection of performance regressions
-
-#### Development Workflow
-```bash
-# Run all tests (300+ tests passing)
-cargo test --lib
-
-# Performance-specific testing
-cargo test --release --lib
-
-# Feature-specific testing  
-cargo test --features "io-uring,wasm"
-
-# Security component testing
-cargo test security::
-
-# Admin functionality testing
-cargo test admin::
-```
-
-### 🛡️ Test Infrastructure Security
-
-- **Safe Test Practices**: Eliminated all unsafe memory operations in test code
-- **Isolated Test Environments**: Tests use temporary directories and mock implementations
-- **Resource Cleanup**: Automatic cleanup of test resources to prevent interference
-- **Mock Security**: Comprehensive security component mocking for testing without real certificates
 
 
 ## 🛠️ Admin REST API
@@ -1571,7 +1494,7 @@ gcloud compute firewall-rules create rustmq-admin \
 
 ## ⚙️ Configuration
 
-RustMQ provides a comprehensive configuration system with optimized settings for development, testing, and production environments. **For detailed configuration guide, see [Configuration Guide](docs/configuration-guide.md)**.
+RustMQ provides a comprehensive configuration system with optimized settings for development, testing, and production environments. **For detailed configuration guide, see [Configuration Guide](docs/configuration-guide.md)**. For comprehensive testing infrastructure details, see **[Testing Infrastructure Guide](docs/testing-infrastructure.md)**.
 
 ### Configuration Files Overview
 
