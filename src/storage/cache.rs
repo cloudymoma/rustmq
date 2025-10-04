@@ -185,11 +185,13 @@ pub struct MokaCacheAdapter {
 impl MokaCacheAdapter {
     pub fn new(max_size_bytes: u64) -> Self {
         let cache = MokaCache::builder()
-            .max_capacity(max_size_bytes / 1024) // Rough estimate: assume 1KB average entry size
+            .max_capacity(max_size_bytes / 1024) // Capacity in KB
             .weigher(|_key: &String, value: &Bytes| -> u32 {
-                // Weight = key size + value size
-                (std::mem::size_of::<String>() + _key.len() + value.len())
-                    .try_into().unwrap_or(u32::MAX)
+                // Weight in KB (ceiling division to ensure minimum weight of 1)
+                // Total size = String overhead + key length + value length
+                let total_bytes = std::mem::size_of::<String>() + _key.len() + value.len();
+                let weight_kb = ((total_bytes as u64 + 1023) / 1024).max(1) as u32;
+                weight_kb.min(u32::MAX)
             })
             .time_to_live(Duration::from_secs(3600)) // 1 hour TTL
             .eviction_listener(|key, _value, cause| {

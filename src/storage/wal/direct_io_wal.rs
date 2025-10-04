@@ -7,10 +7,13 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Semaphore, OwnedSemaphorePermit};
 
 #[cfg(feature = "io-uring")]
 use tokio_uring::fs::File as UringFile;
+
+// Default channel capacity for bounded WAL writes (configurable via WalConfig)
+const DEFAULT_WAL_CHANNEL_CAPACITY: usize = 10000;
 
 // Write commands sent to the dedicated file task
 #[derive(Debug)]
@@ -19,6 +22,7 @@ enum WriteCommand {
         data: Vec<u8>,
         file_offset: u64,
         response: oneshot::Sender<Result<()>>,
+        _permit: OwnedSemaphorePermit, // Backpressure token
     },
     Sync {
         response: oneshot::Sender<Result<()>>,
@@ -37,9 +41,12 @@ enum WriteCommand {
 }
 
 pub struct DirectIOWal {
-    // Channel to send commands to the dedicated file task
-    write_tx: mpsc::UnboundedSender<WriteCommand>,
-    
+    // Bounded channel to send commands with backpressure
+    write_tx: mpsc::Sender<WriteCommand>,
+
+    // Semaphore for flow control (prevents OOM under heavy load)
+    write_semaphore: Arc<Semaphore>,
+
     buffer_pool: Arc<dyn BufferPool>,
     current_offset: Arc<AtomicU64>,
     current_file_offset: Arc<AtomicU64>, // Track file position for sequential writes
@@ -70,16 +77,25 @@ impl DirectIOWal {
             .read(true)
             .open(&file_path)
             .await?;
-        
+
         let initial_file_size = file.metadata().await?.len();
 
-        // Create channel for communicating with the file task
-        let (write_tx, write_rx) = mpsc::unbounded_channel();
+        // Create bounded channel with backpressure for communicating with the file task
+        let channel_capacity = DEFAULT_WAL_CHANNEL_CAPACITY;
+        let (write_tx, write_rx) = mpsc::channel(channel_capacity);
+
+        // Create semaphore for flow control (prevents OOM under heavy load)
+        let write_semaphore = Arc::new(Semaphore::new(channel_capacity));
+
+        tracing::info!(
+            "Initialized DirectIOWal with bounded channel capacity={} and backpressure semaphore",
+            channel_capacity
+        );
 
         // Start the dedicated file task
         let flush_interval_ms = config.flush_interval_ms;
         let fsync_on_write = config.fsync_on_write;
-        
+
         tokio::spawn(Self::file_task(file, write_rx, flush_interval_ms, fsync_on_write));
 
         // Initialize branchless parser for high-performance recovery
@@ -88,6 +104,7 @@ impl DirectIOWal {
 
         let mut wal = Self {
             write_tx,
+            write_semaphore,
             buffer_pool,
             current_offset: Arc::new(AtomicU64::new(0)),
             current_file_offset: Arc::new(AtomicU64::new(initial_file_size)),
@@ -110,7 +127,7 @@ impl DirectIOWal {
     // Dedicated file task that owns the file handle and manages all I/O
     async fn file_task(
         mut file: File,
-        mut rx: mpsc::UnboundedReceiver<WriteCommand>,
+        mut rx: mpsc::Receiver<WriteCommand>,
         flush_interval_ms: u64,
         fsync_on_write: bool,
     ) {
@@ -122,7 +139,8 @@ impl DirectIOWal {
                 // Handle incoming write commands
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(WriteCommand::Write { data, file_offset, response }) => {
+                        Some(WriteCommand::Write { data, file_offset, response, _permit }) => {
+                            // Permit is automatically dropped here, releasing semaphore
                             let result = async {
                                 file.seek(SeekFrom::Start(file_offset)).await?;
                                 file.write_all(&data).await?;
@@ -298,7 +316,7 @@ impl DirectIOWal {
                 file_offset,
                 size: bytes_to_read,
                 response: tx,
-            }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+            }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
             
             let buffer = rx.await
                 .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -430,19 +448,29 @@ impl DirectIOWal {
     async fn write_with_direct_io(&self, data: &[u8]) -> Result<u64> {
         // Get the current file offset for this write
         let file_offset = self.current_file_offset.fetch_add(data.len() as u64, Ordering::SeqCst);
-        
-        // Send write command to the file task
+
+        // Acquire semaphore permit for backpressure (blocks if channel is full)
+        // SAFETY: We leak the semaphore to convert it to 'static lifetime
+        // The permit will be dropped when WriteCommand is processed, releasing the semaphore
+        let permit = self.write_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| crate::error::RustMqError::Wal("Semaphore closed".to_string()))?;
+
+        // Send write command to the file task with backpressure token
         let (tx, rx) = oneshot::channel();
         self.write_tx.send(WriteCommand::Write {
             data: data.to_vec(),
             file_offset,
             response: tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-        
+            _permit: permit,  // Permit dropped when command processed
+        }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+
         // Wait for the write to complete
         rx.await
             .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-        
+
         Ok(file_offset)
     }
 }
@@ -502,7 +530,7 @@ impl WriteAheadLog for DirectIOWal {
                     file_offset: segment.file_offset,
                     size: 8,
                     response: tx,
-                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
                 
                 let size_buffer = rx.await
                     .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -522,7 +550,7 @@ impl WriteAheadLog for DirectIOWal {
                     file_offset: segment.file_offset + 8,
                     size: record_size,
                     response: tx,
-                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
                 
                 let record_buffer = rx.await
                     .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -560,7 +588,7 @@ impl WriteAheadLog for DirectIOWal {
                     file_offset,
                     size: 8,
                     response: tx,
-                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
                 
                 let size_buffer = rx.await
                     .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -576,7 +604,7 @@ impl WriteAheadLog for DirectIOWal {
                     file_offset: file_offset + 8,
                     size: record_size,
                     response: tx,
-                }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
                 
                 let record_buffer = rx.await
                     .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -605,7 +633,7 @@ impl WriteAheadLog for DirectIOWal {
         let (tx, rx) = oneshot::channel();
         self.write_tx.send(WriteCommand::Sync {
             response: tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+        }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
         
         rx.await
             .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
@@ -639,8 +667,8 @@ impl WriteAheadLog for DirectIOWal {
 
 impl Drop for DirectIOWal {
     fn drop(&mut self) {
-        // Send shutdown signal to the file task
-        let _ = self.write_tx.send(WriteCommand::Shutdown);
+        // Send shutdown signal to the file task (use try_send since we're in drop)
+        let _ = self.write_tx.try_send(WriteCommand::Shutdown);
     }
 }
 
