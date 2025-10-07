@@ -10,6 +10,8 @@ import (
 )
 
 func TestProducerConfiguration(t *testing.T) {
+	t.Parallel()
+
 	config := rustmq.DefaultProducerConfig()
 	
 	assert.Equal(t, 100, config.BatchSize)
@@ -22,6 +24,8 @@ func TestProducerConfiguration(t *testing.T) {
 }
 
 func TestProducerCustomConfiguration(t *testing.T) {
+	t.Parallel()
+
 	config := &rustmq.ProducerConfig{
 		ProducerID:     "custom-producer",
 		BatchSize:      50,
@@ -35,7 +39,7 @@ func TestProducerCustomConfiguration(t *testing.T) {
 		},
 	}
 
-	clientConfig := rustmq.DefaultClientConfig()
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -58,7 +62,9 @@ func TestProducerCustomConfiguration(t *testing.T) {
 }
 
 func TestProducerSendMessage(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -97,7 +103,9 @@ func TestProducerSendMessage(t *testing.T) {
 }
 
 func TestProducerSendAsync(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -136,7 +144,7 @@ func TestProducerSendAsync(t *testing.T) {
 		return
 	}
 
-	// Wait for callback with timeout
+	// Wait for callback with shorter timeout
 	select {
 	case <-callbackCalled:
 		if callbackError != nil {
@@ -145,13 +153,15 @@ func TestProducerSendAsync(t *testing.T) {
 			assert.NotNil(t, callbackResult)
 			assert.Equal(t, message.ID, callbackResult.MessageID)
 		}
-	case <-time.After(6 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Log("Callback not called within timeout (expected in test environment)")
 	}
 }
 
 func TestProducerSendBatch(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -173,7 +183,7 @@ func TestProducerSendBatch(t *testing.T) {
 		rustmq.NewMessage().Topic("batch-test").PayloadString("Message 3").Build(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	results, err := producer.SendBatch(ctx, messages)
@@ -191,11 +201,13 @@ func TestProducerSendBatch(t *testing.T) {
 }
 
 func TestProducerMessageSizeValidation(t *testing.T) {
+	t.Parallel()
+
 	config := &rustmq.ProducerConfig{
 		MaxMessageSize: 100, // Very small limit for testing
 	}
 
-	clientConfig := rustmq.DefaultClientConfig()
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -233,7 +245,9 @@ func TestProducerMessageSizeValidation(t *testing.T) {
 }
 
 func TestProducerFlush(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -261,7 +275,7 @@ func TestProducerFlush(t *testing.T) {
 	}
 
 	// Flush should wait for all messages to be sent
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err = producer.Flush(ctx)
@@ -271,7 +285,9 @@ func TestProducerFlush(t *testing.T) {
 }
 
 func TestProducerMetrics(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -305,14 +321,16 @@ func TestProducerMetrics(t *testing.T) {
 	producer.Send(ctx, message)
 
 	// Metrics might be updated asynchronously
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	
 	updatedMetrics := producer.Metrics()
 	t.Logf("Updated metrics: %+v", updatedMetrics)
 }
 
 func TestProducerClose(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
+	t.Parallel()
+
+	clientConfig := getTestClientConfig()
 	client, err := rustmq.NewClient(clientConfig)
 	
 	if err != nil {
@@ -345,7 +363,7 @@ func TestProducerClose(t *testing.T) {
 		PayloadString("After close").
 		Build()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	_, err = producer.Send(ctx, message)

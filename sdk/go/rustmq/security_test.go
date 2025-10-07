@@ -655,7 +655,8 @@ func BenchmarkACLCache_GetPermissions(b *testing.B) {
 
 	cache, err := NewACLCache(config)
 	if err != nil {
-		b.Fatalf("Failed to create ACL cache: %v", err)
+		b.Skipf("Skipping benchmark - no controller available: %v", err)
+		return
 	}
 	defer cache.Close()
 

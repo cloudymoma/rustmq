@@ -10,8 +10,10 @@ import (
 )
 
 func TestConsumerConfiguration(t *testing.T) {
+	t.Parallel()
+
 	config := rustmq.DefaultConsumerConfig()
-	
+
 	assert.Equal(t, 5*time.Second, config.AutoCommitInterval)
 	assert.True(t, config.EnableAutoCommit)
 	assert.Equal(t, 100, config.FetchSize)
@@ -21,6 +23,8 @@ func TestConsumerConfiguration(t *testing.T) {
 }
 
 func TestConsumerCustomConfiguration(t *testing.T) {
+	t.Parallel()
+
 	config := &rustmq.ConsumerConfig{
 		ConsumerID:         "custom-consumer",
 		ConsumerGroup:      "custom-group",
@@ -35,20 +39,19 @@ func TestConsumerCustomConfiguration(t *testing.T) {
 		DeadLetterQueue:  "dlq-topic",
 	}
 
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer config test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("config-test", "custom-group", config)
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
 	assert.Equal(t, "custom-consumer", consumer.Config().ConsumerID)
@@ -59,28 +62,29 @@ func TestConsumerCustomConfiguration(t *testing.T) {
 }
 
 func TestConsumerReceiveTimeout(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer receive test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("receive-test", "test-group")
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
 	// Try to receive with a short timeout (should timeout since no messages)
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	message, err := consumer.Receive(ctx)
-	
+
 	// Should timeout in test environment
 	if err != nil {
 		assert.Contains(t, err.Error(), "context deadline exceeded")
@@ -93,59 +97,61 @@ func TestConsumerReceiveTimeout(t *testing.T) {
 }
 
 func TestConsumerReceiveChannel(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer channel test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("channel-test", "test-group")
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
 	messageChan := consumer.ReceiveChan()
 	assert.NotNil(t, messageChan)
 
-	// Try to receive from channel with timeout
+	// Try to receive from channel with short timeout
 	select {
 	case message := <-messageChan:
 		if message != nil {
 			assert.NotNil(t, message.Message)
 			t.Logf("Received message: %s", message.Message.ID)
 		}
-	case <-time.After(1 * time.Second):
+	case <-time.After(500 * time.Millisecond):
 		t.Log("No message received from channel (expected in test environment)")
 	}
 }
 
 func TestConsumerManualCommit(t *testing.T) {
+	t.Parallel()
+
 	config := &rustmq.ConsumerConfig{
 		EnableAutoCommit: false, // Disable auto-commit for manual testing
 	}
 
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer commit test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("commit-test", "test-group", config)
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Manual commit should work even without receiving messages
@@ -156,23 +162,24 @@ func TestConsumerManualCommit(t *testing.T) {
 }
 
 func TestConsumerSeek(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer seek test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("seek-test", "test-group")
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Test seek to offset (not implemented yet, should return error)
@@ -187,20 +194,21 @@ func TestConsumerSeek(t *testing.T) {
 }
 
 func TestConsumerMetrics(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer metrics test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("metrics-test", "test-group")
 	if err != nil {
 		t.Skip("Consumer creation failed")
 	}
-	
+
 	defer consumer.Close()
 
 	metrics := consumer.Metrics()
@@ -214,6 +222,8 @@ func TestConsumerMetrics(t *testing.T) {
 }
 
 func TestConsumerMessageAcknowledgment(t *testing.T) {
+	t.Parallel()
+
 	// Test the ConsumerMessage acknowledgment interface
 	// Since we can't easily create real messages without a broker,
 	// we'll test the interface structure
@@ -282,13 +292,14 @@ func TestConsumerStartPositions(t *testing.T) {
 }
 
 func TestConsumerClose(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer close test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	consumer, err := client.CreateConsumer("close-test", "test-group")
@@ -301,7 +312,7 @@ func TestConsumerClose(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Subsequent operations should fail
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	_, err = consumer.Receive(ctx)
@@ -314,13 +325,14 @@ func TestConsumerClose(t *testing.T) {
 }
 
 func TestConsumerGroupReuse(t *testing.T) {
-	clientConfig := rustmq.DefaultClientConfig()
-	client, err := rustmq.NewClient(clientConfig)
-	
+	t.Parallel()
+
+	client, err := rustmq.NewClient(getTestClientConfig())
+
 	if err != nil {
 		t.Skip("Skipping consumer group test - no broker available")
 	}
-	
+
 	defer client.Close()
 
 	// Create first consumer in group

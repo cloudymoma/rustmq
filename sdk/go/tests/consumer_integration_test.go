@@ -464,24 +464,19 @@ func BenchmarkOffsetTracking(b *testing.B) {
 	// Benchmark offset tracking logic with local variables
 	committedOffset := uint64(0)
 	pendingOffsets := make(map[uint64]bool)
-	
+
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		offset := uint64(i + 1)
 		pendingOffsets[offset] = true
-		
+
 		// Simulate acknowledgment
 		delete(pendingOffsets, offset)
-		
-		// Update committed offset
-		for {
-			nextOffset := committedOffset + 1
-			if _, exists := pendingOffsets[nextOffset]; !exists {
-				committedOffset = nextOffset
-			} else {
-				break
-			}
+
+		// Update committed offset if this is the next sequential offset
+		if offset == committedOffset+1 {
+			committedOffset = offset
 		}
 	}
 }
