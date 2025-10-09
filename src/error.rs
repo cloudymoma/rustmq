@@ -165,6 +165,9 @@ pub enum RustMqError {
     #[error("Certificate validation failed: {reason}")]
     CertificateValidation { reason: String },
 
+    #[error("Encryption/Decryption error: {reason}")]
+    Encryption { reason: String },
+
     #[error("CA not available: {0}")]
     CaNotAvailable(String),
 

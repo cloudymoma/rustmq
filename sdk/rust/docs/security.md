@@ -99,6 +99,58 @@ let tls_config = TlsConfig {
 };
 ```
 
+## Private Key Security
+
+### ⚠️ Server-Side Mandatory Encryption
+
+**IMPORTANT**: RustMQ enforces mandatory private key encryption on the server side. All private keys stored by RustMQ brokers and controllers are encrypted with AES-256-GCM.
+
+**Client Impact**: SDK clients do **not** need to encrypt their private keys - this is a server-side security requirement. However, clients should follow these best practices:
+
+1. **Protect Client Private Keys**: Store client private keys securely with appropriate file permissions (0600)
+2. **Use Secure Storage**: Consider using OS keychains or secret management tools for client certificates
+3. **Never Commit Keys**: Exclude private keys from version control
+
+**Server Configuration**: When generating certificates through RustMQ's admin API, the server automatically encrypts all private keys. The `RUSTMQ_KEY_ENCRYPTION_PASSWORD` environment variable must be set on broker/controller instances (not client applications).
+
+**Example - Secure Client Key Storage**:
+```rust
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::error::Error;
+
+// Load client key with secure permissions check
+fn load_client_key(path: &str) -> Result<String, Box<dyn Error>> {
+    // Verify file permissions are restrictive
+    let metadata = fs::metadata(path)?;
+    let permissions = metadata.permissions();
+
+    #[cfg(unix)]
+    {
+        let mode = permissions.mode();
+        if mode & 0o077 != 0 {
+            return Err("Client key file has overly permissive permissions. Use chmod 600.".into());
+        }
+    }
+
+    fs::read_to_string(path)
+}
+
+// Use in client configuration
+let client_key = load_client_key("/path/to/client.key")?;
+let tls_config = TlsConfig::secure_config(
+    std::fs::read_to_string("/path/to/ca.pem")?,
+    Some(std::fs::read_to_string("/path/to/client.pem")?),
+    Some(client_key),
+    "rustmq.example.com".to_string(),
+);
+```
+
+**Additional Resources**:
+- Server encryption setup: `docs/ENCRYPTION_CONFIGURATION.md`
+- Security architecture: `docs/security/SECURITY_ARCHITECTURE.md`
+- Kubernetes deployment: `gke/ENCRYPTION_SETUP.md`
+
 ## Authentication Methods
 
 ### mTLS Authentication

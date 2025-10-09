@@ -814,6 +814,7 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::LogCompaction(_) => ErrorCode::InternalError as u32,
         RustMqError::SnapshotError(_) => ErrorCode::InternalError as u32,
         RustMqError::MembershipChange(_) => ErrorCode::InternalError as u32,
+        RustMqError::Encryption { .. } => ErrorCode::InternalError as u32,
     }
 }
 

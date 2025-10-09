@@ -469,7 +469,8 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.status, "Active");
         assert!(response.certificate_pem.contains("BEGIN CERTIFICATE"));
-        assert!(response.private_key_pem.is_some());
+        // Private key is not returned in API response for security (stored encrypted)
+        assert!(response.private_key_pem.is_none());
     }
 
     #[tokio::test]

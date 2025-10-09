@@ -54,8 +54,8 @@ async fn create_test_auth_manager() -> (AuthenticationManager, TempDir, Vec<Vec<
     let cert_config = EnhancedCertificateManagementConfig {
         basic: basic_config,
         storage_path: temp_dir.path().to_string_lossy().to_string(),
-        key_encryption_enabled: false,
-        key_encryption_password: None,
+        // Use a test password for benchmarks (encryption is mandatory)
+        key_encryption_password: "benchmark-test-password-32chars!!".to_string(),
         ca_settings,
         certificate_templates,
         audit_enabled: false,

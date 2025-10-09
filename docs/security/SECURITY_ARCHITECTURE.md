@@ -514,12 +514,144 @@ rustmq-admin certs revoke cert_12345 \
   --notify-clients
 ```
 
+### Private Key Encryption
+
+✅ **MANDATORY SECURITY POLICY** - RustMQ enforces enterprise-grade private key encryption using modern cryptographic standards. All private keys MUST be encrypted - plaintext keys are NOT supported.
+
+#### Encryption Algorithm: AES-256-GCM with PBKDF2
+
+**Why AES-256-GCM?**
+- **AEAD (Authenticated Encryption with Associated Data)**: Provides both confidentiality and authenticity
+- **FIPS-approved**: Meets compliance requirements for government and enterprise deployments
+- **Hardware acceleration**: Modern CPUs have AES-NI instructions for high performance
+- **Industry standard**: Widely adopted and well-vetted by cryptography community
+
+**Why PBKDF2-HMAC-SHA256?**
+- **Password-based key derivation**: Industry standard (RFC 2898)
+- **Configurable iterations**: 600,000 iterations (OWASP 2023 recommendation) makes brute force expensive
+- **Salt-based**: Unique salt per key prevents rainbow table attacks
+- **FIPS-approved**: Meets compliance requirements
+
+#### Security Parameters
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| **Encryption Algorithm** | AES-256-GCM | FIPS-approved AEAD cipher |
+| **Key Derivation** | PBKDF2-HMAC-SHA256 | Industry standard password-based KDF |
+| **PBKDF2 Iterations** | 600,000 | OWASP 2023 recommendation for SHA-256 |
+| **Salt Size** | 256 bits (32 bytes) | Unique per key, prevents rainbow tables |
+| **Nonce Size** | 96 bits (12 bytes) | Unique per encryption (CRITICAL for GCM) |
+| **Key Size** | 256 bits (32 bytes) | AES-256 encryption key |
+| **Auth Tag Size** | 128 bits (16 bytes) | Standard GCM authentication tag |
+
+#### Encrypted Key Format
+
+```
+┌─────────────────────────────────────────────┐
+│ Header: "RUSTMQ-ENCRYPTED-KEY-V1\0"        │  24 bytes
+├─────────────────────────────────────────────┤
+│ Salt (random, unique per key)              │  32 bytes (256 bits)
+├─────────────────────────────────────────────┤
+│ Nonce (random, unique per encryption)      │  12 bytes (96 bits)
+├─────────────────────────────────────────────┤
+│ Ciphertext (AES-256-GCM encrypted PEM)     │  Variable
+├─────────────────────────────────────────────┤
+│ Authentication Tag (GCM)                   │  16 bytes (128 bits)
+└─────────────────────────────────────────────┘
+Total overhead: 84 bytes
+```
+
+#### Configuration
+
+Enable private key encryption in your RustMQ configuration:
+
+```toml
+[certificate_management]
+# Password is REQUIRED - all private keys must be encrypted
+key_encryption_password_env = "RUSTMQ_KEY_ENCRYPTION_PASSWORD"
+```
+
+**⚠️ IMPORTANT**: The `key_encryption_password` field is **MANDATORY**. RustMQ will fail to start without it.
+
+**Password Management Best Practices:**
+
+1. **Password Strength**
+   - Minimum: 16 characters (recommended: 32+)
+   - Use password generator: `openssl rand -base64 32`
+   - Never hardcode or commit to version control
+
+2. **Password Storage**
+   - ❌ **NEVER** hardcode or commit to git
+   - ✅ Environment variable: `RUSTMQ_KEY_ENCRYPTION_PASSWORD`
+   - ✅ Secrets manager: AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault
+   - ✅ Kubernetes: Sealed Secrets, External Secrets Operator
+
+3. **Password Backup**
+   - ⚠️ **CRITICAL**: Lost password = all keys irrecoverable!
+   - Backup password to secure offline location
+   - Document recovery procedures
+   - Consider password escrow for enterprise deployments
+
+#### Security Considerations
+
+**Critical Security Properties:**
+
+1. **Nonce Uniqueness**:
+   - ⚠️ **CRITICAL**: Never reuse nonce with same key (catastrophic for GCM security)
+   - Implementation: Cryptographically random 96-bit nonce per encryption
+   - Verification: Unit tests ensure nonce uniqueness
+
+2. **Salt Uniqueness**:
+   - Each encrypted key has unique 256-bit salt
+   - Prevents rainbow table attacks
+   - Generated using cryptographically secure RNG
+
+3. **Authentication**:
+   - GCM authentication tag ensures data integrity
+   - Wrong password causes tag verification to fail
+   - Tampered data detected and rejected
+
+4. **Constant-Time Operations**:
+   - GCM tag verification is constant-time (no timing attacks)
+   - Errors don't reveal whether password or tampering was the cause
+
+#### Performance Impact
+
+| Operation | Time | Frequency | Impact |
+|-----------|------|-----------|---------|
+| **PBKDF2 Key Derivation** | ~100-200ms | Per key operation | ✅ Acceptable (intentionally slow for security) |
+| **AES-256-GCM Encryption** | ~1-10μs | Per key save | ✅ Negligible |
+| **AES-256-GCM Decryption** | ~1-10μs | Per key load | ✅ Negligible |
+
+**Total overhead:** ~100-200ms per private key operation (encrypt or decrypt)
+
+**Acceptable because:** Certificate operations are infrequent (not in message hot path)
+
+#### Security Enforcement
+
+All private keys are verified to be encrypted before loading:
+
+```rust
+// Mandatory encryption verification
+verify_encrypted(&key_data)?;  // Fails if not encrypted
+decrypt_private_key(&key_data, password)?
+```
+
+⚠️ **No Plaintext Keys**: Any attempt to store or load unencrypted private keys will result in an error. This is a mandatory security policy that cannot be disabled.
+
 ### Certificate Storage and Distribution
 
 Certificates are stored securely with multiple distribution mechanisms:
 
 #### 1. Secure Storage
-- **Encrypted at Rest**: All private keys encrypted with AES-256
+- **Encrypted at Rest**: ✅ **MANDATORY** - All private keys MUST be encrypted with AES-256-GCM + PBKDF2
+  - **Algorithm**: AES-256-GCM (Authenticated Encryption with Associated Data)
+  - **Key Derivation**: PBKDF2-HMAC-SHA256 with 600,000 iterations (OWASP 2023 recommendation)
+  - **Salt**: 256-bit cryptographically random, unique per key
+  - **Nonce**: 96-bit cryptographically random, unique per encryption (CRITICAL for GCM security)
+  - **Authentication**: 128-bit GCM tag prevents tampering and ensures integrity
+  - **Format**: Custom binary format with version header for future algorithm upgrades
+  - ⚠️ **Security Policy**: Plaintext private keys are NOT supported - encryption is mandatory
 - **Access Control**: Role-based access to certificate operations
 - **Backup and Recovery**: Automated backup of certificate store
 - **Audit Trail**: Complete audit log of all certificate operations
@@ -840,7 +972,27 @@ Controller ──mTLS/Raft──> Controller
 - **Compression Protection**: CRIME/BREACH attack prevention
 
 #### 2. Data at Rest
-- **Certificate Storage**: Private keys encrypted with AES-256
+- **Certificate Storage**: ✅ **PRODUCTION-READY** - Private keys encrypted with AES-256-GCM
+  - **Security Properties**:
+    - Confidentiality: AES-256-GCM ensures private key data remains secret
+    - Authentication: GCM authentication tag ensures data hasn't been tampered with
+    - Password Security: PBKDF2 with 600,000 iterations makes brute force attacks expensive
+    - Salt Uniqueness: Each key has unique 256-bit salt - prevents rainbow table attacks
+    - Nonce Uniqueness: Each encryption uses unique 96-bit nonce - critical for GCM security
+  - **Encrypted Format**:
+    ```
+    [24 bytes] Header: "RUSTMQ-ENCRYPTED-KEY-V1\0"
+    [32 bytes] Salt: Random, unique per key
+    [12 bytes] Nonce: Random, unique per encryption
+    [variable] Ciphertext + 16-byte GCM authentication tag
+    Total overhead: 84 bytes
+    ```
+  - **Password Management**:
+    - **MANDATORY**: Must be configured via `key_encryption_password` in certificate management config
+    - Recommended: 16+ character strong password or generated password
+    - Source: Environment variable, secrets manager (AWS Secrets Manager, GCP Secret Manager)
+    - ⚠️ **CRITICAL**: Lost password = irrecoverable keys - backup password securely!
+  - ⚠️ **No Plaintext Keys**: Encryption is mandatory - plaintext private keys are rejected
 - **ACL Storage**: ACL rules encrypted in Raft log
 - **Audit Logs**: Audit data encrypted and integrity protected
 - **Key Management**: Secure key derivation and rotation

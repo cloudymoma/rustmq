@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod certificate_manager;
+pub mod key_encryption;
 
 pub use config::{TlsConfig, TlsMode, TlsServerConfig, TlsClientConfig};
 pub use certificate_manager::{

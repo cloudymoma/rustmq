@@ -434,3 +434,27 @@ webpki_status = "Enabled with graceful fallback for broker certificate validatio
 performance_targets = "L1 cache: <1200ns, Certificate validation: <245μs average"
 deployment_type = "Message broker with enhanced security and performance"
 security_optimizations = "Certificate caching, WebPKI integration, high-performance authorization"
+
+# =============================================================================
+# CERTIFICATE MANAGEMENT - MANDATORY PRIVATE KEY ENCRYPTION
+# =============================================================================
+# ⚠️ CRITICAL SECURITY REQUIREMENT: All private keys MUST be encrypted
+# Set RUSTMQ_KEY_ENCRYPTION_PASSWORD environment variable before starting
+# See docs/ENCRYPTION_CONFIGURATION.md for complete setup guide
+
+[security.certificate_management]
+# MANDATORY: Private key encryption password (via environment variable)
+# Generate with: openssl rand -base64 32
+# NEVER hardcode - use environment variable or secrets manager
+key_encryption_password = "${RUSTMQ_KEY_ENCRYPTION_PASSWORD}"
+
+# Certificate storage path
+storage_path = "/var/lib/rustmq/certificates"
+
+# Automatic certificate generation for development/testing
+auto_generate = false
+
+# Certificate refresh and rotation
+cert_refresh_interval_hours = 24
+enable_auto_renewal = true
+renewal_threshold_days = 30

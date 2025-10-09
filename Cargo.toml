@@ -133,6 +133,9 @@ sysinfo = "0.30"
 
 # Cryptography
 sha2 = "0.10"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+rand = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }

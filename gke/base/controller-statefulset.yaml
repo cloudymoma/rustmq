@@ -112,7 +112,13 @@ spec:
           value: "info,rustmq=debug"
         - name: RUST_BACKTRACE
           value: "1"
-        
+        # REQUIRED: Private key encryption password
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-key-encryption
+              key: password
+
         # Resource limits and requests
         resources:
           requests:

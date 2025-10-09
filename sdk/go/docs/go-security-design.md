@@ -4,6 +4,73 @@
 
 This document outlines the design of a comprehensive security module for the RustMQ Go SDK that provides enterprise-grade security features matching the Rust SDK implementation while maintaining Go idioms and performance characteristics.
 
+## ⚠️ Private Key Security
+
+### Server-Side Mandatory Encryption
+
+**IMPORTANT**: RustMQ enforces mandatory private key encryption on the server side. All private keys stored by RustMQ brokers and controllers are encrypted with AES-256-GCM.
+
+**Client Impact**: Go SDK clients do **not** need to encrypt their private keys - this is a server-side security requirement. However, clients should follow these best practices:
+
+1. **Protect Client Private Keys**: Store client private keys securely with appropriate file permissions (0600 on Unix)
+2. **Use Secure Storage**: Consider using OS keychains, HashiCorp Vault, or cloud secret managers
+3. **Never Commit Keys**: Exclude private keys from version control
+4. **Validate Permissions**: Check file permissions before loading keys
+
+**Server Configuration**: The `RUSTMQ_KEY_ENCRYPTION_PASSWORD` environment variable must be set on broker/controller instances (not client applications).
+
+**Example - Secure Client Key Loading in Go**:
+```go
+package main
+
+import (
+    "fmt"
+    "io/ioutil"
+    "os"
+)
+
+// LoadClientKeySecurely loads a private key with permission validation
+func LoadClientKeySecurely(path string) ([]byte, error) {
+    // Check file permissions (Unix only)
+    info, err := os.Stat(path)
+    if err != nil {
+        return nil, fmt.Errorf("failed to stat key file: %w", err)
+    }
+
+    // Verify file is not world-readable or group-readable
+    mode := info.Mode()
+    if mode&0077 != 0 {
+        return nil, fmt.Errorf("key file has overly permissive permissions %v, use chmod 600", mode)
+    }
+
+    // Load the key
+    return ioutil.ReadFile(path)
+}
+
+// Example usage in client configuration
+func main() {
+    clientKey, err := LoadClientKeySecurely("/path/to/client.key")
+    if err != nil {
+        panic(err)
+    }
+
+    config := &rustmq.SecurityConfig{
+        TLS: &rustmq.TLSConfig{
+            Mode:       rustmq.TLSModeMutualAuth,
+            CACert:     "/path/to/ca.pem",
+            ClientCert: "/path/to/client.pem",
+            ClientKey:  string(clientKey),
+        },
+    }
+    // ... use config
+}
+```
+
+**Additional Resources**:
+- Server encryption setup: `docs/ENCRYPTION_CONFIGURATION.md`
+- Security architecture: `docs/security/SECURITY_ARCHITECTURE.md`
+- Kubernetes deployment: `gke/ENCRYPTION_SETUP.md`
+
 ## Architecture Components
 
 ### 1. Core Security Types (`security/types.go`)

@@ -17,6 +17,7 @@ pub mod performance_tests;
 pub mod webpki_tests;
 pub mod enhanced_tests;
 pub mod validation_tests;
+pub mod key_encryption_tests;
 
 // Re-export test utilities for convenient access
 pub use test_utils::*;

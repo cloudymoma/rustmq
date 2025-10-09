@@ -238,3 +238,27 @@ log_authorization_events = false
 log_certificate_events = true
 log_failed_attempts = true
 max_log_size_mb = 100
+
+# =============================================================================
+# CERTIFICATE MANAGEMENT - MANDATORY PRIVATE KEY ENCRYPTION
+# =============================================================================
+# ⚠️ CRITICAL SECURITY REQUIREMENT: All private keys MUST be encrypted
+# Set RUSTMQ_KEY_ENCRYPTION_PASSWORD environment variable before starting
+# See docs/ENCRYPTION_CONFIGURATION.md for complete setup guide
+
+[security.certificate_management]
+# MANDATORY: Private key encryption password (via environment variable)
+# Generate with: openssl rand -base64 32
+# NEVER hardcode - use environment variable or secrets manager
+key_encryption_password = "${RUSTMQ_KEY_ENCRYPTION_PASSWORD}"
+
+# Certificate storage path
+storage_path = "/var/lib/rustmq/certificates"
+
+# Automatic certificate generation for development/testing
+auto_generate = false
+
+# Certificate refresh and rotation
+cert_refresh_interval_hours = 24
+enable_auto_renewal = true
+renewal_threshold_days = 30

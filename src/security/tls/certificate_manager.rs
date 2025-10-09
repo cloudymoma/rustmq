@@ -240,9 +240,11 @@ pub struct EnhancedCertificateManagementConfig {
     pub basic: CertificateManagementConfig,
     /// Storage backend for certificates and metadata
     pub storage_path: String,
-    /// Private key encryption settings
-    pub key_encryption_enabled: bool,
-    pub key_encryption_password: Option<String>,
+    /// Private key encryption password (REQUIRED - all keys must be encrypted)
+    ///
+    /// ⚠️ **SECURITY**: This field is MANDATORY. All private keys are encrypted with AES-256-GCM.
+    /// Recommended: Use environment variable or secrets manager, minimum 16 characters.
+    pub key_encryption_password: String,
     /// Certificate authority settings
     pub ca_settings: CaSettings,
     /// Certificate template settings
@@ -270,8 +272,7 @@ impl Default for EnhancedCertificateManagementConfig {
         Self {
             basic: CertificateManagementConfig::default(),
             storage_path: "/var/lib/rustmq/certificates".to_string(),
-            key_encryption_enabled: true,
-            key_encryption_password: None, // Should be provided via secure config
+            key_encryption_password: "CHANGE-ME-IN-PRODUCTION".to_string(), // MUST be changed via secure config
             ca_settings: CaSettings::default(),
             certificate_templates: templates,
             audit_enabled: true,
@@ -1138,13 +1139,17 @@ impl CertificateManager {
         let private_key_pem = if let Some(ref pem) = cert_metadata.info.private_key_pem {
             pem.clone()
         } else if let Some(ref key_path) = cert_metadata.private_key_path {
+            use super::key_encryption;
+
             // Load from storage
             let key_data = self.storage.get(key_path).await
                 .map_err(|e| RustMqError::Storage(format!("Failed to load private key: {}", e)))?;
-            String::from_utf8(key_data.to_vec())
-                .map_err(|e| RustMqError::InvalidCertificate {
-                    reason: format!("Invalid UTF-8 in private key: {}", e),
-                })?
+
+            // Verify key is encrypted (mandatory security requirement)
+            key_encryption::verify_encrypted(&key_data)?;
+
+            debug!("Decrypting private key for certificate: {}", cert_id);
+            key_encryption::decrypt_private_key(&key_data, &self.config.key_encryption_password)?
         } else {
             return Err(RustMqError::InvalidCertificate {
                 reason: "No private key available for certificate".to_string(),
@@ -1394,19 +1399,13 @@ impl CertificateManager {
             revocation_reason: None,
             san_entries,
             certificate_pem: Some(pem_data.clone()),
-            private_key_pem: if self.config.key_encryption_enabled {
-                Some(certificate.serialize_private_key_pem())
-            } else {
-                None
-            },
+            private_key_pem: None, // Private key not stored in memory for security
         };
-        
-        // Store private key securely
-        let private_key_path = if self.config.key_encryption_enabled {
-            Some(self.store_private_key(&cert_id, &certificate.serialize_private_key_pem()).await?)
-        } else {
-            None
-        };
+
+        // Store private key securely (always encrypted)
+        let private_key_path = Some(
+            self.store_private_key(&cert_id, &certificate.serialize_private_key_pem()).await?
+        );
         
         let metadata = CertificateMetadata {
             info: cert_info.clone(),
@@ -1499,19 +1498,13 @@ impl CertificateManager {
             revocation_reason: None,
             san_entries,
             certificate_pem: Some(certificate_pem.clone()),
-            private_key_pem: if self.config.key_encryption_enabled {
-                Some(private_key_pem.clone())
-            } else {
-                None
-            },
+            private_key_pem: None, // Private key not stored in memory for security
         };
         
-        // Store private key securely
-        let private_key_path = if self.config.key_encryption_enabled {
-            Some(self.store_private_key(&cert_id, &private_key_pem).await?)
-        } else {
-            None
-        };
+        // Store private key securely (always encrypted)
+        let private_key_path = Some(
+            self.store_private_key(&cert_id, &private_key_pem).await?
+        );
         
         let metadata = CertificateMetadata {
             info: cert_info.clone(),
@@ -1535,22 +1528,22 @@ impl CertificateManager {
         Ok(cert_info)
     }
     
-    /// Store private key securely
+    /// Store private key securely with mandatory encryption
+    ///
+    /// ⚠️ **SECURITY**: All private keys are encrypted with AES-256-GCM.
+    /// Password must be configured in key_encryption_password.
     async fn store_private_key(&self, cert_id: &str, private_key_pem: &str) -> Result<String> {
+        use super::key_encryption;
+
         let key_path = format!("certificates/private_keys/{}.key", cert_id);
-        
-        // TODO: Implement key encryption if password is provided
-        let key_data = if let Some(_password) = &self.config.key_encryption_password {
-            // For now, store unencrypted. In production, implement proper encryption
-            warn!("Private key encryption is configured but not yet implemented");
-            private_key_pem.as_bytes().to_vec()
-        } else {
-            private_key_pem.as_bytes().to_vec()
-        };
-        
+
+        info!("Encrypting private key with AES-256-GCM for certificate: {}", cert_id);
+        let key_data = key_encryption::encrypt_private_key(private_key_pem, &self.config.key_encryption_password)?;
+
         self.storage.put(&key_path, key_data.into()).await
             .map_err(|e| RustMqError::Storage(format!("Failed to store private key: {}", e)))?;
-        
+
+        info!("Private key encrypted and stored securely at: {}", key_path);
         Ok(key_path)
     }
     

@@ -12,6 +12,7 @@ resources:
 - storage.yaml
 - configmap-controller.yaml
 - configmap-broker.yaml
+- secret-key-encryption.yaml
 - controller-statefulset.yaml
 - broker-daemonset.yaml
 - services.yaml

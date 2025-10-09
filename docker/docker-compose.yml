@@ -38,6 +38,8 @@ services:
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9094:9094"
       - "9095:9095"
@@ -66,6 +68,8 @@ services:
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9144:9094"
       - "9145:9095"
@@ -94,6 +98,8 @@ services:
       - RAFT_PEERS=controller-1@rustmq-controller-1:9095,controller-2@rustmq-controller-2:9095,controller-3@rustmq-controller-3:9095
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9194:9094"
       - "9195:9095"
@@ -130,6 +136,8 @@ services:
       - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9092:9092"
       - "9093:9093"
@@ -170,6 +178,8 @@ services:
       - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9192:9092"
       - "9193:9093"
@@ -210,6 +220,8 @@ services:
       - OBJECT_STORAGE_SECRET_KEY=rustmq-secret-key
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "9292:9092"
       - "9293:9093"
@@ -258,6 +270,8 @@ services:
       - ADMIN_LISTEN_ADDR=0.0.0.0:8080
       - RUST_LOG=info
       - RUSTMQ_LOG_LEVEL=info
+      # REQUIRED: Private key encryption password
+      - RUSTMQ_KEY_ENCRYPTION_PASSWORD=${RUSTMQ_KEY_ENCRYPTION_PASSWORD}
     ports:
       - "8080:8080"  # Admin REST API
     depends_on:
