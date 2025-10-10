@@ -834,8 +834,10 @@ pub struct AclConfig {
     pub cache_size_mb: usize,
     /// Cache TTL in seconds
     pub cache_ttl_seconds: u64,
-    /// Number of L2 cache shards
-    pub l2_shard_count: usize,
+    /// Number of L2 cache shards (None = auto-calculate from CPU cores)
+    pub l2_shard_count: Option<usize>,
+    /// Multiplier for auto-calculating shard count from CPU cores (default: 2.0)
+    pub l2_shard_multiplier: f64,
     /// Bloom filter size for negative caching
     pub bloom_filter_size: usize,
     /// Batch fetch size for controller requests
@@ -844,6 +846,32 @@ pub struct AclConfig {
     pub enable_audit_logging: bool,
     /// Enable negative caching with bloom filter
     pub negative_cache_enabled: bool,
+}
+
+impl AclConfig {
+    /// Calculate optimal L2 cache shard count based on CPU cores
+    ///
+    /// Returns a power-of-2 value between 8 and 512 shards.
+    ///
+    /// - If `l2_shard_count` is Some, returns that value (manual override)
+    /// - If None, calculates from CPU cores: `next_power_of_2(logical_cores * multiplier)`
+    /// - Clamps result to [8, 512] range
+    pub fn effective_l2_shard_count(&self) -> usize {
+        const MIN_SHARDS: usize = 8;
+        const MAX_SHARDS: usize = 512;
+
+        // Manual override takes precedence
+        if let Some(manual_count) = self.l2_shard_count {
+            return manual_count;
+        }
+
+        // Auto-calculate from CPU cores
+        let logical_cores = num_cpus::get();
+        let target = (logical_cores as f64 * self.l2_shard_multiplier) as usize;
+        let power_of_2 = target.next_power_of_two();
+
+        power_of_2.clamp(MIN_SHARDS, MAX_SHARDS)
+    }
 }
 
 /// Certificate management configuration
@@ -920,7 +948,8 @@ impl Default for AclConfig {
             enabled: true,
             cache_size_mb: 50,
             cache_ttl_seconds: 300,
-            l2_shard_count: 32,
+            l2_shard_count: None, // Auto-calculate from CPU cores
+            l2_shard_multiplier: 2.0, // Balanced production default
             bloom_filter_size: 1_000_000,
             batch_fetch_size: 100,
             enable_audit_logging: true,
@@ -1012,32 +1041,48 @@ impl AclConfig {
                     "security.acl.cache_size_mb must be greater than 0".to_string(),
                 ));
             }
-            
+
             if self.cache_ttl_seconds == 0 {
                 return Err(crate::error::RustMqError::InvalidConfig(
                     "security.acl.cache_ttl_seconds must be greater than 0".to_string(),
                 ));
             }
-            
-            if self.l2_shard_count == 0 || (self.l2_shard_count & (self.l2_shard_count - 1)) != 0 {
+
+            // Validate multiplier range
+            if self.l2_shard_multiplier < 0.5 || self.l2_shard_multiplier > 8.0 {
                 return Err(crate::error::RustMqError::InvalidConfig(
-                    "security.acl.l2_shard_count must be a power of 2".to_string(),
+                    "security.acl.l2_shard_multiplier must be between 0.5 and 8.0".to_string(),
                 ));
             }
-            
+
+            // Validate manual override (if specified)
+            if let Some(count) = self.l2_shard_count {
+                if count == 0 || (count & (count - 1)) != 0 {
+                    return Err(crate::error::RustMqError::InvalidConfig(
+                        "security.acl.l2_shard_count must be a power of 2".to_string(),
+                    ));
+                }
+
+                if count < 8 || count > 512 {
+                    return Err(crate::error::RustMqError::InvalidConfig(
+                        "security.acl.l2_shard_count must be between 8 and 512".to_string(),
+                    ));
+                }
+            }
+
             if self.bloom_filter_size < 1000 {
                 return Err(crate::error::RustMqError::InvalidConfig(
                     "security.acl.bloom_filter_size should be at least 1000".to_string(),
                 ));
             }
-            
+
             if self.batch_fetch_size == 0 {
                 return Err(crate::error::RustMqError::InvalidConfig(
                     "security.acl.batch_fetch_size must be greater than 0".to_string(),
                 ));
             }
         }
-        
+
         Ok(())
     }
 }

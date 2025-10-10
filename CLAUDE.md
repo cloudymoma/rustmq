@@ -201,6 +201,24 @@ Transform messages in real-time:
 
 ## Latest Updates
 
+- **🚀 CPU-ADAPTIVE L2 CACHE SHARDING** (November 2025): **COMPLETED** - Dynamic cache shard configuration based on CPU cores
+  - **✅ Auto-Detection**: L2 cache shards now automatically scale with CPU cores using `num_cpus` crate
+  - **✅ Formula**: `next_power_of_2(logical_cores × multiplier)` clamped to [8, 512] shards
+  - **✅ Default Multiplier**: 2.0 (balanced production default) - configurable from 0.5 to 8.0
+  - **✅ Manual Override**: Optional `l2_shard_count` config parameter for explicit control
+  - **✅ Automatic Logging**: Startup logs show shard count and whether auto-calculated
+  - **✅ Multiple Locations**: Updated L2AclCache, AuthorizationManager, and AclManager
+  - **✅ Config Validation**: Power-of-2 validation with range checks (8-512 shards)
+  - **✅ Benefits**:
+    - Optimal concurrency on 1-core containers (8 shards minimum)
+    - Scales to 256-core systems (512 shards maximum)
+    - Reduces lock contention on multi-core systems
+    - Maintains power-of-2 for fast modulo operations
+  - **Files Modified**:
+    - `src/config.rs`: Added `effective_l2_shard_count()` method with CPU detection
+    - `src/security/auth/cache.rs:189-222`: L2AclCache with dynamic shard count parameter
+    - `src/security/acl/manager.rs:274-285`: ACL Manager with CPU-based initialization
+    - Configuration schema: `l2_shard_count: Option<usize>` with `l2_shard_multiplier: f64`
 - **🚀 MIRI MEMORY SAFETY INTEGRATION**: **COMPLETED** - Comprehensive memory safety validation with:
   - **✅ Complete Miri Test Suite**: 4 test modules covering storage, security, cache, and SDK components
   - **✅ Property-Based Testing**: Integration with proptest for comprehensive input validation under Miri

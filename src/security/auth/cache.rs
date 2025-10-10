@@ -180,27 +180,44 @@ pub struct L1CacheStats {
 
 /// Sharded L2 cache for broker-wide ACL caching
 pub struct L2AclCache {
-    shards: Arc<[DashMap<AclKey, AclCacheEntry>; 32]>,
+    shards: Arc<Vec<DashMap<AclKey, AclCacheEntry>>>,
     metrics: Arc<SecurityMetrics>,
     shard_count: usize,
 }
 
 impl L2AclCache {
-    /// Create a new L2 cache with 32 shards
-    pub fn new(metrics: Arc<SecurityMetrics>) -> Result<Self> {
-        let shards: Vec<DashMap<AclKey, AclCacheEntry>> = (0..32)
+    /// Create a new L2 cache with specified shard count (must be power of 2)
+    ///
+    /// # Arguments
+    /// * `shard_count` - Number of shards (must be power of 2, between 8 and 512)
+    /// * `metrics` - Security metrics for tracking cache performance
+    pub fn new(shard_count: usize, metrics: Arc<SecurityMetrics>) -> Result<Self> {
+        // Validate shard count
+        if shard_count == 0 || (shard_count & (shard_count - 1)) != 0 {
+            return Err(RustMqError::InvalidConfig(
+                "L2 cache shard_count must be a power of 2".to_string(),
+            ));
+        }
+
+        if shard_count < 8 || shard_count > 512 {
+            return Err(RustMqError::InvalidConfig(
+                "L2 cache shard_count must be between 8 and 512".to_string(),
+            ));
+        }
+
+        let shards: Vec<DashMap<AclKey, AclCacheEntry>> = (0..shard_count)
             .map(|_| DashMap::new())
             .collect();
-            
-        let shards = Arc::new(
-            shards.try_into()
-                .map_err(|_| RustMqError::Internal("Failed to create L2 cache shards".to_string()))?
+
+        tracing::info!(
+            shard_count = shard_count,
+            "L2 ACL cache initialized with dynamic sharding"
         );
-        
+
         Ok(Self {
-            shards,
+            shards: Arc::new(shards),
             metrics,
-            shard_count: 32,
+            shard_count,
         })
     }
     
@@ -403,15 +420,30 @@ pub struct AclCache {
 
 impl AclCache {
     /// Create a new ACL cache system
+    ///
+    /// # Arguments
+    /// * `l2_shard_count` - Number of L2 cache shards (must be power of 2, 8-512)
+    /// * `max_l3_items` - Maximum items in L3 negative cache
+    /// * `l3_false_positive_rate` - False positive rate for L3 bloom filter
+    /// * `ttl` - Time-to-live for cache entries
+    /// * `metrics` - Security metrics for tracking
     pub fn new(
+        l2_shard_count: usize,
         max_l3_items: usize,
         l3_false_positive_rate: f64,
         ttl: Duration,
         metrics: Arc<SecurityMetrics>,
     ) -> Result<Self> {
-        let l2_cache = L2AclCache::new(metrics.clone())?;
+        let l2_cache = L2AclCache::new(l2_shard_count, metrics.clone())?;
         let l3_cache = L3NegativeCache::new(max_l3_items, l3_false_positive_rate, metrics.clone());
-        
+
+        tracing::info!(
+            l2_shards = l2_shard_count,
+            l3_capacity = max_l3_items,
+            ttl_secs = ttl.as_secs(),
+            "ACL cache system initialized"
+        );
+
         Ok(Self {
             l2_cache,
             l3_cache,
@@ -609,7 +641,7 @@ mod tests {
     #[tokio::test]
     async fn test_l2_cache_sharding() {
         let metrics = Arc::new(SecurityMetrics::new().unwrap());
-        let cache = L2AclCache::new(metrics).unwrap();
+        let cache = L2AclCache::new(32, metrics).unwrap();
         
         let key1 = AclKey {
             principal: Arc::from("user1"),

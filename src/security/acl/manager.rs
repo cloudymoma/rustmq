@@ -271,11 +271,18 @@ impl AclManager {
     ) -> Result<Self> {
         let l1_cache = Arc::new(RwLock::new(HashMap::new()));
         
-        // Create L2 cache shards
+        // Create L2 cache shards using CPU-based calculation
+        let shard_count = config.effective_l2_shard_count();
         let mut l2_cache_shards = Vec::new();
-        for _ in 0..config.l2_shard_count {
+        for _ in 0..shard_count {
             l2_cache_shards.push(Arc::new(AsyncRwLock::new(HashMap::new())));
         }
+
+        tracing::info!(
+            shard_count = shard_count,
+            auto_calculated = config.l2_shard_count.is_none(),
+            "ACL Manager L2 cache shards initialized"
+        );
         
         let bloom_filter = if config.negative_cache_enabled {
             Arc::new(Mutex::new(Some(BloomFilter::new(config.bloom_filter_size))))
