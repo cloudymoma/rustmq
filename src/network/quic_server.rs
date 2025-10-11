@@ -7,8 +7,9 @@ use super::secure_connection::{AuthenticatedConnection, AuthenticatedConnectionP
 use bytes::Bytes;
 use std::sync::Arc;
 use std::net::SocketAddr;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
+use std::collections::VecDeque;
+use dashmap::DashMap;
+use parking_lot::RwLock;
 use quinn::{Endpoint, ServerConfig, Connection};
 use rustls::{Certificate, PrivateKey};
 use std::time::{Duration, Instant};
@@ -27,47 +28,73 @@ struct ConnectionEntry {
 }
 
 pub struct ConnectionPool {
-    connections: RwLock<HashMap<String, ConnectionEntry>>,
+    /// Lock-free concurrent map for connection storage
+    connections: Arc<DashMap<String, ConnectionEntry>>,
+    /// LRU tracking queue for eviction policy
+    lru_tracker: RwLock<VecDeque<(String, Instant)>>,
     max_connections: usize,
 }
 
 impl ConnectionPool {
     pub fn new(max_connections: usize) -> Self {
         Self {
-            connections: RwLock::new(HashMap::new()),
+            connections: Arc::new(DashMap::new()),
+            lru_tracker: RwLock::new(VecDeque::new()),
             max_connections,
         }
     }
 
     pub async fn get_connection(&self, client_id: &str) -> Option<Connection> {
-        let connections = self.connections.read().await;
-        connections.get(client_id).map(|entry| entry.connection.clone())
+        // Lock-free read from DashMap
+        self.connections.get(client_id).map(|entry| entry.connection.clone())
     }
 
     pub async fn add_connection(&self, client_id: String, connection: Connection) {
-        let mut connections = self.connections.write().await;
-        if connections.len() >= self.max_connections {
-            // Find the oldest connection by creation time for proper LRU eviction
-            if let Some(oldest_id) = connections
-                .iter()
-                .min_by_key(|(_, entry)| entry.created_at)
-                .map(|(id, _)| id.clone())
-            {
-                connections.remove(&oldest_id);
-                tracing::debug!("Evicted oldest connection: {}", oldest_id);
+        // Check if we need to evict before adding
+        if self.connections.len() >= self.max_connections {
+            // Lock LRU tracker only for eviction decision
+            let mut lru = self.lru_tracker.write();
+
+            // Find the oldest connection from LRU tracker
+            while let Some((old_id, _)) = lru.pop_front() {
+                // Try to remove from connections map
+                if self.connections.remove(&old_id).is_some() {
+                    tracing::debug!("Evicted LRU connection: {}", old_id);
+                    break;
+                }
+                // If not found, it was already removed, try next
             }
         }
-        
+
         let entry = ConnectionEntry {
             connection,
             created_at: Instant::now(),
         };
-        connections.insert(client_id, entry);
+
+        // Insert into DashMap (lock-free for concurrent reads)
+        self.connections.insert(client_id.clone(), entry);
+
+        // Track in LRU queue
+        let mut lru = self.lru_tracker.write();
+        lru.push_back((client_id, Instant::now()));
     }
 
     pub async fn remove_connection(&self, client_id: &str) {
-        let mut connections = self.connections.write().await;
-        connections.remove(client_id);
+        // Remove from DashMap (lock-free operation)
+        self.connections.remove(client_id);
+
+        // Note: We don't remove from LRU tracker immediately to avoid lock contention
+        // The entry will be naturally removed when it reaches the front during eviction
+    }
+
+    /// Get current pool size
+    pub fn len(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Check if pool is empty
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
     }
 }
 
@@ -926,28 +953,29 @@ mod tests {
     #[tokio::test]
     async fn test_connection_pool() {
         let pool = ConnectionPool::new(2);
-        
+
         assert!(pool.get_connection("client1").await.is_none());
-        
+
         // We can't easily create real QUIC connections in tests,
         // so we'll just test the pool logic structure
-        assert_eq!(pool.connections.read().await.len(), 0);
+        assert_eq!(pool.len(), 0);
+        assert!(pool.is_empty());
     }
 
     #[tokio::test]
     async fn test_connection_pool_lru_eviction() {
-        
         let pool = ConnectionPool::new(2);
-        
+
         // Since we can't create real QUIC connections easily in tests,
         // we'll test the LRU logic by checking that the oldest connection
         // gets removed when the pool is full
-        
+
         // Test that eviction works based on creation time ordering
         // The actual LRU test would need real connections, but we've
         // verified the logic uses proper time-based ordering
-        assert_eq!(pool.connections.read().await.len(), 0);
-        
+        assert_eq!(pool.len(), 0);
+        assert!(pool.is_empty());
+
         // Test that max_connections limit is enforced
         assert_eq!(pool.max_connections, 2);
     }

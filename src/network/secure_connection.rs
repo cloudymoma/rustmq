@@ -16,10 +16,13 @@ use crate::{
 use quinn::Connection;
 use rustls::Certificate;
 use std::{
+    collections::VecDeque,
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
+use dashmap::DashMap;
+use parking_lot::RwLock;
 
 /// Authenticated connection wrapper that provides security context and authorization
 /// for all requests made over a QUIC connection with mTLS authentication
@@ -94,14 +97,13 @@ impl AuthenticatedConnection {
 
     /// Get connection security metadata
     pub fn security_metadata(&self) -> ConnectionSecurityMetadata {
-        self.security_metadata.read().unwrap().clone()
+        self.security_metadata.read().clone()
     }
 
     /// Update last activity timestamp
     pub fn update_activity(&self) {
-        if let Ok(mut metadata) = self.security_metadata.write() {
-            metadata.last_activity = SystemTime::now();
-        }
+        let mut metadata = self.security_metadata.write();
+        metadata.last_activity = SystemTime::now();
     }
 
     /// Check if the authenticated principal has permission for a specific resource and operation
@@ -277,7 +279,10 @@ impl AuthenticatedConnectionStats {
 
 /// Pool for managing authenticated connections with security context
 pub struct AuthenticatedConnectionPool {
-    connections: Arc<RwLock<std::collections::HashMap<String, AuthenticatedConnection>>>,
+    /// Lock-free concurrent map for connection storage
+    connections: Arc<DashMap<String, AuthenticatedConnection>>,
+    /// LRU tracking for eviction policy (tracks connection_id and last_activity)
+    lru_tracker: RwLock<VecDeque<(String, SystemTime)>>,
     max_connections: usize,
     max_idle_time: Duration,
     metrics: Arc<SecurityMetrics>,
@@ -287,7 +292,8 @@ impl AuthenticatedConnectionPool {
     /// Create a new authenticated connection pool
     pub fn new(max_connections: usize, max_idle_time: Duration, metrics: Arc<SecurityMetrics>) -> Self {
         Self {
-            connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            connections: Arc::new(DashMap::new()),
+            lru_tracker: RwLock::new(VecDeque::new()),
             max_connections,
             max_idle_time,
             metrics,
@@ -296,38 +302,58 @@ impl AuthenticatedConnectionPool {
 
     /// Add an authenticated connection to the pool
     pub fn add_connection(&self, connection_id: String, connection: AuthenticatedConnection) -> Result<()> {
-        let mut connections = self.connections.write()
-            .map_err(|e| RustMqError::Network(format!("Connection pool lock error: {}", e)))?;
-        
-        // Enforce connection limit
-        if connections.len() >= self.max_connections {
-            // Remove oldest idle connection
-            if let Some((oldest_id, _)) = connections
-                .iter()
-                .filter(|(_, conn)| {
-                    conn.security_metadata()
-                        .idle_time() > self.max_idle_time
-                })
-                .min_by_key(|(_, conn)| conn.security_metadata().last_activity)
-                .map(|(id, conn)| (id.clone(), conn.principal().clone()))
-            {
-                connections.remove(&oldest_id);
-                tracing::debug!(
-                    connection_id = oldest_id,
-                    "Evicted idle connection from authenticated pool"
-                );
-            } else if connections.len() >= self.max_connections {
+        // Check if we need to evict before adding
+        if self.connections.len() >= self.max_connections {
+            // Try to find and evict an idle connection first
+            let now = SystemTime::now();
+            let mut evicted = false;
+
+            // Lock LRU tracker for eviction
+            let mut lru = self.lru_tracker.write();
+
+            // Try to find an idle connection to evict
+            while let Some((old_id, last_activity)) = lru.pop_front() {
+                // Check if connection still exists
+                if let Some(conn_entry) = self.connections.get(&old_id) {
+                    let idle_time = now.duration_since(last_activity)
+                        .unwrap_or(Duration::from_secs(0));
+
+                    if idle_time > self.max_idle_time {
+                        // This connection is idle, evict it
+                        drop(conn_entry); // Release the reference
+                        self.connections.remove(&old_id);
+                        tracing::debug!(
+                            connection_id = old_id,
+                            "Evicted idle connection from authenticated pool"
+                        );
+                        evicted = true;
+                        break;
+                    } else {
+                        // This connection is still active, put it back
+                        lru.push_back((old_id, last_activity));
+                        break;
+                    }
+                }
+                // If connection doesn't exist, continue to next entry
+            }
+
+            if !evicted && self.connections.len() >= self.max_connections {
                 return Err(RustMqError::Network(
                     "Connection pool full and no idle connections to evict".to_string()
                 ));
             }
         }
 
-        connections.insert(connection_id.clone(), connection);
-        
+        // Insert into DashMap (lock-free for concurrent reads)
+        self.connections.insert(connection_id.clone(), connection);
+
+        // Track in LRU queue
+        let mut lru = self.lru_tracker.write();
+        lru.push_back((connection_id.clone(), SystemTime::now()));
+
         tracing::debug!(
             connection_id = connection_id,
-            pool_size = connections.len(),
+            pool_size = self.connections.len(),
             "Added authenticated connection to pool"
         );
 
@@ -336,59 +362,65 @@ impl AuthenticatedConnectionPool {
 
     /// Get an authenticated connection from the pool
     pub fn get_connection(&self, connection_id: &str) -> Option<AuthenticatedConnection> {
-        let connections = self.connections.read().ok()?;
-        connections.get(connection_id).cloned()
+        // Lock-free read from DashMap
+        self.connections.get(connection_id).map(|entry| entry.clone())
     }
 
     /// Remove a connection from the pool
     pub fn remove_connection(&self, connection_id: &str) -> Option<AuthenticatedConnection> {
-        let mut connections = self.connections.write().ok()?;
-        let removed = connections.remove(connection_id);
-        
+        // Remove from DashMap (lock-free operation)
+        let removed = self.connections.remove(connection_id).map(|(_, conn)| conn);
+
         if removed.is_some() {
             tracing::debug!(
                 connection_id = connection_id,
-                pool_size = connections.len(),
+                pool_size = self.connections.len(),
                 "Removed authenticated connection from pool"
             );
         }
-        
+
+        // Note: We don't remove from LRU tracker immediately to avoid lock contention
+        // The entry will be naturally removed when it reaches the front during eviction
+
         removed
     }
 
     /// Clean up idle connections that exceed the maximum idle time
     pub fn cleanup_idle_connections(&self) -> usize {
-        let mut connections = match self.connections.write() {
-            Ok(conns) => conns,
-            Err(_) => return 0,
-        };
-
         let now = SystemTime::now();
-        let initial_count = connections.len();
+        let mut cleaned_count = 0;
 
-        connections.retain(|connection_id, connection| {
+        // Collect connection IDs to remove
+        let mut to_remove = Vec::new();
+
+        for entry in self.connections.iter() {
+            let connection_id = entry.key();
+            let connection = entry.value();
             let metadata = connection.security_metadata();
             let idle_time = now.duration_since(metadata.last_activity)
                 .unwrap_or(Duration::from_secs(0));
-            
+
             if idle_time > self.max_idle_time {
+                to_remove.push(connection_id.clone());
+            }
+        }
+
+        // Remove idle connections
+        for connection_id in to_remove {
+            if let Some((_, connection)) = self.connections.remove(&connection_id) {
                 tracing::debug!(
                     connection_id = connection_id,
                     principal = %connection.principal(),
-                    idle_time = ?idle_time,
                     "Cleaning up idle authenticated connection"
                 );
-                false
-            } else {
-                true
+                cleaned_count += 1;
             }
-        });
+        }
 
-        let cleaned_count = initial_count - connections.len();
         if cleaned_count > 0 {
             tracing::info!(
                 cleaned_connections = cleaned_count,
-                remaining_connections = connections.len(),
+                remaining_connections = self.connections.len(),
                 "Cleaned up idle authenticated connections"
             );
         }
@@ -398,14 +430,9 @@ impl AuthenticatedConnectionPool {
 
     /// Get connection pool statistics
     pub fn stats(&self) -> ConnectionPoolStats {
-        let connections = match self.connections.read() {
-            Ok(conns) => conns,
-            Err(_) => return ConnectionPoolStats::default(),
-        };
-
-        let total_connections = connections.len();
-        let healthy_connections = connections.values()
-            .filter(|conn| conn.connection_stats().is_healthy())
+        let total_connections = self.connections.len();
+        let healthy_connections = self.connections.iter()
+            .filter(|entry| entry.value().connection_stats().is_healthy())
             .count();
 
         ConnectionPoolStats {
