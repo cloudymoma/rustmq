@@ -1,7 +1,9 @@
 // Abstract file interface for different I/O backends
 use crate::Result;
+use crate::storage::{AlignedBufferPool, BufferPool};
 use async_trait::async_trait;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Platform capabilities for I/O backend selection
 #[derive(Debug, Clone)]
@@ -157,6 +159,7 @@ impl Default for AsyncWalFileFactory {
 // Tokio-based implementation (fallback)
 pub struct TokioWalFile {
     file: tokio::fs::File,
+    buffer_pool: Arc<AlignedBufferPool>,
 }
 
 impl TokioWalFile {
@@ -167,8 +170,23 @@ impl TokioWalFile {
             .read(true)
             .open(path.as_ref())
             .await?;
-        
-        Ok(Self { file })
+
+        // Initialize buffer pool for WAL I/O
+        // 4096-byte alignment for optimal I/O, 100 buffers per pool
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 100));
+
+        Ok(Self { file, buffer_pool })
+    }
+
+    pub async fn new_with_pool<P: AsRef<Path>>(path: P, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(path.as_ref())
+            .await?;
+
+        Ok(Self { file, buffer_pool })
     }
 }
 
@@ -192,14 +210,28 @@ impl AsyncWalFile for TokioWalFile {
     
     async fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
-        
+
         let mut file = self.file.try_clone().await?;
         file.seek(SeekFrom::Start(offset)).await?;
-        
-        let mut buffer = vec![0u8; len];
-        file.read_exact(&mut buffer).await?;
-        
-        Ok(buffer)
+
+        // Get buffer from pool instead of allocating
+        // Buffer pool may return a buffer larger than requested (due to alignment)
+        let mut buffer = self.buffer_pool.get_aligned_buffer(len)?;
+
+        // Truncate buffer to exactly the requested size before reading
+        // This ensures read_exact doesn't try to read more than requested
+        buffer.truncate(len);
+        buffer.resize(len, 0);
+
+        // Read into buffer, handling errors properly
+        match file.read_exact(&mut buffer).await {
+            Ok(_) => Ok(buffer),
+            Err(e) => {
+                // Return buffer to pool on error
+                self.buffer_pool.return_buffer(buffer);
+                Err(e.into())
+            }
+        }
     }
     
     async fn sync_all(&self) -> Result<()> {
@@ -227,6 +259,7 @@ impl AsyncWalFile for TokioWalFile {
 pub struct IoUringWalFile {
     // Channel for sending commands to the io_uring task
     tx: tokio::sync::mpsc::UnboundedSender<IoUringCommand>,
+    buffer_pool: Arc<AlignedBufferPool>,
 }
 
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
@@ -256,7 +289,12 @@ impl IoUringWalFile {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        
+
+        // Initialize buffer pool for WAL I/O
+        // 4096-byte alignment for optimal I/O, 100 buffers per pool
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 100));
+        let buffer_pool_clone = buffer_pool.clone();
+
         // Spawn the io_uring task
         let path_clone = path.clone();
         tokio_uring::spawn(async move {
@@ -285,13 +323,28 @@ impl IoUringWalFile {
                     },
                     IoUringCommand::ReadAt { offset, len, response } => {
                         let result: std::result::Result<Vec<u8>, std::io::Error> = async {
-                            let buffer = vec![0u8; len];
+                            // Get buffer from pool instead of allocating
+                            let buffer = match buffer_pool_clone.get_aligned_buffer(len) {
+                                Ok(buf) => buf,
+                                Err(e) => {
+                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                                }
+                            };
+
                             let (result, mut returned_buf) = file.read_at(buffer, offset).await;
-                            let bytes_read = result?;
-                            if bytes_read < len {
-                                returned_buf.truncate(bytes_read);
+                            match result {
+                                Ok(bytes_read) => {
+                                    if bytes_read < len {
+                                        returned_buf.truncate(bytes_read);
+                                    }
+                                    Ok(returned_buf)
+                                }
+                                Err(e) => {
+                                    // Return buffer to pool on error
+                                    buffer_pool_clone.return_buffer(returned_buf);
+                                    Err(e)
+                                }
                             }
-                            Ok(returned_buf)
                         }.await;
                         let _ = response.send(result.map_err(Into::into));
                     },
@@ -309,8 +362,85 @@ impl IoUringWalFile {
                 }
             }
         });
-        
-        Ok(Self { tx })
+
+        Ok(Self { tx, buffer_pool })
+    }
+
+    pub async fn new_with_pool<P: AsRef<Path>>(path: P, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let buffer_pool_clone = buffer_pool.clone();
+
+        // Spawn the io_uring task
+        let path_clone = path.clone();
+        tokio_uring::spawn(async move {
+            let file = match tokio_uring::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .read(true)
+                .open(&path)
+                .await
+            {
+                Ok(file) => file,
+                Err(_) => return, // Failed to open file
+            };
+
+            let path = path_clone;
+
+            while let Some(cmd) = rx.recv().await {
+                match cmd {
+                    IoUringCommand::WriteAt { data, offset, response } => {
+                        let result: std::result::Result<Vec<u8>, std::io::Error> = async {
+                            let (result, returned_buf) = file.write_at(data, offset).await;
+                            result?;
+                            Ok(returned_buf)
+                        }.await;
+                        let _ = response.send(result.map_err(Into::into));
+                    },
+                    IoUringCommand::ReadAt { offset, len, response } => {
+                        let result: std::result::Result<Vec<u8>, std::io::Error> = async {
+                            // Get buffer from pool instead of allocating
+                            let buffer = match buffer_pool_clone.get_aligned_buffer(len) {
+                                Ok(buf) => buf,
+                                Err(e) => {
+                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                                }
+                            };
+
+                            let (result, mut returned_buf) = file.read_at(buffer, offset).await;
+                            match result {
+                                Ok(bytes_read) => {
+                                    if bytes_read < len {
+                                        returned_buf.truncate(bytes_read);
+                                    }
+                                    Ok(returned_buf)
+                                }
+                                Err(e) => {
+                                    // Return buffer to pool on error
+                                    buffer_pool_clone.return_buffer(returned_buf);
+                                    Err(e)
+                                }
+                            }
+                        }.await;
+                        let _ = response.send(result.map_err(Into::into));
+                    },
+                    IoUringCommand::SyncAll { response } => {
+                        let result = file.sync_all().await.map_err(Into::into);
+                        let _ = response.send(result);
+                    },
+                    IoUringCommand::FileSize { response } => {
+                        let result = std::fs::metadata(&path)
+                            .map(|metadata| metadata.len())
+                            .map_err(Into::into);
+                        let _ = response.send(result);
+                    },
+                    IoUringCommand::Shutdown => break,
+                }
+            }
+        });
+
+        Ok(Self { tx, buffer_pool })
     }
 }
 

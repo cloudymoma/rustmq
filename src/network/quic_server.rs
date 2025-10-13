@@ -1,7 +1,8 @@
 use crate::{
-    Result, types::*, config::NetworkConfig, 
+    Result, types::*, config::NetworkConfig,
     security::{SecurityConfig, AuthenticationManager, AuthorizationManager, CertificateManager, SecurityMetrics},
     error::RustMqError,
+    storage::{AlignedBufferPool, BufferPool},
 };
 use super::secure_connection::{AuthenticatedConnection, AuthenticatedConnectionPool};
 use bytes::Bytes;
@@ -18,6 +19,7 @@ pub struct QuicServer {
     endpoint: Endpoint,
     connection_pool: Arc<ConnectionPool>,
     request_router: Arc<RequestRouter>,
+    buffer_pool: Arc<AlignedBufferPool>,
     config: NetworkConfig,
 }
 
@@ -228,10 +230,15 @@ impl QuicServer {
             metadata_handler,
         ));
 
+        // Initialize buffer pool for network I/O
+        // 4096-byte alignment for optimal I/O performance, pool size = max_connections * 2
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, config.max_connections * 2));
+
         Ok(Self {
             endpoint,
             connection_pool,
             request_router,
+            buffer_pool,
             config,
         })
     }
@@ -279,9 +286,10 @@ impl QuicServer {
             
             let router = self.request_router.clone();
             let pool = self.connection_pool.clone();
-            
+            let buffer_pool = self.buffer_pool.clone();
+
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(connection, router).await {
+                if let Err(e) = Self::handle_connection(connection, router, buffer_pool).await {
                     tracing::error!("Connection error: {}", e);
                 }
                 pool.remove_connection(&client_id).await;
@@ -294,44 +302,60 @@ impl QuicServer {
     async fn handle_connection(
         connection: Connection,
         router: Arc<RequestRouter>,
+        buffer_pool: Arc<AlignedBufferPool>,
     ) -> Result<()> {
         while let Ok((mut send, mut recv)) = connection.accept_bi().await {
             let router = router.clone();
-            
+            let buffer_pool = buffer_pool.clone();
+
             tokio::spawn(async move {
-                let mut buffer = vec![0u8; 8192];
-                
-                if let Ok(Some(size)) = recv.read(&mut buffer).await {
-                    if size >= 1 {
-                        let request_type = RequestType::try_from(buffer[0])?;
-                        let request_data = Bytes::from(buffer[1..size].to_vec());
-                        
-                        match router.route_request(request_type, request_data).await {
-                            Ok(response_data) => {
-                                let mut response_with_type = vec![request_type as u8];
-                                response_with_type.extend_from_slice(&response_data);
-                                
-                                if let Err(e) = send.write_all(&response_with_type).await {
-                                    tracing::error!("Failed to send response: {}", e);
+                // Get buffer from pool instead of allocating
+                let buffer = buffer_pool.get_aligned_buffer(8192)?;
+
+                // Use RAII pattern to ensure buffer is returned to pool
+                let result = async {
+                    let mut buf = buffer;
+                    if let Ok(Some(size)) = recv.read(&mut buf).await {
+                        if size >= 1 {
+                            let request_type = RequestType::try_from(buf[0])?;
+                            let request_data = Bytes::from(buf[1..size].to_vec());
+
+                            match router.route_request(request_type, request_data).await {
+                                Ok(response_data) => {
+                                    let mut response_with_type = vec![request_type as u8];
+                                    response_with_type.extend_from_slice(&response_data);
+
+                                    if let Err(e) = send.write_all(&response_with_type).await {
+                                        tracing::error!("Failed to send response: {}", e);
+                                    }
+
+                                    if let Err(e) = send.finish().await {
+                                        tracing::error!("Failed to finish stream: {}", e);
+                                    }
                                 }
-                                
-                                if let Err(e) = send.finish().await {
-                                    tracing::error!("Failed to finish stream: {}", e);
+                                Err(e) => {
+                                    tracing::error!("Request processing error: {}", e);
+                                    let error_response = format!("Error: {e}");
+                                    let mut error_with_type = vec![255u8]; // Error indicator
+                                    error_with_type.extend_from_slice(error_response.as_bytes());
+
+                                    let _ = send.write_all(&error_with_type).await;
+                                    let _ = send.finish().await;
                                 }
-                            }
-                            Err(e) => {
-                                tracing::error!("Request processing error: {}", e);
-                                let error_response = format!("Error: {e}");
-                                let mut error_with_type = vec![255u8]; // Error indicator
-                                error_with_type.extend_from_slice(error_response.as_bytes());
-                                
-                                let _ = send.write_all(&error_with_type).await;
-                                let _ = send.finish().await;
                             }
                         }
                     }
+                    Ok::<Vec<u8>, crate::error::RustMqError>(buf)
+                }.await;
+
+                // Return buffer to pool after processing (in both success and error paths)
+                match result {
+                    Ok(buf) => buffer_pool.return_buffer(buf),
+                    Err(_) => {
+                        // Buffer was already moved/consumed, nothing to return
+                    }
                 }
-                
+
                 Ok::<(), crate::error::RustMqError>(())
             });
         }
@@ -345,6 +369,7 @@ pub struct SecureQuicServer {
     endpoint: Endpoint,
     authenticated_pool: Arc<AuthenticatedConnectionPool>,
     request_router: Arc<RequestRouter>,
+    buffer_pool: Arc<AlignedBufferPool>,
     auth_manager: Arc<AuthenticationManager>,
     authz_manager: Arc<AuthorizationManager>,
     cert_manager: Arc<CertificateManager>,
@@ -390,10 +415,15 @@ impl SecureQuicServer {
             metadata_handler,
         ));
 
+        // Initialize buffer pool for network I/O
+        // 4096-byte alignment for optimal I/O performance, pool size = max_connections * 2
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, config.max_connections * 2));
+
         Ok(Self {
             endpoint,
             authenticated_pool,
             request_router,
+            buffer_pool,
             auth_manager,
             authz_manager,
             cert_manager,
@@ -565,7 +595,8 @@ impl SecureQuicServer {
             let metrics = self.metrics.clone();
             let pool = self.authenticated_pool.clone();
             let router = self.request_router.clone();
-            
+            let buffer_pool = self.buffer_pool.clone();
+
             tokio::spawn(async move {
                 match Self::authenticate_and_handle_connection(
                     connection,
@@ -575,6 +606,7 @@ impl SecureQuicServer {
                     metrics,
                     pool.clone(),
                     router,
+                    buffer_pool,
                 ).await {
                     Ok(_) => {
                         tracing::debug!(
@@ -608,6 +640,7 @@ impl SecureQuicServer {
         metrics: Arc<SecurityMetrics>,
         pool: Arc<AuthenticatedConnectionPool>,
         router: Arc<RequestRouter>,
+        buffer_pool: Arc<AlignedBufferPool>,
     ) -> Result<()> {
         // Perform proper mTLS authentication with certificate validation
         let remote_addr = connection.remote_address();
@@ -648,7 +681,7 @@ impl SecureQuicServer {
         pool.add_connection(connection_id.clone(), authenticated_conn.clone())?;
 
         // Handle connection requests
-        Self::handle_authenticated_connection(authenticated_conn, router).await
+        Self::handle_authenticated_connection(authenticated_conn, router, buffer_pool).await
     }
 
     /// Perform mTLS authentication by extracting and validating client certificates
@@ -723,6 +756,7 @@ impl SecureQuicServer {
     async fn handle_authenticated_connection(
         authenticated_conn: AuthenticatedConnection,
         router: Arc<RequestRouter>,
+        buffer_pool: Arc<AlignedBufferPool>,
     ) -> Result<()> {
         let connection = authenticated_conn.connection();
 
@@ -730,79 +764,94 @@ impl SecureQuicServer {
             let router = router.clone();
             let authenticated_conn = authenticated_conn.clone();
             let principal = authenticated_conn.principal().clone(); // Clone inside loop
-            
+            let buffer_pool = buffer_pool.clone();
+
             tokio::spawn(async move {
-                let mut buffer = vec![0u8; 8192];
-                
-                if let Ok(Some(size)) = recv.read(&mut buffer).await {
-                    if size >= 1 {
-                        let request_type = RequestType::try_from(buffer[0])?;
-                        let request_data = Bytes::from(buffer[1..size].to_vec());
-                        
-                        // Update activity for the authenticated connection
-                        authenticated_conn.update_activity();
-                        
-                        // Check authorization for the request
-                        let resource = Self::extract_resource_from_request(request_type, &request_data);
-                        let permission = Self::get_required_permission(request_type);
-                        
-                        match authenticated_conn.authorize_request(&resource, permission).await {
-                            Ok(true) => {
-                                // Process authorized request
-                                match router.route_request(request_type, request_data).await {
-                                    Ok(response_data) => {
-                                        let mut response_with_type = vec![request_type as u8];
-                                        response_with_type.extend_from_slice(&response_data);
-                                        
-                                        if let Err(e) = send.write_all(&response_with_type).await {
+                // Get buffer from pool instead of allocating
+                let buffer = buffer_pool.get_aligned_buffer(8192)?;
+
+                // Use RAII pattern to ensure buffer is returned to pool
+                let result = async {
+                    let mut buf = buffer;
+                    if let Ok(Some(size)) = recv.read(&mut buf).await {
+                        if size >= 1 {
+                            let request_type = RequestType::try_from(buf[0])?;
+                            let request_data = Bytes::from(buf[1..size].to_vec());
+
+                            // Update activity for the authenticated connection
+                            authenticated_conn.update_activity();
+
+                            // Check authorization for the request
+                            let resource = Self::extract_resource_from_request(request_type, &request_data);
+                            let permission = Self::get_required_permission(request_type);
+
+                            match authenticated_conn.authorize_request(&resource, permission).await {
+                                Ok(true) => {
+                                    // Process authorized request
+                                    match router.route_request(request_type, request_data).await {
+                                        Ok(response_data) => {
+                                            let mut response_with_type = vec![request_type as u8];
+                                            response_with_type.extend_from_slice(&response_data);
+
+                                            if let Err(e) = send.write_all(&response_with_type).await {
+                                                tracing::error!(
+                                                    principal = %principal,
+                                                    error = %e,
+                                                    "Failed to send response"
+                                                );
+                                            }
+
+                                            let _ = send.finish().await;
+                                        }
+                                        Err(e) => {
                                             tracing::error!(
                                                 principal = %principal,
+                                                request_type = ?request_type,
                                                 error = %e,
-                                                "Failed to send response"
+                                                "Request processing error"
                                             );
+                                            Self::send_error_response(send, e).await;
                                         }
-                                        
-                                        let _ = send.finish().await;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            principal = %principal,
-                                            request_type = ?request_type,
-                                            error = %e,
-                                            "Request processing error"
-                                        );
-                                        Self::send_error_response(send, e).await;
                                     }
                                 }
-                            }
-                            Ok(false) => {
-                                // Authorization denied
-                                tracing::warn!(
-                                    principal = %principal,
-                                    resource = resource,
-                                    permission = ?permission,
-                                    "Authorization denied for authenticated request"
-                                );
-                                let auth_error = RustMqError::AuthorizationDenied {
-                                    principal: principal.to_string(),
-                                    resource,
-                                    permission: format!("{:?}", permission),
-                                };
-                                Self::send_error_response(send, auth_error).await;
-                            }
-                            Err(e) => {
-                                // Authorization check failed
-                                tracing::error!(
-                                    principal = %principal,
-                                    error = %e,
-                                    "Authorization check failed"
-                                );
-                                Self::send_error_response(send, e).await;
+                                Ok(false) => {
+                                    // Authorization denied
+                                    tracing::warn!(
+                                        principal = %principal,
+                                        resource = resource,
+                                        permission = ?permission,
+                                        "Authorization denied for authenticated request"
+                                    );
+                                    let auth_error = RustMqError::AuthorizationDenied {
+                                        principal: principal.to_string(),
+                                        resource,
+                                        permission: format!("{:?}", permission),
+                                    };
+                                    Self::send_error_response(send, auth_error).await;
+                                }
+                                Err(e) => {
+                                    // Authorization check failed
+                                    tracing::error!(
+                                        principal = %principal,
+                                        error = %e,
+                                        "Authorization check failed"
+                                    );
+                                    Self::send_error_response(send, e).await;
+                                }
                             }
                         }
                     }
+                    Ok::<Vec<u8>, RustMqError>(buf)
+                }.await;
+
+                // Return buffer to pool after processing (in both success and error paths)
+                match result {
+                    Ok(buf) => buffer_pool.return_buffer(buf),
+                    Err(_) => {
+                        // Buffer was already moved/consumed, nothing to return
+                    }
                 }
-                
+
                 Ok::<(), RustMqError>(())
             });
         }

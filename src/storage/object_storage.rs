@@ -1,4 +1,5 @@
 use crate::{Result, storage::traits::*, config::*};
+use crate::storage::{AlignedBufferPool, BufferPool};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::ops::Range;
@@ -11,11 +12,20 @@ use std::task::{Context, Poll};
 
 pub struct LocalObjectStorage {
     base_path: PathBuf,
+    buffer_pool: Arc<AlignedBufferPool>,
 }
 
 impl LocalObjectStorage {
     pub fn new(base_path: PathBuf) -> Result<Self> {
-        Ok(Self { base_path })
+        // Initialize buffer pool for object storage I/O
+        // 4096-byte alignment for optimal I/O, 100 buffers per pool
+        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 100));
+
+        Ok(Self { base_path, buffer_pool })
+    }
+
+    pub fn new_with_pool(base_path: PathBuf, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
+        Ok(Self { base_path, buffer_pool })
     }
 
     fn key_to_path(&self, key: &str) -> Result<PathBuf> {
@@ -62,13 +72,28 @@ impl ObjectStorage for LocalObjectStorage {
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {
         let path = self.key_to_path(key)?;
         let mut file = fs::File::open(&path).await?;
-        
+
         file.seek(tokio::io::SeekFrom::Start(range.start)).await?;
         let read_size = (range.end - range.start) as usize;
-        let mut buffer = vec![0u8; read_size];
-        file.read_exact(&mut buffer).await?;
-        
-        Ok(Bytes::from(buffer))
+
+        // Get buffer from pool instead of allocating
+        // Buffer pool may return a buffer larger than requested (due to alignment)
+        let mut buffer = self.buffer_pool.get_aligned_buffer(read_size)?;
+
+        // Truncate buffer to exactly the requested size before reading
+        // This ensures read_exact doesn't try to read more than requested
+        buffer.truncate(read_size);
+        buffer.resize(read_size, 0);
+
+        // Read into buffer, handling errors properly
+        match file.read_exact(&mut buffer).await {
+            Ok(_) => Ok(Bytes::from(buffer)),
+            Err(e) => {
+                // Return buffer to pool on error
+                self.buffer_pool.return_buffer(buffer);
+                Err(e.into())
+            }
+        }
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
