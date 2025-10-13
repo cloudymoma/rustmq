@@ -214,7 +214,7 @@ pub enum AcknowledgmentLevel {
     Custom(usize),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DurabilityLevel {
     LocalOnly,
     Durable,

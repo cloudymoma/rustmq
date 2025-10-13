@@ -275,16 +275,49 @@ impl UploadManagerImpl {
 
     async fn multipart_upload(&self, data: &[u8], key: &str) -> Result<String> {
         let chunk_size = 5 * 1024 * 1024; // 5MB chunks
-        let mut offset = 0;
-        
-        while offset < data.len() {
-            let end = (offset + chunk_size).min(data.len());
-            let chunk = &data[offset..end];
-            let chunk_key = format!("{key}.part{}", offset / chunk_size);
-            
-            self.storage.put(&chunk_key, Bytes::copy_from_slice(chunk)).await?;
-            offset = end;
+
+        // Use FuturesUnordered for parallel chunk uploads
+        // This dramatically improves upload speed by utilizing full network bandwidth
+        use futures::stream::{FuturesUnordered, StreamExt};
+
+        let mut upload_futures = FuturesUnordered::new();
+        let chunks: Vec<_> = data.chunks(chunk_size).enumerate().collect();
+
+        tracing::debug!(
+            "Starting parallel multipart upload: {} chunks ({} bytes total)",
+            chunks.len(),
+            data.len()
+        );
+
+        for (chunk_idx, chunk) in chunks {
+            let chunk_key = format!("{key}.part{}", chunk_idx);
+            let chunk_data = Bytes::copy_from_slice(chunk);
+            let storage = self.storage.clone();
+
+            upload_futures.push(async move {
+                storage.put(&chunk_key, chunk_data).await.map(|_| (chunk_idx, chunk_key))
+            });
         }
+
+        // Wait for all uploads to complete
+        let mut completed_chunks = 0;
+        while let Some(result) = upload_futures.next().await {
+            match result {
+                Ok((chunk_idx, chunk_key)) => {
+                    completed_chunks += 1;
+                    tracing::trace!("Chunk {} uploaded: {} ({}/{})", chunk_idx, chunk_key, completed_chunks, data.chunks(chunk_size).count());
+                }
+                Err(e) => {
+                    tracing::error!("Chunk upload failed: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+
+        tracing::debug!(
+            "Parallel multipart upload completed: {} chunks uploaded",
+            completed_chunks
+        );
 
         Ok(key.to_string())
     }
