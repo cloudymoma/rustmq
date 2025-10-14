@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use std::fmt;
 use bytes::Bytes;
+use smallvec::SmallVec;
 
 // Custom serde implementations for Bytes to maintain serialization compatibility
 mod bytes_serde {
@@ -50,6 +51,10 @@ pub type PartitionId = u32;
 pub type Offset = u64;
 pub type StreamId = u64;
 
+/// Headers collection optimized for common case of <4 headers
+/// Using SmallVec avoids heap allocation for most messages
+pub type Headers = SmallVec<[Header; 4]>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct TopicPartition {
     pub topic: TopicName,
@@ -68,7 +73,7 @@ pub struct Record {
     pub key: Option<Bytes>,
     #[serde(with = "bytes_serde")]
     pub value: Bytes,
-    pub headers: Vec<Header>,
+    pub headers: Headers,  // SmallVec<[Header; 4]> - avoids heap alloc for <4 headers
     pub timestamp: i64,
 }
 
@@ -78,13 +83,23 @@ impl Record {
         Self {
             key: key.map(Bytes::from),
             value: Bytes::from(value),
-            headers,
+            headers: SmallVec::from_vec(headers),  // Convert Vec to SmallVec
             timestamp,
         }
     }
-    
+
     /// Create a new Record with Bytes data (zero-copy)
     pub fn from_bytes(key: Option<Bytes>, value: Bytes, headers: Vec<Header>, timestamp: i64) -> Self {
+        Self {
+            key,
+            value,
+            headers: SmallVec::from_vec(headers),  // Convert Vec to SmallVec
+            timestamp,
+        }
+    }
+
+    /// Create a new Record with Headers (SmallVec) directly - most efficient
+    pub fn with_headers(key: Option<Bytes>, value: Bytes, headers: Headers, timestamp: i64) -> Self {
         Self {
             key,
             value,

@@ -68,7 +68,7 @@ async fn test_replication_manager_basic_replication() {
         crc32: 0,
     };
 
-    let result = replication_manager.replicate_record(record).await.unwrap();
+    let result = replication_manager.replicate_record(&record).await.unwrap();
     assert_eq!(result.offset, 0);
     assert!(matches!(result.durability, DurabilityLevel::Durable));
 
@@ -399,7 +399,7 @@ async fn test_replication_timeout_handling() {
 
     let result = timeout(
         Duration::from_millis(500),
-        replication_manager.replicate_record(record)
+        replication_manager.replicate_record(&record)
     ).await;
     
     assert!(result.is_ok(), "Replication should complete within timeout");
@@ -465,7 +465,7 @@ async fn test_concurrent_replication_operations() {
                 ),
                 crc32: 0,
             };
-            manager.replicate_record(record).await
+            manager.replicate_record(&record).await
         }));
     }
 

@@ -197,7 +197,7 @@ async fn test_early_return_with_majority() {
     let record = create_test_record(0);
 
     let start = Instant::now();
-    let result = manager.replicate_record(record).await.unwrap();
+    let result = manager.replicate_record(&record).await.unwrap();
     let elapsed = start.elapsed();
 
     // Should return in ~20-30ms (after broker-2), not 200ms (broker-4)
@@ -227,7 +227,7 @@ async fn test_handles_slow_followers_gracefully() {
     let record = create_test_record(0);
 
     let start = Instant::now();
-    let result = manager.replicate_record(record).await.unwrap();
+    let result = manager.replicate_record(&record).await.unwrap();
     let elapsed = start.elapsed();
 
     // Should return quickly despite slow follower
@@ -257,7 +257,7 @@ async fn test_handles_follower_failures() {
 
     let record = create_test_record(0);
 
-    let result = manager.replicate_record(record).await.unwrap();
+    let result = manager.replicate_record(&record).await.unwrap();
 
     // Should still succeed with 2/3 followers
     assert_eq!(result.durability, DurabilityLevel::Durable);
@@ -289,7 +289,7 @@ async fn test_insufficient_acks_returns_local_only() {
 
     let record = create_test_record(0);
 
-    let result = manager.replicate_record(record).await.unwrap();
+    let result = manager.replicate_record(&record).await.unwrap();
 
     // Should return LocalOnly since all followers failed
     assert_eq!(result.durability, DurabilityLevel::LocalOnly);
@@ -323,7 +323,7 @@ async fn test_performance_improvement_over_join_all() {
     let record = create_test_record(0);
 
     let start = Instant::now();
-    let result = manager.replicate_record(record).await.unwrap();
+    let result = manager.replicate_record(&record).await.unwrap();
     let elapsed = start.elapsed();
 
     // FuturesUnordered: should return after ~20ms (3rd fastest follower)
@@ -359,7 +359,7 @@ async fn test_concurrent_replication_requests() {
         let manager_clone = manager.clone();
         let handle = tokio::spawn(async move {
             let record = create_test_record(i);
-            manager_clone.replicate_record(record).await
+            manager_clone.replicate_record(&record).await
         });
         handles.push(handle);
     }
@@ -393,7 +393,7 @@ async fn test_preserves_follower_state_updates() {
     let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 2, followers).await;
 
     let record = create_test_record(0);
-    manager.replicate_record(record).await.unwrap();
+    manager.replicate_record(&record).await.unwrap();
 
     // Give some time for remaining futures to complete
     tokio::time::sleep(Duration::from_millis(100)).await;

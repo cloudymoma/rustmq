@@ -116,7 +116,7 @@ impl ReplicationManager {
     }
 
     async fn append_to_local_wal(&self, record: WalRecord) -> Result<Offset> {
-        let offset = self.wal.append(record).await?;
+        let offset = self.wal.append(&record).await?;
         self.log_end_offset.store(offset + 1, Ordering::SeqCst);
         Ok(offset)
     }
@@ -478,9 +478,9 @@ impl ReplicationManager {
 
 #[async_trait]
 impl ReplicationManagerTrait for ReplicationManager {
-    async fn replicate_record(&self, record: WalRecord) -> Result<ReplicationResult> {
+    async fn replicate_record(&self, record: &WalRecord) -> Result<ReplicationResult> {
         let local_offset = self.append_to_local_wal(record.clone()).await?;
-        self.wait_for_acknowledgments(record, local_offset).await
+        self.wait_for_acknowledgments(record.clone(), local_offset).await
     }
 
     async fn add_follower(&self, broker_id: BrokerId) -> Result<()> {
@@ -646,7 +646,7 @@ mod tests {
             crc32: 0,
         };
 
-        let result = replication_manager.replicate_record(record).await.unwrap();
+        let result = replication_manager.replicate_record(&record).await.unwrap();
         assert_eq!(result.offset, 0);
 
         replication_manager.add_follower("broker-4".to_string()).await.unwrap();
@@ -724,7 +724,7 @@ mod tests {
             crc32: 0,
         };
 
-        let result = replication_manager.replicate_record(record).await.unwrap();
+        let result = replication_manager.replicate_record(&record).await.unwrap();
         
         // Should still succeed locally but with LocalOnly durability
         assert_eq!(result.offset, 0);
@@ -810,7 +810,7 @@ mod tests {
             crc32: 0,
         };
 
-        let result = replication_manager.replicate_record(record).await.unwrap();
+        let result = replication_manager.replicate_record(&record).await.unwrap();
         assert_eq!(result.offset, 0);
 
         // High-watermark should be correctly calculated

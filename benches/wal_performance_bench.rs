@@ -3,6 +3,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Benchmark
 use rustmq::storage::{DirectIOWal, OptimizedDirectIOWal, WalFactory, AlignedBufferPool, traits::WriteAheadLog};
 use rustmq::config::WalConfig;
 use rustmq::types::{WalRecord, TopicPartition, Record};
+use smallvec::SmallVec;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -17,7 +18,7 @@ fn create_test_record(offset: u64, size: usize) -> WalRecord {
         record: Record {
             key: Some(format!("key-{}", offset).into_bytes().into()),
             value: vec![0u8; size].into(),
-            headers: vec![],
+            headers: SmallVec::new(),
             timestamp: chrono::Utc::now().timestamp_millis(),
         },
         crc32: 0,
@@ -68,7 +69,7 @@ fn bench_wal_append_latency(c: &mut Criterion) {
                         let start = std::time::Instant::now();
                         for i in 0..iters {
                             let record = create_test_record(i, size);
-                            black_box(wal.append(record).await.unwrap());
+                            black_box(wal.append(&record).await.unwrap());
                         }
                         start.elapsed()
                     })
@@ -90,7 +91,7 @@ fn bench_wal_append_latency(c: &mut Criterion) {
                         let start = std::time::Instant::now();
                         for i in 0..iters {
                             let record = create_test_record(i, size);
-                            black_box(wal.append(record).await.unwrap());
+                            black_box(wal.append(&record).await.unwrap());
                         }
                         start.elapsed()
                     })
@@ -120,7 +121,7 @@ fn bench_wal_read_latency(c: &mut Criterion) {
                 // Pre-populate with data
                 for i in 0..num_records {
                     let record = create_test_record(i, record_size);
-                    wal.append(record).await.unwrap();
+                    wal.append(&record).await.unwrap();
                 }
                 wal.sync().await.unwrap();
                 
@@ -144,7 +145,7 @@ fn bench_wal_read_latency(c: &mut Criterion) {
                 // Pre-populate with data
                 for i in 0..num_records {
                     let record = create_test_record(i, record_size);
-                    wal.append(record).await.unwrap();
+                    wal.append(&record).await.unwrap();
                 }
                 wal.sync().await.unwrap();
                 
@@ -184,7 +185,7 @@ fn bench_wal_sync_performance(c: &mut Criterion) {
                             // Write a batch of records
                             for i in 0..size {
                                 let record = create_test_record(i, 1024);
-                                wal.append(record).await.unwrap();
+                                wal.append(&record).await.unwrap();
                             }
                             // Sync to disk
                             black_box(wal.sync().await.unwrap());
@@ -210,7 +211,7 @@ fn bench_wal_sync_performance(c: &mut Criterion) {
                             // Write a batch of records
                             for i in 0..size {
                                 let record = create_test_record(i, 1024);
-                                wal.append(record).await.unwrap();
+                                wal.append(&record).await.unwrap();
                             }
                             // Sync to disk
                             black_box(wal.sync().await.unwrap());
@@ -251,7 +252,7 @@ fn bench_wal_concurrent_writes(c: &mut Criterion) {
                             let task = tokio::spawn(async move {
                                 for i in 0..iters / conc as u64 {
                                     let record = create_test_record(i, 1024);
-                                    black_box(wal_clone.append(record).await.unwrap());
+                                    black_box(wal_clone.append(&record).await.unwrap());
                                 }
                             });
                             tasks.push(task);
@@ -285,7 +286,7 @@ fn bench_wal_concurrent_writes(c: &mut Criterion) {
                             let task = tokio::spawn(async move {
                                 for i in 0..iters / conc as u64 {
                                     let record = create_test_record(i, 1024);
-                                    black_box(wal_clone.append(record).await.unwrap());
+                                    black_box(wal_clone.append(&record).await.unwrap());
                                 }
                             });
                             tasks.push(task);
@@ -365,7 +366,7 @@ fn bench_wal_backend_comparison(c: &mut Criterion) {
                         for _ in 0..iters {
                             for i in 0..*count {
                                 let record = create_test_record(i as u64, *size);
-                                black_box(wal.append(record).await.unwrap());
+                                black_box(wal.append(&record).await.unwrap());
                             }
                             black_box(wal.sync().await.unwrap());
                         }
@@ -390,7 +391,7 @@ fn bench_wal_backend_comparison(c: &mut Criterion) {
                         for _ in 0..iters {
                             for i in 0..*count {
                                 let record = create_test_record(i as u64, *size);
-                                black_box(wal.append(record).await.unwrap());
+                                black_box(wal.append(&record).await.unwrap());
                             }
                             black_box(wal.sync().await.unwrap());
                         }

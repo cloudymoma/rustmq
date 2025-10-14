@@ -9,6 +9,7 @@ use crate::types::*;
 use crate::storage::traits::{WriteAheadLog, ObjectStorage, Cache};
 use crate::replication::traits::ReplicationManager;
 use crate::network::traits::NetworkHandler;
+use smallvec::SmallVec;
 
 /// High-level message broker core that orchestrates produce/consume operations
 pub struct MessageBrokerCore<W, O, C, R, N>
@@ -73,7 +74,7 @@ pub struct ProduceRecord {
     pub partition: Option<PartitionId>,
     pub key: Option<Vec<u8>>,
     pub value: Vec<u8>,
-    pub headers: Vec<Header>,
+    pub headers: Headers,  // SmallVec<[Header; 4]> - avoids heap alloc
     pub acks: AcknowledgmentLevel,
     pub timeout_ms: u32,
 }
@@ -91,10 +92,22 @@ pub struct ProduceResult {
 pub struct ConsumeRecord {
     pub topic_partition: TopicPartition,
     pub offset: Offset,
-    pub key: Option<Vec<u8>>,
-    pub value: Vec<u8>,
-    pub headers: Vec<Header>,
+    pub key: Option<Bytes>,     // Changed from Vec<u8> for zero-copy
+    pub value: Bytes,            // Changed from Vec<u8> for zero-copy
+    pub headers: Headers,        // SmallVec<[Header; 4]> - avoids heap alloc
     pub timestamp: i64,
+}
+
+impl ConsumeRecord {
+    /// Get key as Vec<u8> (copies data) - for backward compatibility
+    pub fn key_as_vec(&self) -> Option<Vec<u8>> {
+        self.key.as_ref().map(|k| k.to_vec())
+    }
+
+    /// Get value as Vec<u8> (copies data) - for backward compatibility
+    pub fn value_as_vec(&self) -> Vec<u8> {
+        self.value.to_vec()
+    }
 }
 
 impl<W, O, C, R, N> MessageBrokerCore<W, O, C, R, N>
@@ -125,13 +138,13 @@ where
     }
 
     /// Create a new producer instance
-    pub fn create_producer(&self) -> MessageProducer<W, O, C, R, N> {
-        MessageProducer::new(self)
+    pub fn create_producer(self: &Arc<Self>) -> MessageProducer<W, O, C, R, N> {
+        MessageProducer::new(Arc::clone(self))
     }
 
     /// Create a new consumer instance
-    pub fn create_consumer(&self, consumer_group: String) -> MessageConsumer<W, O, C, R, N> {
-        MessageConsumer::new(self, consumer_group)
+    pub fn create_consumer(self: &Arc<Self>, consumer_group: String) -> MessageConsumer<W, O, C, R, N> {
+        MessageConsumer::new(Arc::clone(self), consumer_group)
     }
 
     /// Add a partition to this broker
@@ -195,9 +208,9 @@ where
             offsets.push(offset);
         }
 
-        // Append to WAL
+        // Append to WAL (pass by reference - no cloning!)
         for record in &wal_records {
-            self.wal.append(record.clone()).await?;
+            self.wal.append(record).await?;
         }
 
         // Replicate based on acknowledgment level
@@ -209,17 +222,17 @@ where
                 // Leader acknowledgment only - records are already in WAL
             }
             AcknowledgmentLevel::Majority | AcknowledgmentLevel::All => {
-                // Wait for replication
+                // Wait for replication (pass by reference - no cloning!)
                 for record in &wal_records {
                     self.replication_manager
-                        .replicate_record(record.clone())
+                        .replicate_record(record)
                         .await?;
                 }
             }
             AcknowledgmentLevel::Custom(_n) => {
                 for record in &wal_records {
                     self.replication_manager
-                        .replicate_record(record.clone())
+                        .replicate_record(record)
                         .await?;
                 }
             }
@@ -302,9 +315,9 @@ where
     R: ReplicationManager + Send + Sync,
     N: NetworkHandler + Send + Sync,
 {
-    fn new(core: &MessageBrokerCore<W, O, C, R, N>) -> Self {
+    fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>) -> Self {
         Self {
-            core: Arc::new(core.clone()),
+            core,  // Just store the Arc, no cloning needed!
         }
     }
 }
@@ -325,12 +338,12 @@ where
             partition: partition_id,
         };
 
-        let wal_record = Record {
-            key: record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
-            value: Bytes::from(record.value), // Convert Vec<u8> to Bytes
-            headers: record.headers,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
+        let wal_record = Record::with_headers(
+            record.key.map(Bytes::from),      // Convert Vec<u8> to Bytes
+            Bytes::from(record.value),        // Convert Vec<u8> to Bytes
+            record.headers,                    // SmallVec directly (no conversion)
+            chrono::Utc::now().timestamp_millis(),
+        );
 
         let offsets = self
             .core
@@ -358,12 +371,12 @@ where
                 partition: partition_id,
             };
 
-            let wal_record = Record {
-                key: record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
-                value: Bytes::from(record.value), // Convert Vec<u8> to Bytes
-                headers: record.headers,
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
+            let wal_record = Record::with_headers(
+                record.key.map(Bytes::from),      // Convert Vec<u8> to Bytes
+                Bytes::from(record.value),        // Convert Vec<u8> to Bytes
+                record.headers,                    // SmallVec directly (no conversion)
+                chrono::Utc::now().timestamp_millis(),
+            );
 
             grouped_records
                 .entry(topic_partition)
@@ -420,9 +433,9 @@ where
     R: ReplicationManager + Send + Sync,
     N: NetworkHandler + Send + Sync,
 {
-    fn new(core: &MessageBrokerCore<W, O, C, R, N>, consumer_group: String) -> Self {
+    fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>, consumer_group: String) -> Self {
         Self {
-            core: Arc::new(core.clone()),
+            core,  // Just store the Arc, no cloning needed!
             consumer_group,
             subscribed_topics: Vec::new(),
             partition_offsets: HashMap::new(),
@@ -468,9 +481,9 @@ where
                         records.push(ConsumeRecord {
                             topic_partition: topic_partition.clone(),
                             offset: *current_offset + i as u64,
-                            key: record.key.map(|k| k.to_vec()), // Convert Bytes to Vec<u8>
-                            value: record.value.to_vec(), // Convert Bytes to Vec<u8>
-                            headers: record.headers,
+                            key: record.key,          // Zero-copy: Bytes directly
+                            value: record.value,      // Zero-copy: Bytes directly
+                            headers: record.headers,  // SmallVec directly
                             timestamp: record.timestamp,
                         });
                     }
@@ -538,10 +551,10 @@ mod tests {
 
     #[async_trait]
     impl WriteAheadLog for MockWal {
-        async fn append(&self, record: WalRecord) -> Result<u64> {
+        async fn append(&self, record: &WalRecord) -> Result<u64> {
             let mut stored_records = self.records.write().await;
             let offset = stored_records.len() as u64;
-            stored_records.push(record);
+            stored_records.push(record.clone());
             Ok(offset)
         }
 
@@ -651,7 +664,7 @@ mod tests {
 
     #[async_trait]
     impl ReplicationManager for MockReplicationManager {
-        async fn replicate_record(&self, record: WalRecord) -> Result<ReplicationResult> {
+        async fn replicate_record(&self, record: &WalRecord) -> Result<ReplicationResult> {
             Ok(ReplicationResult {
                 offset: record.offset,
                 durability: DurabilityLevel::Durable,
@@ -700,14 +713,14 @@ mod tests {
         let replication_manager = Arc::new(MockReplicationManager);
         let network_handler = Arc::new(MockNetworkHandler);
 
-        let core = MessageBrokerCore::new(
+        let core = Arc::new(MessageBrokerCore::new(
             wal,
             object_storage,
             cache,
             replication_manager,
             network_handler,
             "broker-1".to_string(),
-        );
+        ));
 
         // Add a partition
         let topic_partition = TopicPartition {
@@ -730,7 +743,7 @@ mod tests {
             partition: Some(0),
             key: Some(b"key1".to_vec()),
             value: b"Hello, World!".to_vec(),
-            headers: vec![],
+            headers: smallvec::SmallVec::new(),
             acks: AcknowledgmentLevel::Leader,
             timeout_ms: 5000,
         };
@@ -750,14 +763,14 @@ mod tests {
         let replication_manager = Arc::new(MockReplicationManager);
         let network_handler = Arc::new(MockNetworkHandler);
 
-        let core = MessageBrokerCore::new(
+        let core = Arc::new(MessageBrokerCore::new(
             wal,
             object_storage,
             cache,
             replication_manager,
             network_handler,
             "broker-1".to_string(),
-        );
+        ));
 
         let mut consumer = core.create_consumer("test-group".to_string());
         consumer.subscribe(vec!["test-topic".to_string()]).await.unwrap();

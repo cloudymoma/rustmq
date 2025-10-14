@@ -167,7 +167,7 @@ async fn test_full_system_integration() {
         crc32: 0,
     };
 
-    let replication_result = replication_manager.replicate_record(wal_record).await.unwrap();
+    let replication_result = replication_manager.replicate_record(&wal_record).await.unwrap();
     assert_eq!(replication_result.offset, 0);
     assert!(matches!(replication_result.durability, DurabilityLevel::Durable));
 
@@ -297,7 +297,7 @@ async fn test_failure_recovery_scenarios() {
     };
 
     // Should still succeed locally but with appropriate durability level
-    let result = replication_manager.replicate_record(record).await.unwrap();
+    let result = replication_manager.replicate_record(&record).await.unwrap();
     assert_eq!(result.offset, 0);
 
     // Test 3: ETL processing with module errors
@@ -434,7 +434,7 @@ async fn test_concurrent_system_operations() {
                 ),
                 crc32: 0,
             };
-            manager.replicate_record(record).await
+            manager.replicate_record(&record).await
         }));
     }
 
@@ -658,7 +658,7 @@ async fn test_data_consistency_across_components() {
         crc32: 0,
     };
 
-    let replication_result = replication_manager.replicate_record(wal_record).await.unwrap();
+    let replication_result = replication_manager.replicate_record(&wal_record).await.unwrap();
     assert_eq!(replication_result.offset, 0);
 
     // Verify high watermark is consistent - it should be set to the local offset after replication

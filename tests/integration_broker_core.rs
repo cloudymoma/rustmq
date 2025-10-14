@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use async_trait::async_trait;
+use smallvec::SmallVec;
 
 // Mock implementations for integration testing
 struct MockWal {
@@ -25,10 +26,10 @@ impl MockWal {
 
 #[async_trait]
 impl WriteAheadLog for MockWal {
-    async fn append(&self, record: WalRecord) -> Result<u64> {
+    async fn append(&self, record: &WalRecord) -> Result<u64> {
         let mut stored_records = self.records.write().await;
         let offset = stored_records.len() as u64;
-        stored_records.push(record);
+        stored_records.push(record.clone());
         Ok(offset)
     }
 
@@ -209,7 +210,7 @@ impl MockReplicationManager {
 
 #[async_trait]
 impl ReplicationManager for MockReplicationManager {
-    async fn replicate_record(&self, record: WalRecord) -> Result<ReplicationResult> {
+    async fn replicate_record(&self, record: &WalRecord) -> Result<ReplicationResult> {
         let mut replicated = self.replicated_records.write().await;
         replicated.push(record.clone());
         Ok(ReplicationResult {
@@ -252,21 +253,21 @@ impl NetworkHandler for MockNetworkHandler {
     }
 }
 
-async fn create_test_broker() -> MessageBrokerCore<MockWal, MockObjectStorage, MockCache, MockReplicationManager, MockNetworkHandler> {
+async fn create_test_broker() -> Arc<MessageBrokerCore<MockWal, MockObjectStorage, MockCache, MockReplicationManager, MockNetworkHandler>> {
     let wal = Arc::new(MockWal::new());
     let object_storage = Arc::new(MockObjectStorage::new());
     let cache = Arc::new(MockCache::new());
     let replication_manager = Arc::new(MockReplicationManager::new());
     let network_handler = Arc::new(MockNetworkHandler);
 
-    let core = MessageBrokerCore::new(
+    let core = Arc::new(MessageBrokerCore::new(
         wal,
         object_storage,
         cache,
         replication_manager,
         network_handler,
         "test-broker-1".to_string(),
-    );
+    ));
 
     // Add a test partition
     let topic_partition = TopicPartition {
@@ -298,12 +299,13 @@ async fn test_end_to_end_produce_consume_workflow() {
     let produce_record = ProduceRecord {
         topic: "test-topic".to_string(),
         partition: Some(0),
-        key: Some(b"key1".to_vec().into()),
-        value: b"Hello, World!".to_vec().into(),
-        headers: vec![Header {
-            key: "content-type".to_string(),
-            value: b"text/plain".to_vec().into(),
-        }],
+        key: Some(b"key1".to_vec()),
+        value: b"Hello, World!".to_vec(),
+        headers: {
+            let mut h = SmallVec::new();
+            h.push(Header::new("content-type".to_string(), b"text/plain".to_vec()));
+            h
+        },
         acks: AcknowledgmentLevel::Leader,
         timeout_ms: 5000,
     };
@@ -321,8 +323,8 @@ async fn test_end_to_end_produce_consume_workflow() {
     assert_eq!(consumed_record.offset, 0);
     assert_eq!(consumed_record.topic_partition.topic, "test-topic");
     assert_eq!(consumed_record.topic_partition.partition, 0);
-    assert_eq!(consumed_record.key, Some(b"key1".to_vec()));
-    assert_eq!(consumed_record.value, b"Hello, World!");
+    assert_eq!(consumed_record.key.as_ref().map(|k| k.as_ref()), Some(b"key1".as_ref()));
+    assert_eq!(consumed_record.value.as_ref(), b"Hello, World!");
     assert_eq!(consumed_record.headers.len(), 1);
     assert_eq!(consumed_record.headers[0].key, "content-type");
 }
@@ -338,7 +340,7 @@ async fn test_batch_produce_operations() {
             partition: Some(0),
             key: Some(b"key1".to_vec()),
             value: b"Message 1".to_vec(),
-            headers: vec![],
+            headers: SmallVec::new(),
             acks: AcknowledgmentLevel::Leader,
             timeout_ms: 5000,
         },
@@ -347,7 +349,7 @@ async fn test_batch_produce_operations() {
             partition: Some(0),
             key: Some(b"key2".to_vec()),
             value: b"Message 2".to_vec(),
-            headers: vec![],
+            headers: SmallVec::new(),
             acks: AcknowledgmentLevel::Leader,
             timeout_ms: 5000,
         },
@@ -356,7 +358,7 @@ async fn test_batch_produce_operations() {
             partition: Some(0),
             key: Some(b"key3".to_vec()),
             value: b"Message 3".to_vec(),
-            headers: vec![],
+            headers: SmallVec::new(),
             acks: AcknowledgmentLevel::Leader,
             timeout_ms: 5000,
         },
@@ -388,7 +390,7 @@ async fn test_consumer_seek_functionality() {
             partition: Some(0),
             key: Some(format!("key{}", i).into_bytes()),
             value: format!("Message {}", i).into_bytes(),
-            headers: vec![],
+            headers: SmallVec::new(),
             acks: AcknowledgmentLevel::Leader,
             timeout_ms: 5000,
         };
@@ -464,7 +466,7 @@ async fn test_error_handling_invalid_partition() {
         partition: Some(0),
         key: None,
         value: b"test".to_vec(),
-        headers: vec![],
+        headers: SmallVec::new(),
         acks: AcknowledgmentLevel::Leader,
         timeout_ms: 5000,
     };
@@ -492,7 +494,7 @@ async fn test_different_acknowledgment_levels() {
             partition: Some(0),
             key: None,
             value: b"test".to_vec(),
-            headers: vec![],
+            headers: SmallVec::new(),
             acks: ack_level,
             timeout_ms: 5000,
         };

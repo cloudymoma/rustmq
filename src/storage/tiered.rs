@@ -392,7 +392,7 @@ impl TieredStorageEngine {
         };
 
         let record_copy = wal_record.record.clone();
-        let offset = self.wal.append(wal_record).await?;
+        let offset = self.wal.append(&wal_record).await?;
 
         let cache_key = format!("{topic_partition}:{offset}");
         let serialized = bincode::serialize(&record_copy)?;

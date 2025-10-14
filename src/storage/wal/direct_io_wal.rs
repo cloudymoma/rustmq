@@ -477,8 +477,8 @@ impl DirectIOWal {
 
 #[async_trait]
 impl WriteAheadLog for DirectIOWal {
-    async fn append(&self, record: WalRecord) -> Result<u64> {
-        let serialized = bincode::serialize(&record)?;
+    async fn append(&self, record: &WalRecord) -> Result<u64> {
+        let serialized = bincode::serialize(record)?;
         let record_size = serialized.len() as u64;
         let total_size = serialized.len() + 8; // 8 bytes for size prefix
         
@@ -709,7 +709,7 @@ mod tests {
             crc32: 0,
         };
 
-        let offset = wal.append(record.clone()).await.unwrap();
+        let offset = wal.append(&record).await.unwrap();
         assert_eq!(offset, 0);
 
         let records = wal.read(0, 1024).await.unwrap();
@@ -748,7 +748,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
 
         assert_eq!(wal.get_end_offset().await.unwrap(), 5);
@@ -797,7 +797,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
 
         // Wait for upload trigger (check every second for 5 seconds)
@@ -889,7 +889,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            _expected_end_offset = wal.append(record).await.unwrap() + 1;
+            _expected_end_offset = wal.append(&record).await.unwrap() + 1;
         }
 
         // Wait for upload callback to be triggered by size
@@ -946,9 +946,9 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
-        
+
         let append_duration = start_time.elapsed();
         
         // Force a sync to ensure all data is flushed
@@ -1007,7 +1007,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
 
         // Wait for upload triggers (both size and time based should occur)
@@ -1058,7 +1058,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
 
         // The buffer pool should be able to handle more allocations without running out
@@ -1078,9 +1078,9 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            
+
             // This should not fail due to buffer exhaustion if buffers are properly returned
-            let result = wal.append(record).await;
+            let result = wal.append(&record).await;
             assert!(result.is_ok(), "Buffer pool should not be exhausted if buffers are properly returned");
         }
         
@@ -1124,8 +1124,8 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            
-            let actual_offset = wal.append(record.clone()).await.unwrap();
+
+            let actual_offset = wal.append(&record).await.unwrap();
             
             // Store records with their actual offsets for verification
             let mut updated_record = record;
@@ -1214,7 +1214,7 @@ mod tests {
                         crc32: 0,
                     };
                     
-                    let actual_offset = wal_clone.append(record).await.unwrap();
+                    let actual_offset = wal_clone.append(&record).await.unwrap();
                     appended_offsets_clone.lock().unwrap().push(actual_offset);
                     
                     // Small delay to increase chances of race conditions
@@ -1323,7 +1323,7 @@ mod tests {
                         crc32: 0,
                     };
                     
-                    wal_clone.append(record).await.unwrap();
+                    wal_clone.append(&record).await.unwrap();
                 }
             });
             tasks.push(task);

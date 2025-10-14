@@ -405,8 +405,8 @@ impl OptimizedDirectIOWal {
 
 #[async_trait]
 impl WriteAheadLog for OptimizedDirectIOWal {
-    async fn append(&self, record: WalRecord) -> Result<u64> {
-        let serialized = bincode::serialize(&record)?;
+    async fn append(&self, record: &WalRecord) -> Result<u64> {
+        let serialized = bincode::serialize(record)?;
         let record_size = serialized.len() as u64;
         let total_size = serialized.len() + 8;
         
@@ -629,7 +629,7 @@ mod tests {
             crc32: 0,
         };
 
-        let offset = wal.append(record.clone()).await.unwrap();
+        let offset = wal.append(&record).await.unwrap();
         assert_eq!(offset, 0);
 
         let records = wal.read(0, 1024).await.unwrap();
@@ -713,7 +713,7 @@ mod tests {
                 ),
                 crc32: 0,
             };
-            wal.append(record).await.unwrap();
+            wal.append(&record).await.unwrap();
         }
         
         let write_duration = start_time.elapsed();

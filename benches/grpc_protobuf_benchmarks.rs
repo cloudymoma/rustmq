@@ -16,6 +16,7 @@ use rustmq::{
     proto_convert,
     error::RustMqError,
 };
+use smallvec::SmallVec;
 use chrono::Utc;
 use std::time::Duration;
 use rand::{Rng, thread_rng};
@@ -491,7 +492,7 @@ fn bench_compression_impact(c: &mut Criterion) {
     let compressible_record = Record {
         key: Some(compressible_data.clone().into()),
         value: compressible_data.into(),
-        headers: vec![],
+        headers: SmallVec::new(),
         timestamp: Utc::now().timestamp_millis(),
     };
     
@@ -500,7 +501,7 @@ fn bench_compression_impact(c: &mut Criterion) {
     let random_record = Record {
         key: Some(random_data.clone().into()),
         value: random_data.into(),
-        headers: vec![],
+        headers: SmallVec::new(),
         timestamp: Utc::now().timestamp_millis(),
     };
     

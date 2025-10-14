@@ -68,6 +68,9 @@ once_cell = "1.19"
 thread_local = "1.1"
 smallstr = "0.3"
 
+# Memory optimization - SmallVec for header collections
+smallvec = { version = "1.13", features = ["serde", "union", "const_generics"] }
+
 # Storage
 object_store = "0.8"
 aws-sdk-s3 = "0.35"
@@ -236,4 +239,12 @@ harness = false
 
 [[bench]]
 name = "connection_pool_bench"
+harness = false
+
+[[bench]]
+name = "header_performance_bench"
+harness = false
+
+[[bench]]
+name = "quick_header_bench"
 harness = false

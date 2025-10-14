@@ -74,7 +74,7 @@ impl FollowerReplicationHandler {
 
         // Process the records
         for record in request.records {
-            match self.wal.append(record).await {
+            match self.wal.append(&record).await {
                 Ok(_offset) => {
                     // Record appended successfully
                 }
