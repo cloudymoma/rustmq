@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+spec:
+  replicas: 5  # 5 controllers for Raft quorum (tolerates 2 failures)
+  template:
+    spec:
+      containers:
+      - name: controller
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        env:
+        - name: RUST_LOG
+          value: "info"
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: controller
+            topologyKey: kubernetes.io/hostname  # Spread across different nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: controller
+              topologyKey: topology.kubernetes.io/zone  # Spread across zones
+  volumeClaimTemplates:
+  - metadata:
+      name: wal-storage
+    spec:
+      resources:
+        requests:
+          storage: 100Gi  # Large storage for production

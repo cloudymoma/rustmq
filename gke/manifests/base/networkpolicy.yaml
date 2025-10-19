@@ -1,0 +1,206 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-default-deny
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  # Default deny all traffic (allow rules below will override)
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: controller-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow controller <-> controller (Raft communication)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 9094  # gRPC
+    - protocol: TCP
+      port: 9095  # Admin
+    - protocol: TCP
+      port: 9642  # Raft
+  # Allow broker -> controller (coordination)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: broker
+    ports:
+    - protocol: TCP
+      port: 9094  # gRPC
+  # Allow admin-server -> controller
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: admin-server
+    ports:
+    - protocol: TCP
+      port: 9094  # gRPC
+  # Allow load balancer health checks
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9095  # Health check endpoint
+  egress:
+  # Allow controller -> controller
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 9094
+    - protocol: TCP
+      port: 9095
+    - protocol: TCP
+      port: 9642
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow access to GCS API (Google Cloud Storage)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443  # HTTPS for GCS
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: broker-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: broker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow broker <-> broker (replication)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: broker
+    ports:
+    - protocol: TCP
+      port: 9093  # Internal port
+  # Allow external clients via load balancer
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9092  # Client port (QUIC)
+  egress:
+  # Allow broker -> controller
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 9094
+  # Allow broker -> broker
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: broker
+    ports:
+    - protocol: TCP
+      port: 9093
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow access to GCS API
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443  # HTTPS for GCS
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-admin-server
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: admin-server-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: admin-server
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow external admin requests via ingress
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow admin-server -> controller
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 9094
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53

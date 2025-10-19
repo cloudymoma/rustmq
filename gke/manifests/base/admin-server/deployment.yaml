@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-admin-server
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: admin-server
+spec:
+  replicas: 2  # Redundancy for admin API
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: admin-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustmq
+        app.kubernetes.io/component: admin-server
+    spec:
+      serviceAccountName: rustmq-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: admin-server
+        image: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: RUST_LOG
+          value: "info"
+        - name: RUSTMQ_ADMIN_PORT
+          value: "8080"
+        - name: RUSTMQ_CONTROLLER_URL
+          value: "rustmq-controller-lb:9094"
+        - name: RUSTMQ_ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-admin-api-key
+              key: api-key
+              optional: true
+        volumeMounts:
+        - name: config
+          mountPath: /etc/rustmq/config
+        - name: tls-cert
+          mountPath: /etc/rustmq/tls
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: rustmq-admin-config
+      - name: tls-cert
+        secret:
+          secretName: rustmq-tls-cert
+          optional: true
+      - name: tmp
+        emptyDir: {}

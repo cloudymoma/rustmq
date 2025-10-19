@@ -1,231 +1,756 @@
-# RustMQ GKE Deployment
+# RustMQ GKE Deployment Guide
 
-This directory handles **GKE cluster deployment and management**. For Docker image building, see [`../docker/`](../docker/).
+**Phase 3: GKE Infrastructure Optimization** (October 2025)
 
-## Directory Structure
+Complete guide for deploying RustMQ to Google Kubernetes Engine (GKE).
 
-```
-gke/
-├── base/                          # Base Kubernetes resources
-│   ├── namespace.yaml             # Namespace and RBAC configuration
-│   ├── storage.yaml               # Storage classes and Local SSD setup
-│   ├── configmap-controller.yaml  # Controller configuration
-│   ├── configmap-broker.yaml      # Broker configuration
-│   ├── controller-statefulset.yaml # Controller StatefulSet
-│   ├── broker-daemonset.yaml      # Broker DaemonSet
-│   ├── services.yaml              # Kubernetes Services
-│   ├── ingress.yaml               # Ingress and NetworkPolicies
-│   ├── backend-config.yaml        # GCP BackendConfig and SecurityPolicy
-│   ├── monitoring.yaml            # Prometheus monitoring setup
-│   ├── hpa.yaml                   # Horizontal Pod Autoscaler
-│   └── kustomization.yaml         # Base Kustomization
-├── overlays/
-│   ├── production/                # Production-specific configurations
-│   │   └── kustomization.yaml
-│   └── development/               # Development-specific configurations
-│       └── kustomization.yaml
-└── README.md                      # This file
-```
+## Table of Contents
 
-## Base Components
+1. [Prerequisites](#prerequisites)
+2. [Quick Start](#quick-start)
+3. [Deployment Workflow](#deployment-workflow)
+4. [Environment Configuration](#environment-configuration)
+5. [Manual Deployment Steps](#manual-deployment-steps)
+6. [Deployment Scripts](#deployment-scripts)
+7. [Post-Deployment Tasks](#post-deployment-tasks)
+8. [Monitoring and Operations](#monitoring-and-operations)
+9. [Troubleshooting](#troubleshooting)
+10. [Cost Estimation](#cost-estimation)
 
-### Core Infrastructure
-- **namespace.yaml**: Creates `rustmq` namespace with RBAC and service accounts
-- **storage.yaml**: Defines storage classes for pd-ssd and Local SSD with provisioner
-- **controller-statefulset.yaml**: StatefulSet for 1-3 RustMQ controllers with persistent storage
-- **broker-daemonset.yaml**: DaemonSet for brokers with Local SSD mounting
+## Prerequisites
 
-### Configuration
-- **configmap-controller.yaml**: Controller configuration with OpenRaft settings
-- **configmap-broker.yaml**: Broker configuration with WAL, cache, and object storage
+### Required Tools
 
-### Networking
-- **services.yaml**: Multiple services for different traffic types:
-  - `controller-service`: Headless service for StatefulSet
-  - `broker-service`: ClusterIP service for internal traffic
-  - `broker-external`: LoadBalancer for external QUIC traffic
-  - `controller-admin`: Internal LoadBalancer for admin API
-- **ingress.yaml**: Ingress configuration with NetworkPolicies
-- **backend-config.yaml**: GCP-specific backend configuration and security policies
-
-### Monitoring & Autoscaling
-- **monitoring.yaml**: Prometheus ServiceMonitors, alerts, and Grafana dashboard
-- **hpa.yaml**: Horizontal Pod Autoscaler, VPA, and Pod Disruption Budgets
-
-## Key Features
-
-### Storage Architecture
-- **Controllers**: Use regional pd-ssd for Raft consensus logs and metadata
-- **Brokers**: Use Local SSD (375GB) for WAL with GCS for object storage
-- **Auto-provisioning**: Automatic Local SSD formatting and mounting
-
-### Security
-- **mTLS**: Mutual TLS for all inter-service communication
-- **Cloud Armor**: DDoS protection and geographic restrictions
-- **Network Policies**: Strict ingress/egress rules
-- **RBAC**: Least-privilege service accounts
-
-### Performance
-- **QUIC/HTTP3**: Low-latency client communication
-- **Local SSD**: High IOPS storage for WAL (680K read, 360K write IOPS)
-- **Auto-scaling**: CPU, memory, and custom metrics-based scaling
-- **Load Balancing**: Geographic distribution with health checks
-
-### Monitoring
-- **Prometheus**: Comprehensive metrics collection
-- **Grafana**: Pre-configured dashboards
-- **Alerting**: Critical alerts for availability and performance
-- **Observability**: Distributed tracing and log aggregation
-
-## Environment Configurations
-
-### Production Overlay
-- **3 Controllers**: High availability Raft consensus
-- **3-20 Brokers**: Auto-scaling based on load
-- **Resource Limits**: Production-grade CPU/memory allocation
-- **Security**: Full mTLS, Cloud Armor, strict policies
-- **Monitoring**: Full observability stack
-
-### Development Overlay
-- **1 Controller**: Minimal setup for development
-- **1-3 Brokers**: Limited scaling for cost efficiency
-- **Reduced Resources**: Lower CPU/memory for development
-- **Relaxed Security**: Simplified setup for iteration
-- **Debug Logging**: Verbose logging for troubleshooting
-
-## Deployment Variables
-
-Key environment variables that need to be set before deployment:
+Install the following tools on your local machine:
 
 ```bash
-# Google Cloud Configuration
-PROJECT_ID="your-project-id"
-SERVICE_ACCOUNT="rustmq-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-REGION="us-central1"
-ZONE="us-central1-a"
+# Google Cloud SDK
+curl https://sdk.cloud.google.com | bash
+exec -l $SHELL
+gcloud init
 
-# GKE Cluster Configuration
-CLUSTER_NAME="rustmq-cluster"
-NETWORK_NAME="rustmq-network"
-SUBNET_NAME="rustmq-subnet"
+# kubectl
+gcloud components install kubectl
 
-# Storage Configuration
-GCS_BUCKET="${PROJECT_ID}-rustmq-storage"
-GCS_REGION="us-central1"
+# kustomize
+curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+sudo mv kustomize /usr/local/bin/
 
-# Security Configuration
-CERT_DOMAIN="rustmq.your-domain.com"
-STATIC_IP_NAME="rustmq-static-ip"
+# Helm 3
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
 
-# Controller Configuration
-CONTROLLER_COUNT="3"
-CONTROLLER_CPU_REQUEST="2"
-CONTROLLER_CPU_LIMIT="4"
-CONTROLLER_MEMORY_REQUEST="4Gi"
-CONTROLLER_MEMORY_LIMIT="8Gi"
-CONTROLLER_DISK_SIZE="100Gi"
+### GCP Project Setup
 
-# Broker Configuration
-BROKER_MIN_COUNT="3"
-BROKER_MAX_COUNT="20"
-BROKER_CPU_REQUEST="4"
-BROKER_CPU_LIMIT="8"
-BROKER_MEMORY_REQUEST="8Gi"
-BROKER_MEMORY_LIMIT="16Gi"
+1. **Create GCP Project** (if not exists):
+   ```bash
+   gcloud projects create rustmq-project --name="RustMQ"
+   gcloud config set project rustmq-project
+   ```
+
+2. **Enable Required APIs**:
+   ```bash
+   gcloud services enable container.googleapis.com
+   gcloud services enable compute.googleapis.com
+   gcloud services enable secretmanager.googleapis.com
+   gcloud services enable storage-api.googleapis.com
+   gcloud services enable cloudresourcemanager.googleapis.com
+   ```
+
+3. **Set Up Billing**:
+   ```bash
+   # Link billing account (required)
+   gcloud beta billing accounts list
+   gcloud beta billing projects link rustmq-project \
+     --billing-account=BILLING_ACCOUNT_ID
+   ```
+
+4. **Grant Permissions**:
+   ```bash
+   # Your user needs these roles:
+   # - roles/container.admin (GKE cluster management)
+   # - roles/compute.admin (Network/LB management)
+   # - roles/secretmanager.admin (Secret Manager)
+   # - roles/storage.admin (GCS buckets)
+   ```
+
+### Docker Images
+
+Build and push Docker images to Artifact Registry:
+
+```bash
+# Create Artifact Registry repository
+gcloud artifacts repositories create rustmq \
+  --repository-format=docker \
+  --location=us \
+  --project=PROJECT_ID
+
+# Configure Docker authentication
+gcloud auth configure-docker us-docker.pkg.dev
+
+# Build and push images (from project root)
+cd docker
+./build-multiplatform.sh broker --push
+./build-multiplatform.sh controller --push
+./build-multiplatform.sh admin-server --push
 ```
 
 ## Quick Start
 
-### Automated Deployment (Recommended)
+### Development Environment (Single Command)
+
 ```bash
-# Complete production deployment with infrastructure setup
-./deploy-rustmq-gke.sh deploy --environment production
+# Navigate to gke directory
+cd gke
 
-# Development deployment
-./deploy-rustmq-gke.sh deploy --environment development
-
-# Deploy only Kubernetes resources (skip infrastructure)
-./deploy-rustmq-gke.sh deploy-k8s --environment production
-
-# Check deployment status
-./deploy-rustmq-gke.sh status
-
-# Cleanup resources
-./deploy-rustmq-gke.sh cleanup
+# Deploy everything
+./deploy.sh dev
 ```
 
-### Manual Deployment with Kustomize
-```bash
-# Production deployment
-kubectl apply -k overlays/production
+This single command will:
+1. Validate configuration
+2. Create GKE cluster
+3. Install External Secrets Operator
+4. Set up Google Secret Manager integration
+5. Deploy RustMQ (controllers, brokers, admin server)
+6. Configure networking
+7. Verify deployment
 
-# Development deployment  
-kubectl apply -k overlays/development
+**Time**: ~15-20 minutes
+
+### Production Environment (With Confirmations)
+
+```bash
+# Step-by-step with validation
+./deploy.sh prod
 ```
 
-## Deployment Script Features
+## Deployment Workflow
 
-The `deploy-rustmq-gke.sh` script provides complete automation:
-
-### Infrastructure Setup
-- **VPC Network**: Creates `rustmq-network` with custom subnet
-- **GCS Bucket**: Sets up object storage with lifecycle policies  
-- **Service Accounts**: Creates IAM roles and permissions
-- **Firewall Rules**: Configures security policies
-
-### GKE Cluster Creation
-- **Regional Cluster**: High availability across zones
-- **Node Pools**: Separate pools for controllers (pd-ssd) and brokers (Local SSD)
-- **Auto-scaling**: Dynamic scaling based on workload
-- **Security**: Workload Identity, shielded nodes
-
-### Kubernetes Deployment
-- **Environment Overlays**: Production vs development configurations
-- **Image Validation**: Checks required images exist in registry
-- **Resource Management**: CPU, memory, and storage allocation
-- **Health Monitoring**: Waits for deployment readiness
-
-### Script Options
-```bash
-# Command options
---environment production|development   # Environment configuration
---dry-run                             # Preview without applying
---skip-infra                          # Skip infrastructure setup
---skip-images                         # Skip image validation
-
-# Environment variables
-PROJECT_ID=my-project                 # GCP project
-CLUSTER_NAME=rustmq-cluster          # Cluster name
-REGION=us-central1                   # GCP region
-IMAGE_TAG=latest                     # Docker image tag
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Phase 1: Preparation                                         │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Configure environment (environments/prod.env)             │
+│ 2. Validate configuration (validate-config.sh)               │
+│ 3. Build Docker images                                       │
+└──────────────────────────────────────────────────────────────┘
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Phase 2: Infrastructure                                      │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Create GKE cluster (create-cluster.sh)                    │
+│ 2. Configure kubectl context                                 │
+│ 3. Set up Workload Identity                                  │
+│ 4. Create GCS bucket                                         │
+└──────────────────────────────────────────────────────────────┘
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Phase 3: Secrets Management                                  │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Install External Secrets Operator                         │
+│ 2. Create secrets in Google Secret Manager                   │
+│ 3. Apply SecretStore and ExternalSecrets                     │
+│ 4. Verify secrets synced to K8s                              │
+└──────────────────────────────────────────────────────────────┘
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Phase 4: Application Deployment                              │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Apply StorageClass                                        │
+│ 2. Deploy RustMQ with Kustomize                              │
+│ 3. Wait for pods to be ready                                 │
+│ 4. Configure networking (Ingress, load balancers)            │
+└──────────────────────────────────────────────────────────────┘
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Phase 5: Verification                                        │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Check pod health                                          │
+│ 2. Verify services have endpoints                            │
+│ 3. Run drift detection                                       │
+│ 4. Test connectivity                                         │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Verification Commands
+## Environment Configuration
+
+### Development (`dev`)
+
+**Purpose**: Local development and testing
+
+**Configuration**:
+- 1 controller (no HA)
+- 1-3 brokers (autoscaling)
+- e2-medium nodes
+- 80% preemptible nodes
+- Zonal cluster (single zone)
+- TLS disabled (faster iteration)
+
+**Cost**: ~$50-100/month
+
+**Use Cases**:
+- Feature development
+- Testing
+- Learning RustMQ
+
+### Staging (`staging`)
+
+**Purpose**: Pre-production testing
+
+**Configuration**:
+- 3 controllers (tolerates 1 failure)
+- 2-10 brokers (autoscaling)
+- n2-standard-4 nodes
+- 30% preemptible nodes
+- Regional cluster (3 zones)
+- Full TLS/mTLS enabled
+
+**Cost**: ~$200-400/month
+
+**Use Cases**:
+- Integration testing
+- Load testing
+- Client SDK testing
+- Pre-production validation
+
+### Production (`prod`)
+
+**Purpose**: Production workloads
+
+**Configuration**:
+- 5 controllers (tolerates 2 failures)
+- 5-50 brokers (autoscaling)
+- n2-standard-8 nodes
+- 0% preemptible nodes (reliability)
+- Regional cluster (3 zones)
+- Full security stack (TLS, mTLS, Binary Authorization)
+- Pod anti-affinity (spread across zones)
+
+**Cost**: ~$500-1000/month
+
+**Use Cases**:
+- Production message processing
+- Mission-critical workloads
+- High availability requirements
+
+## Manual Deployment Steps
+
+If you prefer step-by-step deployment instead of using `deploy.sh`:
+
+### Step 1: Configure Environment
+
 ```bash
-# Check all resources
-kubectl get all -n rustmq
+# Edit environment configuration
+vim gke/environments/prod.env
 
-# Check controllers
-kubectl get statefulset rustmq-controller -n rustmq
-
-# Check brokers  
-kubectl get daemonset rustmq-broker -n rustmq
-
-# View logs
-kubectl logs -f statefulset/rustmq-controller -n rustmq
-kubectl logs -f daemonset/rustmq-broker -n rustmq
-
-# Port forward admin API
-kubectl port-forward svc/controller-admin 9642:9642 -n rustmq
-curl http://localhost:9642/health
+# Update these variables:
+# - GCP_PROJECT_ID
+# - GCP_REGION
+# - CLUSTER_NAME
+# - GCS_BUCKET
 ```
+
+### Step 2: Validate Configuration
+
+```bash
+./gke/validate-config.sh prod
+```
+
+### Step 3: Create GKE Cluster
+
+```bash
+./gke/create-cluster.sh prod
+```
+
+### Step 4: Install External Secrets Operator
+
+```bash
+helm repo add external-secrets https://charts.external-secrets.io
+helm repo update
+
+helm install external-secrets \
+  external-secrets/external-secrets \
+  --namespace external-secrets-system \
+  --create-namespace \
+  --set installCRDs=true
+```
+
+### Step 5: Create Secrets in Google Secret Manager
+
+```bash
+./gke/secrets/setup-secrets.sh prod create
+./gke/secrets/setup-secrets.sh prod grant-access
+```
+
+### Step 6: Apply Storage Configuration
+
+```bash
+kubectl apply -f gke/storage/storageclass.yaml
+```
+
+### Step 7: Deploy RustMQ
+
+```bash
+# Deploy with Kustomize
+cd gke/manifests/overlays/prod
+
+# Replace PROJECT_ID and apply
+kustomize build . | sed "s/PROJECT_ID/YOUR_PROJECT_ID/g" | kubectl apply -f -
+```
+
+### Step 8: Apply Secrets Configuration
+
+```bash
+kubectl apply -f gke/secrets/external-secrets/secret-store.yaml
+kubectl apply -f gke/secrets/external-secrets/external-secrets.yaml
+```
+
+### Step 9: Verify Deployment
+
+```bash
+# Check pod status
+kubectl get pods -n rustmq
+
+# Check services
+kubectl get svc -n rustmq
+
+# Check secrets synced
+kubectl get externalsecrets -n rustmq
+
+# Run drift detection
+./gke/drift-detect.sh prod
+```
+
+## Deployment Scripts
+
+### Primary Scripts
+
+| Script | Purpose | Example |
+|--------|---------|---------|
+| `deploy.sh` | Master deployment orchestration | `./deploy.sh prod` |
+| `create-cluster.sh` | Create GKE cluster | `./create-cluster.sh staging` |
+| `delete-cluster.sh` | Delete GKE cluster safely | `./delete-cluster.sh dev` |
+| `validate-config.sh` | Validate environment config | `./validate-config.sh prod` |
+| `drift-detect.sh` | Detect configuration drift | `./drift-detect.sh prod --show-diff` |
+
+### Secrets Management Scripts
+
+| Script | Purpose | Example |
+|--------|---------|---------|
+| `secrets/setup-secrets.sh` | Manage Google Secret Manager | `./secrets/setup-secrets.sh prod create` |
+
+### Configuration Scripts
+
+| Script | Purpose | Example |
+|--------|---------|---------|
+| `scripts/load-config.sh` | Load environment configuration | `source scripts/load-config.sh prod` |
+
+## Post-Deployment Tasks
+
+### 1. Verify Pod Health
+
+```bash
+# Check all pods are running
+kubectl get pods -n rustmq
+
+# Watch pod status
+kubectl get pods -n rustmq -w
+
+# Check specific components
+kubectl get pods -l app.kubernetes.io/component=controller -n rustmq
+kubectl get pods -l app.kubernetes.io/component=broker -n rustmq
+```
+
+### 2. Test Connectivity
+
+```bash
+# Port forward to broker
+kubectl port-forward svc/rustmq-broker 9092:9092 -n rustmq
+
+# Test with RustMQ CLI (from another terminal)
+rustmq-cli produce --topic test --message "Hello from GKE!"
+
+# Port forward to admin API
+kubectl port-forward svc/rustmq-admin-server 8080:8080 -n rustmq
+
+# Test admin API
+curl http://localhost:8080/health
+```
+
+### 3. Configure Monitoring (Optional)
+
+```bash
+# Install Prometheus Operator
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace
+
+# Port forward to Grafana
+kubectl port-forward svc/prometheus-grafana 3000:80 -n monitoring
+
+# Access Grafana at http://localhost:3000 (admin/prom-operator)
+```
+
+### 4. Set Up Ingress (Production Only)
+
+```bash
+# Reserve static IP
+gcloud compute addresses create rustmq-admin-ip --global
+
+# Get IP address
+gcloud compute addresses describe rustmq-admin-ip --global --format="get(address)"
+
+# Configure DNS A record pointing to this IP
+
+# Update ingress.yaml with your domain
+vim gke/network/ingress.yaml
+
+# Apply ingress
+kubectl apply -f gke/network/ingress.yaml
+
+# Wait for certificate provisioning (15-30 minutes)
+kubectl get managedcertificate rustmq-admin-cert -n rustmq -w
+```
+
+## Monitoring and Operations
+
+### Viewing Logs
+
+```bash
+# Controller logs
+kubectl logs -f rustmq-controller-0 -n rustmq
+
+# Broker logs (all replicas)
+kubectl logs -f deployment/rustmq-broker -n rustmq
+
+# Admin server logs
+kubectl logs -f deployment/rustmq-admin-server -n rustmq
+
+# Logs from last hour
+kubectl logs --since=1h -l app.kubernetes.io/name=rustmq -n rustmq
+```
+
+### Scaling
+
+```bash
+# Scale brokers manually
+kubectl scale deployment rustmq-broker -n rustmq --replicas=10
+
+# Check HPA status
+kubectl get hpa -n rustmq
+
+# Edit HPA limits
+kubectl edit hpa rustmq-broker -n rustmq
+```
+
+### Updates and Rollbacks
+
+```bash
+# Update image tag
+kubectl set image deployment/rustmq-broker \
+  broker=us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker:v1.1.0 \
+  -n rustmq
+
+# Check rollout status
+kubectl rollout status deployment/rustmq-broker -n rustmq
+
+# Rollback if needed
+kubectl rollout undo deployment/rustmq-broker -n rustmq
+
+# Check rollout history
+kubectl rollout history deployment/rustmq-broker -n rustmq
+```
+
+### Configuration Drift
+
+```bash
+# Detect drift
+./gke/drift-detect.sh prod
+
+# Show detailed differences
+./gke/drift-detect.sh prod --show-diff
+
+# Auto-fix drift (use with caution!)
+./gke/drift-detect.sh prod --auto-fix
+```
+
+## Troubleshooting
+
+### Pods Not Starting
+
+**Problem**: Pods stuck in `Pending` or `CrashLoopBackOff`
+
+**Diagnosis**:
+```bash
+kubectl describe pod rustmq-controller-0 -n rustmq
+kubectl logs rustmq-controller-0 -n rustmq
+```
+
+**Common Causes**:
+- Insufficient resources (check node capacity)
+- Image pull errors (check image exists in registry)
+- PVC binding issues (check StorageClass)
+- Secrets not synced (check ExternalSecrets)
+
+### Secrets Not Syncing
+
+**Problem**: ExternalSecrets showing "SecretSyncedError"
+
+**Diagnosis**:
+```bash
+kubectl describe externalsecret rustmq-tls-cert -n rustmq
+kubectl logs -n external-secrets-system deployment/external-secrets -f
+```
+
+**Solutions**:
+- Verify Workload Identity annotation on service account
+- Check IAM permissions for service account
+- Verify secrets exist in Google Secret Manager
+- Check SecretStore configuration
+
+### Load Balancer Not Working
+
+**Problem**: Service stuck in `<pending>` for external IP
+
+**Diagnosis**:
+```bash
+kubectl describe svc rustmq-broker -n rustmq
+kubectl get events -n rustmq
+```
+
+**Solutions**:
+- Check quota limits in GCP (load balancers, IP addresses)
+- Verify firewall rules allow health checks
+- Check service selector matches pod labels
+
+### High Pod Latency
+
+**Problem**: Slow response times from pods
+
+**Diagnosis**:
+```bash
+# Check pod CPU/memory usage
+kubectl top pods -n rustmq
+
+# Check node resources
+kubectl top nodes
+
+# Check for throttling
+kubectl describe pod rustmq-broker-0 -n rustmq | grep -i throttl
+```
+
+**Solutions**:
+- Increase resource limits
+- Scale horizontally (more replicas)
+- Check for I/O bottlenecks (storage)
+
+## Cost Estimation
+
+### Monthly Costs by Environment
+
+**Development**:
+| Resource | Cost |
+|----------|------|
+| GKE cluster | $30-50 |
+| Compute (e2-medium × 1-3 nodes, 80% preemptible) | $20-40 |
+| Storage (10GB SSD) | $2 |
+| Load balancers (2× internal) | $20 |
+| GCS bucket (<100GB) | $2 |
+| Networking | $5-10 |
+| **Total** | **$79-124/month** |
+
+**Staging**:
+| Resource | Cost |
+|----------|------|
+| GKE cluster | $30-50 |
+| Compute (n2-standard-4 × 3-10 nodes, 30% preemptible) | $150-400 |
+| Storage (150GB SSD) | $26 |
+| Load balancers (2× internal + 1× external) | $35-50 |
+| GCS bucket (<500GB) | $10 |
+| Cloud Armor | $6 |
+| Networking | $20-40 |
+| **Total** | **$277-582/month** |
+
+**Production**:
+| Resource | Cost |
+|----------|------|
+| GKE cluster | $30-50 |
+| Compute (n2-standard-8 × 5-50 nodes, 0% preemptible) | $500-3000 |
+| Storage (500GB SSD) | $85 |
+| Load balancers (2× internal + 1× external) | $35-50 |
+| GCS bucket (5TB) | $100 |
+| Cloud Armor | $6 |
+| Networking | $100-300 |
+| Snapshots/backups | $20-50 |
+| **Total** | **$876-3641/month** |
+
+### Cost Optimization Tips
+
+1. **Use Preemptible Nodes** (dev/staging): 60-80% cost reduction
+2. **Right-size Nodes**: Monitor usage and adjust machine types
+3. **Enable Cluster Autoscaler**: Scale down during low traffic
+4. **Use Standard Storage Tier**: For non-critical GCS data
+5. **Clean Up Unused Resources**: Delete old snapshots, unused load balancers
+6. **Use Committed Use Discounts**: 37-57% discount for 1-3 year commitment
+
+## Implementation Progress
+
+### Phase 1: Docker Build Optimization ✅ Completed (October 2025)
+
+**Objective**: Optimize Docker image building for faster CI/CD and smaller production images.
+
+**Key Achievements:**
+- ✅ cargo-chef dependency caching (60-70% faster builds)
+- ✅ Distroless runtime base (40-50% smaller images)
+- ✅ Multi-platform builds (AMD64 + ARM64)
+- ✅ Security hardening (non-root, minimal attack surface)
+
+**Deliverables:**
+- Optimized Dockerfiles for all components (broker, controller, admin, admin-server)
+- Multi-platform build scripts
+- Build cache configuration
+- Image size reduction from ~250MB to ~150MB
+
+**For Details**: See [Docker Build Documentation](../docker/README.md)
 
 ---
 
-## Complete Workflow
+### Phase 2: Configuration Management ✅ Completed (October 2025)
 
-1. **Build Images**: `cd ../docker && ./quick-deploy.sh build-core prod`
-2. **Deploy Cluster**: `./deploy-rustmq-gke.sh deploy --environment production`
-3. **Verify Status**: `./deploy-rustmq-gke.sh status`
+**Objective**: Implement robust environment-specific configuration with Google Cloud native secrets management.
 
-For detailed setup guide, see [`../docs/gke-deployment-guide.md`](../docs/gke-deployment-guide.md).
+**Key Achievements:**
+- ✅ Environment-based configuration (dev, staging, prod)
+- ✅ Google Secret Manager integration with External Secrets Operator
+- ✅ Workload Identity for keyless authentication
+- ✅ Configuration validation with drift detection
+- ✅ Automated secret rotation
+
+**Deliverables:**
+- Environment configuration files (`environments/*.env`)
+- Configuration validation script (`validate-config.sh`)
+- External Secrets Operator manifests (`secrets/external-secrets/`)
+- Secret management scripts (`secrets/setup-secrets.sh`)
+- Drift detection script (`drift-detect.sh`)
+
+**Configuration Structure:**
+```
+gke/
+├── environments/          # Environment-specific configs
+│   ├── dev.env           # Development configuration
+│   ├── staging.env       # Staging configuration
+│   └── prod.env          # Production configuration
+├── secrets/              # Secrets management
+│   ├── setup-secrets.sh  # Secret provisioning script
+│   └── external-secrets/ # K8s ExternalSecret manifests
+└── scripts/
+    └── load-config.sh    # Config loader utility
+```
+
+**Security Features:**
+- Zero service account keys (Workload Identity)
+- Automatic secret rotation
+- Centralized secret storage (Google Secret Manager)
+- Audit logging for secret access
+
+---
+
+### Phase 3: GKE Infrastructure Optimization ✅ Completed (October 2025)
+
+**Objective**: Deploy production-ready RustMQ cluster to GKE with full automation.
+
+**Key Achievements:**
+- ✅ Automated GKE cluster creation with VPC-native networking
+- ✅ Kustomize-based multi-environment manifests (base + overlays)
+- ✅ Storage optimization (Regional SSD + GCS hybrid)
+- ✅ Network security (NetworkPolicies, Cloud Armor, mTLS)
+- ✅ Single-command deployment (`deploy.sh`)
+- ✅ Comprehensive monitoring and operations tooling
+
+**Deliverables:**
+
+**Cluster Infrastructure:**
+- Automated cluster creation (`create-cluster.sh`)
+- Safe cluster deletion (`delete-cluster.sh`)
+- Master deployment orchestration (`deploy.sh`)
+
+**Kubernetes Manifests:**
+- Base manifests (namespace, serviceaccounts, configmaps, deployments, services, HPA, NetworkPolicies)
+- Environment overlays (dev, staging, prod) with patches for:
+  - Replica counts (1 controller for dev → 5 for prod)
+  - Resource limits (e2-medium → n2-standard-8)
+  - Security policies (Pod Security Standards)
+  - Pod anti-affinity for HA
+
+**Storage Architecture:**
+- Regional SSD for controller Raft WAL (HA, low latency)
+- GCS for message storage (90% cost savings)
+- Workload Identity for keyless GCS access
+
+**Network Architecture:**
+- Internal Load Balancers for broker and controller
+- External HTTPS Load Balancer for admin API
+- Cloud Armor for DDoS protection
+- NetworkPolicies for default-deny security
+- VPC-native cluster with private nodes
+
+**Operations:**
+- Configuration drift detection
+- Automated scaling (HPA)
+- Health monitoring
+- Log aggregation
+
+**Cost Optimization:**
+- Development: ~$79-124/month
+- Staging: ~$277-582/month
+- Production: ~$876-3641/month
+
+---
+
+## Architecture Overview
+
+### Storage Layers
+1. **WAL (Write-Ahead Log)**: Regional SSD for Raft consensus
+2. **L1 Cache**: In-memory hot data
+3. **Object Storage**: GCS for message persistence (90% cost reduction)
+
+### Network Architecture
+```
+Internet → Cloud Armor → GKE Ingress → Admin API (ClusterIP)
+
+VPC (Private Network)
+  ├── Internal LB (Broker) → Broker Pods (5-50 replicas)
+  └── Internal LB (Controller) → Controller StatefulSet (3-5 replicas)
+```
+
+### Security
+- **Authentication**: mTLS with WebPKI validation
+- **Authorization**: Fast ACL (547ns lookups)
+- **Secrets**: Google Secret Manager + External Secrets Operator
+- **Network**: Default-deny NetworkPolicies
+- **Container**: Non-root user (UID 65532), read-only filesystem
+
+---
+
+## References
+
+- [Docker Build Documentation](../docker/README.md)
+- [Storage Architecture](storage/README.md)
+- [Network Architecture](network/README.md)
+- [Secrets Management](secrets/README.md)
+
+## Support
+
+For issues or questions:
+1. Review logs: `kubectl logs -l app.kubernetes.io/name=rustmq -n rustmq`
+2. Run diagnostics: `./drift-detect.sh <env> --show-diff`
+3. Check pod status: `kubectl get pods -n rustmq`
+4. Verify secrets: `kubectl get externalsecrets -n rustmq`
+
+---
+
+**Version**: 1.0
+**Last Updated**: October 2025
+**Status**: All phases completed and production-ready

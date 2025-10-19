@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rustmq-dev
+  annotations:
+    config.kubernetes.io/description: "RustMQ development environment"
+
+bases:
+- ../../base
+
+namespace: rustmq
+
+namePrefix: dev-
+
+commonLabels:
+  environment: dev
+
+images:
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller
+  newTag: latest  # Dev uses latest
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker
+  newTag: latest
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
+  newTag: latest
+
+configMapGenerator:
+- name: rustmq-broker-config
+  behavior: merge
+  literals:
+  - gcs_bucket=rustmq-dev-messages
+
+patchesStrategicMerge:
+- patches/controller-patch.yaml
+- patches/broker-patch.yaml
+- patches/hpa-patch.yaml
+- patches/serviceaccount-patch.yaml

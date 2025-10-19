@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rustmq-staging
+  annotations:
+    config.kubernetes.io/description: "RustMQ staging environment"
+
+bases:
+- ../../base
+
+namespace: rustmq
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+
+images:
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller
+  newTag: stable  # Staging uses stable tag
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker
+  newTag: stable
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
+  newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
+  newTag: stable
+
+configMapGenerator:
+- name: rustmq-broker-config
+  behavior: merge
+  literals:
+  - gcs_bucket=rustmq-staging-messages
+
+patchesStrategicMerge:
+- patches/controller-patch.yaml
+- patches/broker-patch.yaml
+- patches/hpa-patch.yaml
+- patches/serviceaccount-patch.yaml

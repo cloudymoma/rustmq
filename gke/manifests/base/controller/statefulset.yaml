@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: controller
+spec:
+  serviceName: rustmq-controller
+  replicas: 3  # Will be overridden by overlay (1/3/5)
+  podManagementPolicy: OrderedReady  # Start pods in order for Raft
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustmq
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: rustmq-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532  # nonroot user from distroless
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: controller
+        image: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller:latest  # To be replaced by overlay
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: grpc
+          containerPort: 9094
+          protocol: TCP
+        - name: admin
+          containerPort: 9095
+          protocol: TCP
+        - name: raft
+          containerPort: 9642
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RUST_LOG
+          value: "info"
+        - name: RUSTMQ_CONTROLLER_GRPC_PORT
+          value: "9094"
+        - name: RUSTMQ_CONTROLLER_ADMIN_PORT
+          value: "9095"
+        - name: RUSTMQ_CONTROLLER_RAFT_PORT
+          value: "9642"
+        - name: RUSTMQ_CONTROLLER_WAL_DIR
+          value: "/var/lib/rustmq/wal"
+        - name: RUSTMQ_CONTROLLER_DATA_DIR
+          value: "/var/lib/rustmq/data"
+        volumeMounts:
+        - name: wal-storage
+          mountPath: /var/lib/rustmq
+        - name: config
+          mountPath: /etc/rustmq/config
+        - name: tls-cert
+          mountPath: /etc/rustmq/tls
+          readOnly: true
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9095
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9095
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 9095
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30  # Give up to 150s for Raft cluster formation
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: rustmq-controller-config
+      - name: tls-cert
+        secret:
+          secretName: rustmq-tls-cert
+          optional: true
+  volumeClaimTemplates:
+  - metadata:
+      name: wal-storage
+      labels:
+        app.kubernetes.io/name: rustmq
+        app.kubernetes.io/component: controller-storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: rustmq-ssd  # Custom storage class
+      resources:
+        requests:
+          storage: 10Gi  # Will be overridden by overlay

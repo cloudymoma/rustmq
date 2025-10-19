@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+spec:
+  replicas: 5  # Start with 5 brokers in production
+  template:
+    spec:
+      containers:
+      - name: broker
+        resources:
+          requests:
+            cpu: 2000m
+            memory: 4Gi
+          limits:
+            cpu: 4000m
+            memory: 8Gi
+        env:
+        - name: RUST_LOG
+          value: "info,rustmq=debug"  # More verbose RustMQ logs
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: broker
+              topologyKey: kubernetes.io/hostname  # Spread across nodes
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: broker
+              topologyKey: topology.kubernetes.io/zone  # Spread across zones

@@ -1,0 +1,38 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+spec:
+  minReplicas: 5
+  maxReplicas: 50  # Production can scale to 50 brokers
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60  # More aggressive scaling threshold
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 minutes stabilization
+      policies:
+      - type: Percent
+        value: 25  # Scale down max 25% per minute (more conservative)
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30  # Faster scale up response
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 10  # Add up to 10 pods per minute
+        periodSeconds: 60
+      selectPolicy: Max

@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+spec:
+  replicas: 1  # Start with 1 broker in dev
+  template:
+    spec:
+      containers:
+      - name: broker
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        env:
+        - name: RUST_LOG
+          value: "debug"

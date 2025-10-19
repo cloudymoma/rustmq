@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RustMQ GKE Configuration Schema",
+  "description": "Validation schema for RustMQ GKE deployment configuration (Phase 2)",
+  "type": "object",
+  "properties": {
+    "GCP_PROJECT_ID": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+      "description": "GCP Project ID (required)"
+    },
+    "GCP_REGION": {
+      "type": "string",
+      "pattern": "^[a-z]+-[a-z]+[0-9]+$",
+      "description": "GCP region (e.g., us-central1)"
+    },
+    "CLUSTER_NAME": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$",
+      "description": "GKE cluster name (lowercase, alphanumeric, hyphens)"
+    },
+    "CONTROLLER_REPLICAS": {
+      "type": "string",
+      "pattern": "^(1|3|5|7|9)$",
+      "description": "Controller replicas (MUST be odd for Raft quorum: 1, 3, 5, 7, 9)"
+    },
+    "BROKER_MIN_NODES": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Minimum broker nodes"
+    },
+    "BROKER_MAX_NODES": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Maximum broker nodes"
+    },
+    "CONTROLLER_CPU_REQUEST": {
+      "type": "string",
+      "pattern": "^[0-9]+(m|\\.[0-9]+)?$",
+      "description": "Controller CPU request (e.g., 1000m or 1)"
+    },
+    "CONTROLLER_CPU_LIMIT": {
+      "type": "string",
+      "pattern": "^[0-9]+(m|\\.[0-9]+)?$",
+      "description": "Controller CPU limit"
+    },
+    "CONTROLLER_MEMORY_REQUEST": {
+      "type": "string",
+      "pattern": "^[0-9]+(Mi|Gi|M|G)$",
+      "description": "Controller memory request (e.g., 2Gi)"
+    },
+    "CONTROLLER_MEMORY_LIMIT": {
+      "type": "string",
+      "pattern": "^[0-9]+(Mi|Gi|M|G)$",
+      "description": "Controller memory limit"
+    },
+    "BROKER_CPU_REQUEST": {
+      "type": "string",
+      "pattern": "^[0-9]+(m|\\.[0-9]+)?$",
+      "description": "Broker CPU request"
+    },
+    "BROKER_CPU_LIMIT": {
+      "type": "string",
+      "pattern": "^[0-9]+(m|\\.[0-9]+)?$",
+      "description": "Broker CPU limit"
+    },
+    "BROKER_MEMORY_REQUEST": {
+      "type": "string",
+      "pattern": "^[0-9]+(Mi|Gi|M|G)$",
+      "description": "Broker memory request"
+    },
+    "BROKER_MEMORY_LIMIT": {
+      "type": "string",
+      "pattern": "^[0-9]+(Mi|Gi|M|G)$",
+      "description": "Broker memory limit"
+    },
+    "GCS_BUCKET": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-_]{1,61}[a-z0-9]$",
+      "description": "GCS bucket name"
+    },
+    "TLS_ENABLED": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "Enable TLS"
+    },
+    "MTLS_ENABLED": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "Enable mTLS"
+    },
+    "ENABLE_WORKLOAD_IDENTITY": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "Enable Workload Identity (recommended for prod)"
+    },
+    "ENABLE_BINARY_AUTHORIZATION": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "Enable Binary Authorization (required for prod)"
+    },
+    "LOG_LEVEL": {
+      "type": "string",
+      "enum": ["debug", "info", "warn", "error"],
+      "description": "Logging level"
+    },
+    "CONTROLLER_RAFT_HEARTBEAT_INTERVAL": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Raft heartbeat interval in milliseconds"
+    },
+    "CONTROLLER_RAFT_HEARTBEAT_TIMEOUT": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Raft heartbeat timeout (must be > interval)"
+    },
+    "CONTROLLER_RAFT_ELECTION_TIMEOUT": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Raft election timeout"
+    }
+  },
+  "required": [
+    "GCP_PROJECT_ID",
+    "GCP_REGION",
+    "CLUSTER_NAME",
+    "CONTROLLER_REPLICAS",
+    "GCS_BUCKET"
+  ],
+  "additionalProperties": true
+}

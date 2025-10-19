@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+spec:
+  replicas: 2  # Start with 2 brokers in staging
+  template:
+    spec:
+      containers:
+      - name: broker
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        env:
+        - name: RUST_LOG
+          value: "info"

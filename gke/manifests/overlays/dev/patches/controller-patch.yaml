@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+spec:
+  replicas: 1  # Single controller for dev (no HA)
+  template:
+    spec:
+      containers:
+      - name: controller
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        env:
+        - name: RUST_LOG
+          value: "debug"  # More verbose logging in dev
+  volumeClaimTemplates:
+  - metadata:
+      name: wal-storage
+    spec:
+      resources:
+        requests:
+          storage: 10Gi  # Smaller storage for dev

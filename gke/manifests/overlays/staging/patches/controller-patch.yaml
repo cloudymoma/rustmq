@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+spec:
+  replicas: 3  # 3 controllers for Raft quorum (tolerates 1 failure)
+  template:
+    spec:
+      containers:
+      - name: controller
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        env:
+        - name: RUST_LOG
+          value: "info"
+  volumeClaimTemplates:
+  - metadata:
+      name: wal-storage
+    spec:
+      resources:
+        requests:
+          storage: 50Gi  # Medium storage for staging

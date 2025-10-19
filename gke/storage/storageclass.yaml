@@ -1,0 +1,36 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rustmq-ssd
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: storage
+  annotations:
+    storageclass.kubernetes.io/description: "SSD storage for RustMQ controller WAL"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd
+  fstype: ext4
+  replication-type: regional-pd  # Regional PD for HA
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain  # IMPORTANT: Retain data even if PVC is deleted
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rustmq-standard
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: storage
+  annotations:
+    storageclass.kubernetes.io/description: "Standard HDD storage for RustMQ (cost-optimized)"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-standard
+  fstype: ext4
+  replication-type: none  # Zonal for cost savings
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete  # Can delete for non-critical data

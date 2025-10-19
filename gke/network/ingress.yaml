@@ -1,0 +1,65 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rustmq-admin-ingress
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "rustmq-admin-ip"
+    networking.gke.io/managed-certificates: "rustmq-admin-cert"
+    cloud.google.com/armor-config: '{"rustmq-admin-policy": "enabled"}'
+    cloud.google.com/backend-config: '{"default": "rustmq-backend-config"}'
+spec:
+  rules:
+  - host: admin.rustmq.example.com  # Replace with actual domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rustmq-admin-server
+            port:
+              number: 8080
+
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: rustmq-admin-cert
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: certificate
+spec:
+  domains:
+  - admin.rustmq.example.com  # Replace with actual domain
+
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: rustmq-backend-config
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: backend-config
+spec:
+  healthCheck:
+    checkIntervalSec: 10
+    port: 8080
+    type: HTTP
+    requestPath: /health
+  timeoutSec: 30
+  connectionDraining:
+    drainingTimeoutSec: 60
+  logging:
+    enable: true
+    sampleRate: 1.0  # Log all requests (adjust for production)
+  iap:
+    enabled: false  # Set to true to enable Identity-Aware Proxy
+    oauthclientCredentials:
+      secretName: oauth-client-secret
