@@ -94,6 +94,7 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - [Quick Start](#-quick-start)
 - [Security Management CLI](#-security-management-cli)
 - [Enterprise Security](#-enterprise-security)
+- [Web UI](#-web-ui)
 - [Admin REST API](#-admin-rest-api)
 - [BigQuery Subscriber](#-bigquery-subscriber)
 - [WebAssembly ETL Processing](#-webassembly-etl-processing)
@@ -601,6 +602,64 @@ examples/security/kubernetes/
 - **Controller Cluster**: Raft consensus integration for distributed ACL storage
 - **Broker Network**: Secure broker-to-broker communication with certificate validation
 - **Monitoring**: Security metrics integration with performance and health monitoring
+
+
+## 🌐 Web UI
+
+RustMQ includes a modern, responsive web interface for managing and monitoring your clusters. Built with Vue.js 3 and TypeScript, the WebUI provides real-time cluster insights and full topic management capabilities.
+
+### ✨ Features
+
+- **📊 Dashboard**: Real-time cluster overview with health metrics, broker statistics, and recent topics
+- **📝 Topics Management**: Create, list, delete topics with configurable partitions, replication, and retention
+- **🖥️ Brokers Monitoring**: Live broker health tracking with auto-refresh every 5 seconds
+- **⚙️ Configuration Viewer**: View cluster settings, storage configuration, and network ports
+- **🔒 ACL Viewer**: Security status and best practices (full ACL management coming soon)
+
+### 🚀 Quick Start
+
+#### Development Mode
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The WebUI will be available at `http://localhost:3000` with API proxy to the Admin server on port 8080.
+
+#### Production Deployment
+
+The WebUI is served directly by the RustMQ admin server (no separate web server needed):
+
+```bash
+# Build the WebUI
+cd web
+npm run build
+
+# Start the admin server
+cargo run --bin admin_server
+
+# Access the WebUI at http://localhost:8080
+```
+
+### 📚 Documentation
+
+For detailed documentation including:
+- Complete feature list and usage instructions
+- API integration details
+- Development and deployment guides
+- Troubleshooting and configuration
+
+See the **[Web UI Documentation](web/README.md)**
+
+### 🎨 Tech Stack
+
+- **Framework**: Vue.js 3 (Composition API with `<script setup>`)
+- **Language**: TypeScript with full type safety
+- **Build Tool**: Vite for fast development and optimized builds
+- **HTTP Client**: Axios with typed API responses
+- **Styling**: Custom CSS with dark theme
 
 
 ## 🛠️ Admin REST API

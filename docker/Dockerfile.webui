@@ -1,0 +1,87 @@
+# Multi-stage Dockerfile for RustMQ Web UI
+# Stage 1: Build the Vue.js application
+# Stage 2: Serve with Nginx (production-optimized)
+
+# ==============================================================================
+# Stage 1: Node.js Builder
+# ==============================================================================
+FROM node:18-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    python3 \
+    make \
+    g++ \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY web/package*.json ./
+RUN npm ci
+
+# Copy source code and build
+COPY web/ ./
+RUN npm run build
+
+# Verify build output
+RUN ls -lah dist/ && \
+    test -f dist/index.html || (echo "Build failed: index.html not found" && exit 1)
+
+# ==============================================================================
+# Stage 2: Nginx Production Server
+# ==============================================================================
+FROM nginx:1.25-alpine
+
+# Metadata
+LABEL maintainer="RustMQ Team" \
+      description="RustMQ Web UI - Management console" \
+      version="1.0.0"
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ca-certificates \
+    tzdata
+
+# Create non-root user (UID 65532 to match RustMQ conventions)
+RUN adduser -D -u 65532 -s /bin/sh nginx-user && \
+    chown -R nginx-user:nginx-user /var/cache/nginx /var/run /var/log/nginx /etc/nginx
+
+# Copy built application from builder stage
+COPY --from=builder --chown=nginx-user:nginx-user /app/dist /usr/share/nginx/html
+
+# Copy Nginx configuration
+COPY --chown=nginx-user:nginx-user docker/nginx-webui.conf /etc/nginx/nginx.conf
+
+# Copy entrypoint script for runtime configuration
+COPY --chown=nginx-user:nginx-user docker/webui-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Create runtime config directory
+RUN mkdir -p /usr/share/nginx/html/config && \
+    chown -R nginx-user:nginx-user /usr/share/nginx/html/config
+
+# Nginx runs on port 8080 (non-privileged)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Switch to non-root user
+USER nginx-user
+
+# Environment variables (can be overridden at runtime)
+ENV RUSTMQ_API_URL="http://rustmq-admin-server:8080" \
+    RUSTMQ_ENV="production" \
+    RUSTMQ_REFRESH_INTERVAL="5000" \
+    NGINX_WORKER_PROCESSES="auto" \
+    NGINX_WORKER_CONNECTIONS="1024"
+
+# Use entrypoint script to generate runtime config
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]

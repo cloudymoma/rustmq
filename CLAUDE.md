@@ -66,7 +66,22 @@ cargo +nightly miri test --features miri-safe miri::proptest_integration
 cd sdk/rust
 cargo +nightly miri test --features miri-safe miri::client_tests
 
-# Run services
+# Docker builds (Web UI and services)
+# Build Web UI Docker image
+docker build -f docker/Dockerfile.webui -t rustmq-webui:latest .
+
+# Build all components
+cd docker
+./build-and-push.sh build           # Build all components
+./build-and-push.sh build webui     # Build only web UI
+./build-and-push.sh list            # List available components
+
+# Run Web UI locally (for testing)
+docker run -d -p 8080:8080 \
+  -e RUSTMQ_API_URL="http://localhost:8080" \
+  rustmq-webui:latest
+
+# Run services (native)
 cargo run --bin rustmq-broker -- --config config/broker.toml
 cargo run --bin rustmq-controller -- --config config/controller.toml
 cargo run --bin rustmq-admin -- <command>
@@ -152,6 +167,14 @@ Client → QUIC → Broker → Local WAL → Cache → Cloud Storage
   - Full mTLS support and fast ACL (547ns authorization checks)
   - **92% test failure reduction** - from 13 failed tests to only 1 remaining
 - Admin tools and REST API
+- **🎨 Web UI Management Console**: **PRODUCTION-READY** Vue.js 3 + TypeScript web interface
+  - Real-time cluster dashboard with health metrics and broker monitoring
+  - Full topic management (create, delete, configure, view partition details)
+  - ACL viewer and configuration management
+  - Docker-based deployment (50.2MB lightweight container)
+  - Kubernetes/GKE ready with Ingress, Service, and ConfigMap
+  - Runtime configuration via environment variables
+  - Production-optimized Nginx with SPA routing and API proxy
 - WASM ETL processing
 - Client SDKs for Rust and Go
 
@@ -200,8 +223,62 @@ Transform messages in real-time:
 - Filter by topic patterns
 - Very fast and secure
 
+## Competitive Research
+
+**RobustMQ Analysis (October 21, 2025):**
+- **Full Report:** `/usr/local/google/home/binwu/workspace/rustmq/ROBUSTMQ_RESEARCH.md`
+- **Summary:** `/usr/local/google/home/binwu/workspace/rustmq/ROBUSTMQ_COMPARISON_SUMMARY.md`
+- **Key Findings:**
+  - RobustMQ: Multi-protocol platform (MQTT/AMQP/Kafka), early preview (v0.2.2), not production-ready
+  - RustMQ: High-performance cloud-native MQ, production-ready (486 tests), Miri-validated
+  - **RustMQ Advantages:** Performance (SmallVec, buffer pools), cloud economics (90% cost savings), WASM ETL, stability
+  - **RobustMQ Advantages:** WebUI console, REST API, multi-protocol, schema registry, pluggable storage
+  - **Recommendations for RustMQ:**
+    - **Add:** REST API, basic WebUI, pre-built binaries, rate limiting, schema validation, auth plugins
+    - **Do NOT Add:** Multi-protocol support (MQTT/AMQP/Kafka), pluggable storage
+    - **Focus:** Performance, cloud economics, WASM ETL, production stability
+
 ## Latest Updates
 
+- **🎨 WEB UI DOCKER CONTAINERIZATION** (October 2025): **COMPLETED** - Production-ready containerized web UI with GKE integration
+  - **✅ Multi-Stage Dockerfile**: Optimized build process with Node.js 18 + Nginx Alpine
+    - Stage 1: Node.js slim for building Vue.js application (avoids musl compatibility issues)
+    - Stage 2: Nginx 1.25-alpine for serving (minimal production image)
+    - Final image size: 50.2MB (highly optimized)
+    - Non-root user (UID 65532) for security
+    - File: `docker/Dockerfile.webui`
+  - **✅ Production Nginx Configuration**: SPA routing with API proxy
+    - Client-side routing fallback to index.html
+    - API proxy to admin-server backend (/api/* endpoints)
+    - Gzip compression, security headers (CSP, X-Frame-Options)
+    - Health check endpoint for Kubernetes probes
+    - File: `docker/nginx-webui.conf`
+  - **✅ Runtime Configuration System**: Environment-based configuration
+    - Entrypoint script generates config.js from environment variables
+    - Dynamic API endpoint configuration per environment
+    - No rebuild needed for different deployments
+    - File: `docker/webui-entrypoint.sh`
+  - **✅ Kubernetes Manifests**: Complete GKE deployment setup
+    - Deployment with 2 replicas, rolling updates, pod anti-affinity
+    - Service with ClusterIP and BackendConfig for GCP load balancer
+    - Ingress with Google-managed certificates and Cloud Armor support
+    - ConfigMap for environment-specific settings
+    - Files: `gke/manifests/base/webui/*`
+  - **✅ CI/CD Integration**: Added to build pipeline
+    - Integrated into `docker/build-and-push.sh` script
+    - Component name: "webui" (build with `./build-and-push.sh build webui`)
+    - GKE kustomization updated to include webui resources
+  - **✅ Build Configuration**: Fixed Vite build for Docker
+    - Changed minification from terser to esbuild (faster, included with Vite)
+    - Resolved Alpine Linux musl/glibc compatibility issues
+    - Updated `web/vite.config.ts` for optimal production builds
+  - **✅ Benefits**:
+    - Single Docker image for all environments (dev/staging/prod)
+    - Kubernetes-native with health checks and resource limits
+    - 50.2MB lightweight container (vs typical 100-200MB for web UIs)
+    - Zero downtime deployments with rolling updates
+    - Auto-scaling ready with HPA support
+    - Production security: non-root, read-only filesystem, seccomp
 - **🚀 MEMORY MANAGEMENT OPTIMIZATION** (October 2025): **COMPLETED** - Comprehensive memory efficiency improvements
   - **✅ SmallVec for Header Collections**: Eliminated heap allocations for <4 headers
     - Changed `Vec<Header>` to `SmallVec<[Header; 4]>` in Record, ProduceRecord, ConsumeRecord

@@ -500,8 +500,16 @@ impl AdminApi {
         } else {
             None
         };
-        
-        let all_routes = main_routes.boxed();
+
+        // Static file serving for WebUI
+        let static_files = warp::path::end()
+            .and(warp::fs::file("./web/dist/index.html"))
+            .or(warp::fs::dir("./web/dist"));
+
+        // Combine API routes with static files (API takes precedence)
+        let all_routes = main_routes
+            .or(static_files)
+            .boxed();
 
         // Combine all routes
         let routes = all_routes
@@ -511,8 +519,9 @@ impl AdminApi {
 
         let rate_limit_status = if self.rate_limiter.is_some() { "enabled" } else { "disabled" };
         let security_status = if self.security_api.is_some() { "enabled" } else { "disabled" };
-        info!("Starting Admin API server on port {} (rate limiting: {}, security: {})", 
+        info!("Starting Admin API server on port {} (rate limiting: {}, security: {})",
               self.port, rate_limit_status, security_status);
+        info!("WebUI available at http://0.0.0.0:{}", self.port);
         
         warp::serve(routes)
             .run(([0, 0, 0, 0], self.port))

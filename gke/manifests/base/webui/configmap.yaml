@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustmq-webui-config
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: webui
+data:
+  # Runtime configuration for web UI
+  RUSTMQ_API_URL: "http://rustmq-admin-server:8080"
+  RUSTMQ_ENV: "production"
+  RUSTMQ_REFRESH_INTERVAL: "5000"
+  RUSTMQ_DEBUG: "false"
+  RUSTMQ_EXPERIMENTAL_FEATURES: "false"
+
+  # Nginx configuration
+  NGINX_WORKER_PROCESSES: "auto"
+  NGINX_WORKER_CONNECTIONS: "1024"

@@ -20,6 +20,10 @@ resources:
 - broker/hpa.yaml
 - admin-server/deployment.yaml
 - admin-server/service.yaml
+- webui/deployment.yaml
+- webui/service.yaml
+- webui/configmap.yaml
+- webui/ingress.yaml
 
 commonLabels:
   app.kubernetes.io/name: rustmq
@@ -31,4 +35,6 @@ images:
 - name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-broker
   newTag: latest
 - name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
+  newTag: latest
+- name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-webui
   newTag: latest

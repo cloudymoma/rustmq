@@ -1,0 +1,56 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rustmq-webui-ingress
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: webui
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "rustmq-webui-ip"
+    networking.gke.io/managed-certificates: "rustmq-webui-cert"
+    kubernetes.io/ingress.allow-http: "true"
+    # Cloud Armor security policy (optional)
+    cloud.google.com/armor-config: '{"rustmq-webui": "rustmq-security-policy"}'
+    # Backend configuration
+    cloud.google.com/backend-config: '{"default": "rustmq-webui-backend-config"}'
+spec:
+  rules:
+  - host: rustmq.example.com  # Replace with your domain
+    http:
+      paths:
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: rustmq-webui
+            port:
+              number: 80
+  # Default backend for unmatched requests
+  defaultBackend:
+    service:
+      name: rustmq-webui
+      port:
+        number: 80
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: rustmq-webui-cert
+  namespace: rustmq
+spec:
+  domains:
+  - rustmq.example.com  # Replace with your domain
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeAddress
+metadata:
+  name: rustmq-webui-ip
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: webui
+spec:
+  location: global
+  addressType: EXTERNAL

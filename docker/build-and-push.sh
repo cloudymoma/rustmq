@@ -70,13 +70,14 @@ declare -A COMPONENTS=(
     ["admin"]="rustmq-admin:Dockerfile.admin:RustMQ Admin CLI tool"
     ["admin-server"]="rustmq-admin-server:Dockerfile.admin-server:RustMQ Admin REST API server"
     ["bigquery-subscriber"]="rustmq-bigquery-subscriber:Dockerfile.bigquery-subscriber:BigQuery subscriber for real-time streaming"
+    ["webui"]="rustmq-webui:Dockerfile.webui:RustMQ Web UI management console (Vue.js + Nginx)"
 )
 
 # Core components required for GKE deployment
 CORE_COMPONENTS=("controller" "broker")
 
 # Optional components for extended functionality
-OPTIONAL_COMPONENTS=("admin" "admin-server" "bigquery-subscriber")
+OPTIONAL_COMPONENTS=("admin" "admin-server" "bigquery-subscriber" "webui")
 
 # =============================================================================
 # UTILITY FUNCTIONS
