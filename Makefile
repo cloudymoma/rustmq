@@ -68,7 +68,7 @@ build-release:
 	@printf "$(GREEN)✅ Release build completed$(RESET)\n"
 
 # Test targets
-.PHONY: test test-debug test-release test-miri
+.PHONY: test test-debug test-release test-miri test-wasm
 test: test-debug test-release
 
 test-debug:
@@ -77,6 +77,23 @@ test-debug:
 	cargo test --bins $(FEATURES)
 	cargo test --tests $(FEATURES)
 	@echo "$(GREEN)✅ Debug tests completed$(RESET)"
+
+# WASM test targets
+.PHONY: test-wasm wasm-build wasm-test
+test-wasm: wasm-build wasm-test
+
+wasm-build:
+	@echo "$(YELLOW)🔨 Building WASM test modules...$(RESET)"
+	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
+	@rustup target list --installed | grep -q wasm32-unknown-unknown || (echo "$(YELLOW)📦 Installing wasm32-unknown-unknown target...$(RESET)" && rustup target add wasm32-unknown-unknown)
+	@chmod +x tests/wasm_modules/build-all.sh
+	@cd tests/wasm_modules && ./build-all.sh
+	@echo "$(GREEN)✅ WASM modules built$(RESET)"
+
+wasm-test:
+	@echo "$(YELLOW)🧪 Running WASM integration tests...$(RESET)"
+	cargo test --test wasm_integration_simple --features wasm -- --nocapture
+	@echo "$(GREEN)✅ WASM integration tests completed$(RESET)"
 
 test-release:
 	@echo "$(YELLOW)🧪 Running release tests with benchmarks...$(RESET)"
@@ -121,7 +138,7 @@ miri-full:
 
 # Pre-commit sanity check - comprehensive validation
 .PHONY: sanity
-sanity: test sdk-test
+sanity: test sdk-test test-wasm
 	@echo "$(YELLOW)🔍 Running final sanity checks...$(RESET)"
 	cargo test --lib
 	cargo test --bins

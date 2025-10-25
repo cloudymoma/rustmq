@@ -34,6 +34,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_authorization_latency_requirements() {
         let (security_manager, _temp_dir) = create_performance_test_security_manager().await;
         
@@ -104,6 +105,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_certificate_validation_performance() {
         let (security_manager, _temp_dir) = create_performance_test_security_manager().await;
         
@@ -188,6 +190,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_memory_usage_and_string_interning() {
         let (security_manager, _temp_dir) = create_performance_test_security_manager().await;
         
@@ -255,6 +258,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_concurrent_security_operations_stress() {
         let security_manager = Arc::new(create_performance_test_security_manager().await.0);
         
@@ -381,6 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_bloom_filter_performance_and_accuracy() {
         let (security_manager, _temp_dir) = create_performance_test_security_manager().await;
         
@@ -465,6 +470,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(debug_assertions, ignore = "Performance tests only run in release mode")]
     async fn test_cache_performance_under_load() {
         let (security_manager, _temp_dir) = create_performance_test_security_manager().await;
         

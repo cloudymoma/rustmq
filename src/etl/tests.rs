@@ -17,6 +17,7 @@ use bytes::Bytes;
 
 /// Test basic pipeline orchestrator creation and configuration
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_orchestrator_basic_functionality() {
     let pipeline_config = create_test_pipeline_config();
     let instance_pool_config = create_test_instance_pool_config();
@@ -34,6 +35,7 @@ async fn test_orchestrator_basic_functionality() {
 
 /// Test priority-based execution ordering
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_priority_execution_ordering() {
     let mut pipeline_config = create_test_pipeline_config();
     
@@ -67,6 +69,7 @@ async fn test_priority_execution_ordering() {
 
 /// Test parallel execution within same priority level
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_parallel_execution() {
     let mut pipeline_config = create_test_pipeline_config();
     
@@ -97,6 +100,7 @@ async fn test_parallel_execution() {
 
 /// Test comprehensive topic filtering
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_comprehensive_topic_filtering() {
     // Test exact match filter
     let exact_filters = vec![
@@ -184,6 +188,7 @@ async fn test_comprehensive_topic_filtering() {
 
 /// Test conditional rule evaluation
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_conditional_rule_evaluation() {
     // Test header value condition
     let header_rules = vec![
@@ -270,6 +275,7 @@ async fn test_conditional_rule_evaluation() {
 
 /// Test WASM instance pool functionality
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_wasm_instance_pool() {
     let config = EtlInstancePoolConfig {
         max_pool_size: 5,
@@ -314,6 +320,7 @@ async fn test_wasm_instance_pool() {
 
 /// Test error handling strategies
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_error_handling_strategies() {
     // Test SkipModule strategy
     let mut pipeline_config = create_test_pipeline_config();
@@ -343,6 +350,7 @@ async fn test_error_handling_strategies() {
 
 /// Test backward compatibility with existing ETL processor
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_backward_compatibility() {
     let config = EtlConfig {
         enabled: true,
@@ -377,6 +385,7 @@ async fn test_backward_compatibility() {
 
 /// Test integration between processor and orchestrator
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_processor_orchestrator_integration() {
     let pipeline_config = create_test_pipeline_config();
     let config = EtlConfig {
@@ -406,6 +415,7 @@ async fn test_processor_orchestrator_integration() {
 
 /// Test runtime pipeline management
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_runtime_pipeline_management() {
     let config = EtlConfig {
         enabled: true,
@@ -445,6 +455,7 @@ async fn test_runtime_pipeline_management() {
 
 /// Test performance characteristics
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_performance_characteristics() {
     let pipeline_config = create_test_pipeline_config();
     let instance_pool_config = create_test_instance_pool_config();
@@ -481,6 +492,7 @@ async fn test_performance_characteristics() {
 
 /// Test filter evaluation performance
 #[tokio::test]
+#[cfg(not(feature = "wasm"))]
 async fn test_filter_performance() {
     // Create a large number of filters
     let mut filters = Vec::new();

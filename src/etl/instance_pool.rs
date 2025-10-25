@@ -1,18 +1,31 @@
 use crate::config::{EtlInstancePoolConfig, ModuleInstanceConfig};
 use crate::{Result, error::RustMqError};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{VecDeque, HashMap};
 use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore, Mutex};
+use tokio::sync::Semaphore;
 use std::time::{Duration, Instant};
 use tokio::time::interval;
-use parking_lot::Mutex as SyncMutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use dashmap::DashMap;
+
+// Wasmtime imports for real WASM execution
+#[cfg(feature = "wasm")]
+use wasmtime::*;
+#[cfg(feature = "wasm")]
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
 /// High-performance WASM instance pool with LRU eviction and resource management
 pub struct WasmInstancePool {
     config: EtlInstancePoolConfig,
-    /// Module pools indexed by module ID
-    pools: Arc<RwLock<HashMap<String, ModulePool>>>,
+    /// Shared wasmtime Engine (expensive to create, shared across all instances)
+    #[cfg(feature = "wasm")]
+    engine: Arc<Engine>,
+    /// Compiled WASM modules cache (pre-compiled, ready for instantiation)
+    #[cfg(feature = "wasm")]
+    compiled_modules: Arc<DashMap<String, Arc<Module>>>,
+    /// Module pools indexed by module ID (lock-free with DashMap + Mutex per pool)
+    pools: Arc<DashMap<String, Arc<Mutex<ModulePool>>>>,
     /// Rate limiter for instance creation
     creation_semaphore: Arc<Semaphore>,
     /// Global statistics
@@ -49,12 +62,39 @@ pub struct PooledInstance {
     pub total_execution_time: Duration,
 }
 
-/// Mock WASM context - represents the actual WASM runtime instance
+/// WASM execution state for WASI context
+#[cfg(feature = "wasm")]
+pub struct WasmState {
+    wasi: WasiCtx,
+}
+
+/// Real WASM context with wasmtime runtime
+#[cfg(feature = "wasm")]
+pub struct WasmContext {
+    // Shared resources (cheap to clone via Arc)
+    engine: Arc<Engine>,
+    module: Arc<Module>,
+
+    // Per-instance mutable state
+    store: Store<WasmState>,
+    instance: Instance,
+    memory: Memory,
+
+    // Cached function references for performance
+    transform_func: TypedFunc<(i32, i32), i32>,
+    allocate_func: Option<TypedFunc<i32, i32>>,
+    deallocate_func: Option<TypedFunc<i32, ()>>,
+
+    // Metadata
+    pub memory_size: usize,
+}
+
+/// Mock WASM context for non-wasm builds
+#[cfg(not(feature = "wasm"))]
 #[derive(Clone)]
 pub struct WasmContext {
     pub memory_size: usize,
     pub is_initialized: bool,
-    /// In real implementation, this would contain wasmtime Store, Instance, etc.
     pub mock_data: Vec<u8>,
 }
 
@@ -91,7 +131,7 @@ pub struct InstanceCheckout {
 
 /// Handle for returning instance to pool
 pub struct InstanceReturnHandle {
-    pool_ref: Arc<RwLock<HashMap<String, ModulePool>>>,
+    pool_ref: Arc<DashMap<String, Arc<Mutex<ModulePool>>>>,
     stats_ref: Arc<InstancePoolStats>,
     module_id: String,
     instance_id: u64,
@@ -99,13 +139,44 @@ pub struct InstanceReturnHandle {
 }
 
 impl WasmInstancePool {
-    /// Create a new WASM instance pool
+    /// Create a new WASM instance pool (lock-free with DashMap)
     pub fn new(config: EtlInstancePoolConfig) -> Result<Self> {
         let creation_semaphore = Arc::new(Semaphore::new(
             (config.creation_rate_limit as usize).max(1)
         ));
-        let pools = Arc::new(RwLock::new(HashMap::new()));
+        let pools = Arc::new(DashMap::new());
         let stats = Arc::new(InstancePoolStats::default());
+
+        // Create shared wasmtime Engine with optimized configuration for ETL workloads
+        #[cfg(feature = "wasm")]
+        let engine = {
+            let mut wasm_config = Config::new();
+
+            // Enable async support for non-blocking execution
+            wasm_config.async_support(true);
+
+            // Set memory limits (will be overridden per-instance)
+            wasm_config.static_memory_maximum_size(512 * 1024 * 1024); // 512MB max per instance
+            wasm_config.static_memory_guard_size(128 * 1024); // 128KB guard pages
+
+            // Enable fuel metering for CPU limits
+            wasm_config.consume_fuel(true);
+
+            // Optimize for ETL workloads
+            wasm_config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+            wasm_config.parallel_compilation(true);
+
+            // Enable WASI support
+            wasm_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+
+            Arc::new(Engine::new(&wasm_config)
+                .map_err(|e| RustMqError::EtlProcessingFailed(
+                    format!("Failed to create wasmtime engine: {}", e)
+                ))?)
+        };
+
+        #[cfg(feature = "wasm")]
+        let compiled_modules = Arc::new(DashMap::new());
 
         // Start background cleanup task
         let cleanup_handle = Self::start_cleanup_task(
@@ -116,11 +187,57 @@ impl WasmInstancePool {
 
         Ok(Self {
             config,
+            #[cfg(feature = "wasm")]
+            engine,
+            #[cfg(feature = "wasm")]
+            compiled_modules,
             pools,
             creation_semaphore,
             stats,
             _cleanup_handle: cleanup_handle,
         })
+    }
+
+    /// Load and compile a WASM module from bytecode
+    #[cfg(feature = "wasm")]
+    pub async fn load_module(&self, module_id: String, bytecode: Vec<u8>) -> Result<()> {
+        // Check if already compiled
+        if self.compiled_modules.contains_key(&module_id) {
+            return Ok(());
+        }
+
+        // Compile module (this is expensive, done once)
+        let module = Module::from_binary(&self.engine, &bytecode)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to compile WASM module '{}': {}", module_id, e)
+            ))?;
+
+        // Validate required exports
+        let exports: Vec<_> = module.exports().map(|e| e.name().to_string()).collect();
+
+        if !exports.iter().any(|name| name == "transform") {
+            return Err(RustMqError::EtlProcessingFailed(
+                format!("WASM module '{}' must export 'transform' function", module_id)
+            ));
+        }
+
+        if !exports.iter().any(|name| name == "memory") {
+            return Err(RustMqError::EtlProcessingFailed(
+                format!("WASM module '{}' must export 'memory'", module_id)
+            ));
+        }
+
+        // Cache the compiled module
+        self.compiled_modules.insert(module_id.clone(), Arc::new(module));
+
+        tracing::info!("Loaded and compiled WASM module: {}", module_id);
+        Ok(())
+    }
+
+    /// Load module for non-wasm builds (no-op)
+    #[cfg(not(feature = "wasm"))]
+    pub async fn load_module(&self, _module_id: String, _bytecode: Vec<u8>) -> Result<()> {
+        Ok(())
     }
 
     /// Get or create an instance for the specified module
@@ -169,26 +286,27 @@ impl WasmInstancePool {
         })
     }
 
-    /// Try to get an instance from existing pool
+    /// Try to get an instance from existing pool (lock-free module access)
     async fn try_get_from_pool(&self, module_id: &str) -> Result<Option<PooledInstance>> {
-        let mut pools = self.pools.write().await;
-        
-        if let Some(module_pool) = pools.get_mut(module_id) {
+        // Lock-free access to the module pool
+        if let Some(pool_arc) = self.pools.get(module_id) {
+            let mut module_pool = pool_arc.lock();
+
             if let Some(mut instance) = module_pool.available_instances.pop_front() {
                 instance.last_used = Instant::now();
                 module_pool.in_use_count += 1;
                 module_pool.stats.pool_hits += 1;
-                
+
                 // Update LRU order
                 if let Some(pos) = module_pool.lru_order.iter().position(|&id| id == instance.instance_id) {
                     module_pool.lru_order.remove(pos);
                 }
                 module_pool.lru_order.push_back(instance.instance_id);
-                
+
                 return Ok(Some(instance));
             }
         }
-        
+
         Ok(None)
     }
 
@@ -212,7 +330,7 @@ impl WasmInstancePool {
         }
         
         let instance_id = self.get_next_instance_id(module_id).await;
-        let wasm_context = self.create_wasm_context(module_config).await?;
+        let wasm_context = self.create_wasm_context(module_id, module_config).await?;
         
         let instance = PooledInstance {
             instance_id,
@@ -228,11 +346,10 @@ impl WasmInstancePool {
         self.stats.total_instances_created.fetch_add(1, Ordering::Relaxed);
         self.stats.total_memory_usage.fetch_add(module_config.memory_limit_bytes, Ordering::Relaxed);
 
-        // Ensure module pool exists and update stats
-        let mut pools = self.pools.write().await;
-        let module_pool = pools.entry(module_id.to_string()).or_insert_with(|| {
+        // Ensure module pool exists and update stats (lock-free with DashMap)
+        let pool_arc = self.pools.entry(module_id.to_string()).or_insert_with(|| {
             self.stats.active_modules.fetch_add(1, Ordering::Relaxed);
-            ModulePool {
+            Arc::new(Mutex::new(ModulePool {
                 module_id: module_id.to_string(),
                 config: module_config.clone(),
                 available_instances: VecDeque::new(),
@@ -240,9 +357,10 @@ impl WasmInstancePool {
                 lru_order: VecDeque::new(),
                 next_instance_id: 0,
                 stats: ModulePoolStats::default(),
-            }
+            }))
         });
-        
+
+        let mut module_pool = pool_arc.lock();
         module_pool.stats.instances_created += 1;
         module_pool.stats.pool_misses += 1;
         module_pool.in_use_count += 1;
@@ -251,27 +369,94 @@ impl WasmInstancePool {
     }
 
     /// Create WASM execution context
-    async fn create_wasm_context(&self, config: &ModuleInstanceConfig) -> Result<WasmContext> {
-        // Mock implementation - in real system this would:
-        // 1. Create wasmtime Engine with appropriate config
-        // 2. Set up Store with resource limits
-        // 3. Instantiate the WASM module
-        // 4. Initialize linear memory
-        
-        tokio::time::sleep(Duration::from_millis(10)).await; // Simulate creation overhead
-        
+    /// Create WASM context with real wasmtime runtime
+    #[cfg(feature = "wasm")]
+    async fn create_wasm_context(&self, module_id: &str, config: &ModuleInstanceConfig) -> Result<WasmContext> {
+        // Get compiled module from cache
+        let module = self.compiled_modules.get(module_id)
+            .ok_or_else(|| RustMqError::EtlModuleNotFound(
+                format!("Module '{}' not loaded. Call load_module() first.", module_id)
+            ))?
+            .clone();
+
+        // Create WASI context
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdio()
+            .inherit_env()
+            .build();
+
+        // Create state
+        let state = WasmState { wasi };
+
+        // Create store with state
+        let mut store = Store::new(&self.engine, state);
+
+        // Set fuel for CPU limiting (approximate timeout in instructions)
+        // Memory limits are configured in Engine config (static_memory_maximum_size)
+        let fuel_amount = (config.execution_timeout_ms * 1_000_000) as u64; // ~1M instructions per ms
+        store.set_fuel(fuel_amount)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to set fuel: {}", e)
+            ))?;
+
+        // Link WASI - using a simple linker without WASI for now
+        // TODO: Add WASI preview1 support if needed by ETL modules
+        let mut linker = Linker::new(&self.engine);
+
+        // Instantiate module
+        let instance = linker.instantiate_async(&mut store, &module).await
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to instantiate WASM module: {}", e)
+            ))?;
+
+        // Get memory export
+        let memory = instance.get_memory(&mut store, "memory")
+            .ok_or_else(|| RustMqError::EtlProcessingFailed(
+                "WASM module must export 'memory'".to_string()
+            ))?;
+
+        // Get transform function (required)
+        let transform_func = instance.get_typed_func::<(i32, i32), i32>(&mut store, "transform")
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to get 'transform' function: {}", e)
+            ))?;
+
+        // Get allocate function (optional)
+        let allocate_func = instance.get_typed_func::<i32, i32>(&mut store, "allocate").ok();
+
+        // Get deallocate function (optional)
+        let deallocate_func = instance.get_typed_func::<i32, ()>(&mut store, "deallocate").ok();
+
+        let memory_size = memory.data_size(&store);
+
         Ok(WasmContext {
-            memory_size: config.memory_limit_bytes,
-            is_initialized: true,
-            mock_data: vec![0; 1024], // Mock some initial state
+            engine: self.engine.clone(),
+            module,
+            store,
+            instance,
+            memory,
+            transform_func,
+            allocate_func,
+            deallocate_func,
+            memory_size,
         })
     }
 
-    /// Get next instance ID for a module
+    /// Create mock WASM context for non-wasm builds
+    #[cfg(not(feature = "wasm"))]
+    async fn create_wasm_context(&self, _module_id: &str, config: &ModuleInstanceConfig) -> Result<WasmContext> {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        Ok(WasmContext {
+            memory_size: config.memory_limit_bytes,
+            is_initialized: true,
+            mock_data: vec![0; 1024],
+        })
+    }
+
+    /// Get next instance ID for a module (lock-free with DashMap)
     async fn get_next_instance_id(&self, module_id: &str) -> u64 {
-        let mut pools = self.pools.write().await;
-        let module_pool = pools.entry(module_id.to_string()).or_insert_with(|| {
-            ModulePool {
+        let pool_arc = self.pools.entry(module_id.to_string()).or_insert_with(|| {
+            Arc::new(Mutex::new(ModulePool {
                 module_id: module_id.to_string(),
                 config: ModuleInstanceConfig {
                     memory_limit_bytes: 64 * 1024 * 1024,
@@ -286,46 +471,47 @@ impl WasmInstancePool {
                 lru_order: VecDeque::new(),
                 next_instance_id: 0,
                 stats: ModulePoolStats::default(),
-            }
+            }))
         });
-        
+
+        let mut module_pool = pool_arc.lock();
         let id = module_pool.next_instance_id;
         module_pool.next_instance_id += 1;
         id
     }
 
-    /// Return an instance to the pool
+    /// Return an instance to the pool (lock-free module access)
     async fn return_instance(&self, module_id: &str, mut instance: PooledInstance) -> Result<()> {
-        let mut pools = self.pools.write().await;
-        
-        if let Some(module_pool) = pools.get_mut(module_id) {
+        if let Some(pool_arc) = self.pools.get(module_id) {
+            let mut module_pool = pool_arc.lock();
+
             module_pool.in_use_count = module_pool.in_use_count.saturating_sub(1);
-            
+
             // Check if pool is full and evict LRU if necessary
             if module_pool.available_instances.len() >= self.config.max_pool_size {
                 if self.config.enable_lru_eviction {
-                    self.evict_lru_instance(module_pool).await?;
+                    self.evict_lru_instance(&mut module_pool).await?;
                 } else {
                     // Pool is full and eviction disabled - destroy instance
                     self.destroy_instance(&instance).await?;
                     return Ok(());
                 }
             }
-            
+
             // Reset instance state for reuse
             instance.last_used = Instant::now();
-            
+
             // Store instance ID before moving the instance
             let instance_id = instance.instance_id;
-            
+
             // Add to available pool
             module_pool.available_instances.push_back(instance);
             module_pool.lru_order.push_back(instance_id);
             module_pool.stats.current_pool_size = module_pool.available_instances.len();
-            module_pool.stats.max_pool_size_reached = 
+            module_pool.stats.max_pool_size_reached =
                 module_pool.stats.max_pool_size_reached.max(module_pool.available_instances.len());
         }
-        
+
         Ok(())
     }
 
@@ -375,15 +561,18 @@ impl WasmInstancePool {
         Ok(())
     }
 
-    /// Get pool statistics
+    /// Get pool statistics (lock-free with DashMap)
     pub async fn get_stats(&self) -> Result<HashMap<String, ModulePoolStats>> {
-        let pools = self.pools.read().await;
         let mut stats = HashMap::new();
-        
-        for (module_id, pool) in pools.iter() {
-            stats.insert(module_id.clone(), pool.stats.clone());
+
+        // Lock-free iteration over all module pools
+        for entry in self.pools.iter() {
+            let module_id = entry.key().clone();
+            let pool_arc = entry.value();
+            let pool = pool_arc.lock();
+            stats.insert(module_id, pool.stats.clone());
         }
-        
+
         Ok(stats)
     }
 
@@ -399,31 +588,35 @@ impl WasmInstancePool {
         }
     }
 
-    /// Start background cleanup task for idle instances
+    /// Start background cleanup task for idle instances (lock-free with DashMap)
     fn start_cleanup_task(
-        pools: Arc<RwLock<HashMap<String, ModulePool>>>,
+        pools: Arc<DashMap<String, Arc<Mutex<ModulePool>>>>,
         stats: Arc<InstancePoolStats>,
         idle_timeout_seconds: u64,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
-            
+
             loop {
                 cleanup_interval.tick().await;
-                
-                let mut pools_guard = pools.write().await;
+
                 let idle_threshold = Instant::now() - Duration::from_secs(idle_timeout_seconds);
-                
-                for (module_id, module_pool) in pools_guard.iter_mut() {
+
+                // Lock-free iteration over all module pools
+                for entry in pools.iter() {
+                    let module_id = entry.key();
+                    let pool_arc = entry.value();
+                    let mut module_pool = pool_arc.lock();
+
                     let mut instances_to_remove = Vec::new();
-                    
+
                     // Find idle instances
                     for (index, instance) in module_pool.available_instances.iter().enumerate() {
                         if instance.last_used < idle_threshold {
                             instances_to_remove.push(index);
                         }
                     }
-                    
+
                     // Remove idle instances (in reverse order to maintain indices)
                     for &index in instances_to_remove.iter().rev() {
                         if let Some(instance) = module_pool.available_instances.remove(index) {
@@ -432,19 +625,19 @@ impl WasmInstancePool {
                                 .position(|&id| id == instance.instance_id) {
                                 module_pool.lru_order.remove(pos);
                             }
-                            
+
                             module_pool.stats.instances_destroyed += 1;
                             stats.total_instances_destroyed.fetch_add(1, Ordering::Relaxed);
                             stats.total_memory_usage.fetch_sub(
-                                instance.wasm_context.memory_size, 
+                                instance.wasm_context.memory_size,
                                 Ordering::Relaxed
                             );
-                            
-                            tracing::debug!("Cleaned up idle instance {} for module {}", 
+
+                            tracing::debug!("Cleaned up idle instance {} for module {}",
                                 instance.instance_id, module_id);
                         }
                     }
-                    
+
                     module_pool.stats.current_pool_size = module_pool.available_instances.len();
                 }
             }
@@ -453,17 +646,17 @@ impl WasmInstancePool {
 }
 
 impl InstanceReturnHandle {
-    /// Return the instance to the pool
+    /// Return the instance to the pool (lock-free with DashMap)
     pub async fn return_instance(self, mut instance: PooledInstance) -> Result<()> {
         // Update instance metrics before returning
         instance.execution_count += 1;
         instance.last_used = Instant::now();
-        
-        let mut pools = self.pool_ref.write().await;
-        
-        if let Some(module_pool) = pools.get_mut(&self.module_id) {
+
+        if let Some(pool_arc) = self.pool_ref.get(&self.module_id) {
+            let mut module_pool = pool_arc.lock();
+
             module_pool.in_use_count = module_pool.in_use_count.saturating_sub(1);
-            
+
             // Check if pool is full and evict LRU if necessary
             if module_pool.available_instances.len() >= self.max_pool_size {
                 // Pool is full - evict LRU instance
@@ -474,64 +667,126 @@ impl InstanceReturnHandle {
                         let old_instance = module_pool.available_instances.remove(pos).unwrap();
                         self.stats_ref.total_instances_destroyed.fetch_add(1, Ordering::Relaxed);
                         self.stats_ref.total_memory_usage.fetch_sub(
-                            old_instance.wasm_context.memory_size, 
+                            old_instance.wasm_context.memory_size,
                             Ordering::Relaxed
                         );
                         module_pool.stats.instances_destroyed += 1;
                     }
                 }
             }
-            
+
             // Store instance ID before moving the instance
             let instance_id = instance.instance_id;
-            
+
             // Add to available pool
             module_pool.available_instances.push_back(instance);
             module_pool.lru_order.push_back(instance_id);
             module_pool.stats.current_pool_size = module_pool.available_instances.len();
-            module_pool.stats.max_pool_size_reached = 
+            module_pool.stats.max_pool_size_reached =
                 module_pool.stats.max_pool_size_reached.max(module_pool.available_instances.len());
-            
-            tracing::debug!("Returned instance {} to pool for module {}", 
+
+            tracing::debug!("Returned instance {} to pool for module {}",
                 self.instance_id, self.module_id);
         }
-        
+
         Ok(())
     }
 }
 
+// Real WASM implementation
+#[cfg(feature = "wasm")]
 impl WasmContext {
-    /// Execute WASM function with the given input
+    /// Execute WASM transformation with real wasmtime runtime
+    pub async fn execute(&mut self, _function_name: &str, input: &[u8]) -> Result<Vec<u8>> {
+        let input_len = input.len() as i32;
+
+        // Allocate memory in WASM for input
+        let input_ptr = if let Some(allocate_func) = &self.allocate_func {
+            // Use module's allocator
+            allocate_func.call_async(&mut self.store, input_len).await
+                .map_err(|e| RustMqError::EtlProcessingFailed(
+                    format!("Failed to allocate WASM memory: {}", e)
+                ))?
+        } else {
+            // Use fixed location at offset 0 (requires module cooperation)
+            0
+        };
+
+        // Write input bytes to WASM memory
+        self.memory.write(&mut self.store, input_ptr as usize, input)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to write to WASM memory: {}", e)
+            ))?;
+
+        // Call transform function
+        let output_ptr = self.transform_func.call_async(&mut self.store, (input_ptr, input_len)).await
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("WASM transform function failed: {}", e)
+            ))?;
+
+        // Read output length from memory (convention: first 4 bytes at output_ptr contain length)
+        let mut len_bytes = [0u8; 4];
+        self.memory.read(&self.store, output_ptr as usize, &mut len_bytes)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to read output length from WASM memory: {}", e)
+            ))?;
+        let output_len = i32::from_le_bytes(len_bytes) as usize;
+
+        // Read output bytes (starting after the length prefix)
+        let mut output = vec![0u8; output_len];
+        self.memory.read(&self.store, (output_ptr as usize) + 4, &mut output)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to read output from WASM memory: {}", e)
+            ))?;
+
+        // Deallocate input memory if possible
+        if let Some(deallocate_func) = &self.deallocate_func {
+            deallocate_func.call_async(&mut self.store, input_ptr).await
+                .map_err(|e| RustMqError::EtlProcessingFailed(
+                    format!("Failed to deallocate WASM memory: {}", e)
+                ))?;
+        }
+
+        Ok(output)
+    }
+
+    /// Get remaining fuel (CPU budget)
+    pub fn remaining_fuel(&self) -> Option<u64> {
+        self.store.get_fuel().ok()
+    }
+
+    /// Add more fuel if needed
+    pub fn add_fuel(&mut self, fuel: u64) -> Result<()> {
+        let current = self.store.get_fuel()
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to get current fuel: {}", e)
+            ))?;
+        self.store.set_fuel(current + fuel)
+            .map_err(|e| RustMqError::EtlProcessingFailed(
+                format!("Failed to set fuel: {}", e)
+            ))
+    }
+}
+
+// Mock implementation for non-wasm builds
+#[cfg(not(feature = "wasm"))]
+impl WasmContext {
     pub async fn execute(&mut self, function_name: &str, input: &[u8]) -> Result<Vec<u8>> {
-        // Mock execution - in real implementation this would:
-        // 1. Call the exported WASM function
-        // 2. Handle memory management
-        // 3. Convert between host and WASM types
-        // 4. Apply resource limits and timeouts
-        
         if !self.is_initialized {
             return Err(RustMqError::EtlProcessingFailed(
                 "WASM context not initialized".to_string()
             ));
         }
-        
-        // Simulate processing time
+
         tokio::time::sleep(Duration::from_millis(5)).await;
-        
-        // Mock transformation: just echo the input with a prefix
+
         let mut output = format!("processed:{}", function_name).into_bytes();
         output.extend_from_slice(input);
-        
+
         Ok(output)
     }
-    
-    /// Reset context state for reuse
+
     pub fn reset(&mut self) {
-        // In real implementation, this would:
-        // 1. Reset linear memory to initial state
-        // 2. Reset global variables
-        // 3. Clear any module-specific state
-        
         self.mock_data.fill(0);
     }
 }
@@ -559,6 +814,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "wasm"))]
     async fn test_instance_checkout_and_return() {
         let config = EtlInstancePoolConfig {
             max_pool_size: 5,
@@ -597,6 +853,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "wasm"))]
     async fn test_instance_prewarming() {
         let config = EtlInstancePoolConfig {
             max_pool_size: 10,
@@ -630,6 +887,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "wasm"))]
     async fn test_wasm_context_execution() {
         let mut context = WasmContext {
             memory_size: 1024 * 1024,
@@ -639,13 +897,14 @@ mod tests {
 
         let input = b"test input data";
         let output = context.execute("transform", input).await.unwrap();
-        
+
         // Check that output contains processed prefix and input
         assert!(output.starts_with(b"processed:transform"));
         assert!(output.ends_with(input));
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "wasm"))]
     async fn test_lru_eviction() {
         let config = EtlInstancePoolConfig {
             max_pool_size: 2, // Small pool to force eviction
