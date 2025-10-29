@@ -43,6 +43,8 @@ pub trait ReplicationRpcClient: Send + Sync {
     async fn transfer_leadership(&self, broker_id: &BrokerId, request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse>;
 }
 
+/// Mock implementation for testing purposes
+/// DO NOT USE IN PRODUCTION - use GrpcReplicationRpcClient instead
 pub struct MockReplicationRpcClient;
 
 #[async_trait]

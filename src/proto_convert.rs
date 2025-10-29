@@ -826,13 +826,13 @@ pub fn error_to_message(error: &RustMqError) -> String {
 /// Determine if an error is retryable
 pub fn error_is_retryable(error: &RustMqError) -> bool {
     match error {
-        RustMqError::Timeout(_) 
+        RustMqError::Timeout(_)
         | RustMqError::Network(_)
         | RustMqError::QuicConnection(_)
         | RustMqError::ResourceExhausted(_)
         | RustMqError::Replication(_)
         | RustMqError::Upload(_) => true,
-        
+
         RustMqError::StaleLeaderEpoch { .. }
         | RustMqError::InvalidOperation(_)
         | RustMqError::InvalidConfig(_)
@@ -843,9 +843,55 @@ pub fn error_is_retryable(error: &RustMqError) -> bool {
         | RustMqError::TopicAlreadyExists(_)
         | RustMqError::NotLeader(_)
         | RustMqError::OffsetOutOfRange(_) => false,
-        
+
         _ => false, // Conservative default: non-retryable
     }
+}
+
+// ============================================================================
+// Helper Functions for gRPC Replication Client
+// ============================================================================
+
+/// Convert internal TopicPartition to proto TopicPartition
+pub fn topic_partition_to_proto(tp: &internal::TopicPartition) -> common::TopicPartition {
+    common::TopicPartition {
+        topic: tp.topic.clone(),
+        partition: tp.partition,
+    }
+}
+
+/// Convert internal WalRecord to proto WalRecord
+pub fn wal_record_to_proto(record: &internal::WalRecord) -> crate::Result<common::WalRecord> {
+    let proto_record: common::Record = record.record.clone().try_into()
+        .map_err(|e: ConversionError| RustMqError::Storage(format!("Failed to convert record: {}", e)))?;
+
+    Ok(common::WalRecord {
+        topic_partition: Some(topic_partition_to_proto(&record.topic_partition)),
+        offset: record.offset,
+        record: Some(proto_record),
+        crc32: record.crc32,
+        version: 1, // Protocol version
+    })
+}
+
+/// Convert proto FollowerState to internal FollowerState
+pub fn follower_state_from_proto(state: &common::FollowerState) -> crate::Result<internal::FollowerState> {
+    // Parse last_heartbeat timestamp
+    let last_heartbeat = if let Some(ref ts) = state.last_heartbeat {
+        let millis = timestamp_from_proto(ts.clone())
+            .map_err(|e: ConversionError| RustMqError::Storage(format!("Failed to convert timestamp: {}", e)))?;
+        chrono::DateTime::from_timestamp_millis(millis)
+            .unwrap_or_else(chrono::Utc::now)
+    } else {
+        chrono::Utc::now()
+    };
+
+    Ok(internal::FollowerState {
+        broker_id: state.broker_id.clone(),
+        last_known_offset: state.last_known_offset,
+        last_heartbeat,
+        lag: state.lag,
+    })
 }
 
 #[cfg(test)]

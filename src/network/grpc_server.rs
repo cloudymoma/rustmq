@@ -25,6 +25,7 @@ use tracing::error;
 
 /// gRPC service implementation for broker-to-broker communication
 /// All RPCs enforce leader epoch validation to prevent stale leader attacks
+#[derive(Clone)]
 pub struct BrokerReplicationServiceImpl {
     /// Map of topic partitions to their follower handlers
     follower_handlers: Arc<RwLock<HashMap<internal::TopicPartition, Arc<FollowerReplicationHandler>>>>,
