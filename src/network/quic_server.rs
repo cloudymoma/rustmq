@@ -719,25 +719,54 @@ impl SecureQuicServer {
     }
     
     /// Extract client certificates from QUIC connection
-    /// Note: This is a placeholder implementation since the actual certificate extraction
-    /// from quinn/rustls may require different APIs depending on the version
+    ///
+    /// Uses quinn's peer_identity() API to retrieve the certificate chain from the TLS session.
+    /// The peer_identity returns a Box<dyn Any> which we downcast to Vec<Certificate>.
     fn extract_client_certificates(connection: &Connection) -> Result<Vec<Certificate>> {
-        // TODO: Implement actual certificate extraction from QUIC/TLS session
-        // This would typically involve:
-        // 1. Getting the TLS connection info from quinn
-        // 2. Extracting the peer certificate chain
-        // 3. Converting to rustls::Certificate format
-        
-        // For now, return empty to trigger fallback behavior
-        // In production, this should be replaced with actual certificate extraction
-        tracing::warn!(
+        // Get the peer identity from the QUIC/TLS session
+        // This returns Option<Box<dyn Any>> containing the peer's certificate chain
+        let identity = connection
+            .peer_identity()
+            .ok_or_else(|| {
+                tracing::warn!(
+                    remote_addr = %connection.remote_address(),
+                    "No peer identity found - mTLS may not be configured or client didn't provide certificates"
+                );
+                RustMqError::AuthenticationFailed("No peer identity".to_string())
+            })?;
+
+        // Downcast the Any type to Vec<Certificate>
+        // Quinn/rustls stores the peer certificate chain as Vec<Certificate>
+        let certificates = identity
+            .downcast_ref::<Vec<Certificate>>()
+            .ok_or_else(|| {
+                tracing::error!(
+                    remote_addr = %connection.remote_address(),
+                    "Failed to downcast peer identity to certificate vector - unexpected type"
+                );
+                RustMqError::AuthenticationFailed("Invalid certificate type".to_string())
+            })?;
+
+        // Clone and return the certificate chain
+        // We clone here because the identity is borrowed and we need an owned Vec
+        if certificates.is_empty() {
+            tracing::warn!(
+                remote_addr = %connection.remote_address(),
+                "Peer identity found but certificate chain is empty"
+            );
+            return Err(RustMqError::AuthenticationFailed(
+                "Empty certificate chain".to_string()
+            ));
+        }
+
+        tracing::debug!(
             remote_addr = %connection.remote_address(),
-            "Certificate extraction not yet implemented - using fallback authentication"
+            cert_count = certificates.len(),
+            "Successfully extracted {} certificate(s) from QUIC connection",
+            certificates.len()
         );
-        
-        // Fallback: Create a demo certificate for testing
-        // This allows the authentication flow to work for development/testing
-        Ok(vec![])
+
+        Ok(certificates.clone())
     }
     
     /// Calculate server certificate fingerprint
