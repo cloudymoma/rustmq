@@ -165,6 +165,7 @@ impl SecurityManager {
             AuthorizationManager::new(
                 config.acl.clone(),
                 metrics.clone(),
+                None, // No ACL manager in test mode - fail-secure
             ).await?
         );
         
@@ -206,6 +207,7 @@ impl SecurityManager {
             AuthorizationManager::new(
                 config.acl.clone(),
                 metrics.clone(),
+                None, // No ACL manager in test mode - fail-secure
             ).await?
         );
         
@@ -278,6 +280,7 @@ impl SecurityManager {
             AuthorizationManager::new(
                 acl_config,
                 self.metrics.clone(),
+                None, // No ACL manager in test mode - fail-secure
             ).await?
         );
         

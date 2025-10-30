@@ -40,7 +40,7 @@ async fn setup_authorization_manager() -> Arc<AuthorizationManager> {
     };
     
     let metrics = Arc::new(SecurityMetrics::new().unwrap());
-    Arc::new(AuthorizationManager::new(config, metrics).await.unwrap())
+    Arc::new(AuthorizationManager::new(config, metrics, None).await.unwrap())
 }
 
 /// Basic authorization performance tests

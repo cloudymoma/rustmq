@@ -20,8 +20,8 @@ mod tests {
     async fn create_test_authorization_manager() -> AuthorizationManager {
         let config = SecurityTestConfig::create_test_config().acl;
         let metrics = Arc::new(SecurityMetrics::new().unwrap());
-        
-        AuthorizationManager::new(config, metrics).await.unwrap()
+
+        AuthorizationManager::new(config, metrics, None).await.unwrap()
     }
 
     #[tokio::test]

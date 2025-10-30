@@ -39,7 +39,7 @@ async fn create_auth_manager() -> Arc<AuthorizationManager> {
     };
     
     let metrics = Arc::new(SecurityMetrics::new().unwrap());
-    Arc::new(AuthorizationManager::new(config, metrics).await.unwrap())
+    Arc::new(AuthorizationManager::new(config, metrics, None).await.unwrap())
 }
 
 /// L1 Cache Performance Benchmarks

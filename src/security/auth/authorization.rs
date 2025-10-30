@@ -20,6 +20,7 @@
 use super::{AclKey, Principal, Permission};
 use crate::error::{Result, RustMqError};
 use crate::security::{AclConfig, SecurityMetrics};
+use crate::security::acl::{AclManager, AclOperation};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -151,9 +152,15 @@ impl ConnectionAclCache {
 
 impl AuthorizationManager {
     /// Create a new authorization manager
+    ///
+    /// # Arguments
+    /// * `config` - ACL configuration
+    /// * `metrics` - Security metrics collector
+    /// * `acl_manager` - Optional ACL manager for production ACL checking (None = test/fail-secure mode)
     pub async fn new(
         config: AclConfig,
         metrics: Arc<SecurityMetrics>,
+        acl_manager: Option<Arc<AclManager>>,
     ) -> Result<Self> {
         // Initialize L2 cache shards
         let l2_shards: Vec<DashMap<AclKey, AclCacheEntry>> = (0..32)
@@ -163,19 +170,20 @@ impl AuthorizationManager {
             l2_shards.try_into()
                 .map_err(|_| RustMqError::Internal("Failed to create L2 cache shards".to_string()))?
         );
-        
+
         // Initialize Bloom filter for negative caching
         let bloom_filter = Bloom::new_for_fp_rate(config.bloom_filter_size, 0.001);
         let negative_cache = Arc::new(RwLock::new(bloom_filter));
-        
+
         // Initialize string interning pool
         let string_pool = Arc::new(DashMap::new());
-        
-        // Initialize batch fetcher
+
+        // Initialize batch fetcher with optional ACL manager
         let batch_fetcher = Arc::new(BatchedAclFetcher::new(
             config.batch_fetch_size,
             Duration::from_millis(10), // 10ms batch timeout
             metrics.clone(),
+            acl_manager,
         ));
         
         // Start background cleanup task
@@ -514,6 +522,8 @@ pub struct BatchedAclFetcher {
     batch_timeout: Duration,
     fetch_semaphore: Arc<Semaphore>,
     metrics: Arc<SecurityMetrics>,
+    /// Optional ACL manager for production ACL checking (None = fail-secure mode)
+    acl_manager: Option<Arc<AclManager>>,
 }
 
 impl BatchedAclFetcher {
@@ -521,6 +531,7 @@ impl BatchedAclFetcher {
         batch_size: usize,
         batch_timeout: Duration,
         metrics: Arc<SecurityMetrics>,
+        acl_manager: Option<Arc<AclManager>>,
     ) -> Self {
         let fetcher = Self {
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -528,8 +539,9 @@ impl BatchedAclFetcher {
             batch_timeout,
             fetch_semaphore: Arc::new(Semaphore::new(10)), // Max 10 concurrent fetches
             metrics,
+            acl_manager,
         };
-        
+
         // Start background batch processor
         fetcher.start_batch_processor();
         fetcher
@@ -573,11 +585,10 @@ impl BatchedAclFetcher {
         
         let keys: Vec<AclKey> = batch.keys().cloned().collect();
         self.metrics.record_batch_fetch(keys.len());
-        
-        // TODO: Actual controller client call
-        // For now, simulate with a simple allow/deny logic
-        let results = self.simulate_controller_fetch(&keys).await;
-        
+
+        // Fetch ACL decisions from the manager (or deny if unavailable)
+        let results = self.fetch_from_acl_manager(&keys).await;
+
         // Notify all waiters
         for (key, senders) in batch {
             let allowed = results.get(&key).copied().unwrap_or(false);
@@ -586,21 +597,72 @@ impl BatchedAclFetcher {
             }
         }
     }
-    
-    // TODO: Replace with actual controller client
-    async fn simulate_controller_fetch(&self, keys: &[AclKey]) -> HashMap<AclKey, bool> {
-        tokio::time::sleep(Duration::from_millis(1)).await; // Simulate network latency
-        
+
+    /// Fetch ACL decisions from the AclManager (production implementation)
+    ///
+    /// **Fail-Secure Behavior**: If AclManager is not available or returns an error,
+    /// this method denies access (returns false). This ensures security is maintained
+    /// even when the controller is unavailable.
+    async fn fetch_from_acl_manager(&self, keys: &[AclKey]) -> HashMap<AclKey, bool> {
         let mut results = HashMap::new();
+
+        // If no ACL manager is configured, fail secure (deny all)
+        let acl_manager = match &self.acl_manager {
+            Some(manager) => manager,
+            None => {
+                tracing::warn!(
+                    key_count = keys.len(),
+                    "ACL manager not available - failing secure (denying all {} requests)",
+                    keys.len()
+                );
+                for key in keys {
+                    results.insert(key.clone(), false);
+                }
+                return results;
+            }
+        };
+
+        // Check each permission with the ACL manager
         for key in keys {
-            // Simple simulation: allow read access to most topics, deny admin
-            let allowed = match key.permission {
-                Permission::Read => true,
-                Permission::Write => key.topic.starts_with("user-"),
-                Permission::Admin => key.principal.starts_with("admin-"),
+            // Convert Permission enum to AclOperation
+            let operation = match key.permission {
+                Permission::Read => AclOperation::Read,
+                Permission::Write => AclOperation::Write,
+                Permission::Admin => AclOperation::Admin,
             };
+
+            // Check permission via ACL manager
+            let allowed = match acl_manager.check_permission(
+                &key.principal,
+                &key.topic,
+                operation
+            ).await {
+                Ok(allowed) => {
+                    tracing::debug!(
+                        principal = %key.principal,
+                        topic = %key.topic,
+                        permission = ?key.permission,
+                        allowed = allowed,
+                        "ACL check result from manager"
+                    );
+                    allowed
+                }
+                Err(e) => {
+                    // On error, fail secure (deny access)
+                    tracing::error!(
+                        principal = %key.principal,
+                        topic = %key.topic,
+                        permission = ?key.permission,
+                        error = %e,
+                        "ACL manager error - failing secure (denying access)"
+                    );
+                    false
+                }
+            };
+
             results.insert(key.clone(), allowed);
         }
+
         results
     }
     
@@ -701,7 +763,7 @@ mod tests {
     async fn test_string_interning() {
         let config = AclConfig::default();
         let metrics = Arc::new(SecurityMetrics::new().unwrap());
-        let auth_mgr = AuthorizationManager::new(config, metrics).await.unwrap();
+        let auth_mgr = AuthorizationManager::new(config, metrics, None).await.unwrap();
         
         let s1 = auth_mgr.intern_string("test-string");
         let s2 = auth_mgr.intern_string("test-string");
@@ -715,7 +777,7 @@ mod tests {
     async fn test_authorization_cache_flow() {
         let config = AclConfig::default();
         let metrics = Arc::new(SecurityMetrics::new().unwrap());
-        let auth_mgr = AuthorizationManager::new(config, metrics).await.unwrap();
+        let auth_mgr = AuthorizationManager::new(config, metrics, None).await.unwrap();
         let l1_cache = auth_mgr.create_connection_cache();
         
         let principal = Arc::from("test-user");
