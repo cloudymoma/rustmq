@@ -1,7 +1,7 @@
 use crate::security::{
     AclManager, AclRule, AclOperation, Effect, PermissionSet, AuthorizationManager,
 };
-use crate::security::acl::{ResourcePattern, ResourceType};
+use crate::security::acl::{ResourcePattern, ResourceType, manager::AclManagerTrait};
 use crate::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -117,11 +117,11 @@ impl AclHandlers {
             conditions: conditions.clone().unwrap_or_default(),
         };
 
-        // TODO: Implement create_rule method in AclManager
-        let created_rule = acl_rule.clone();
+        // Create the rule in AclManager
+        let created_rule = self.acl_manager.create_rule(acl_rule).await?;
 
-        // TODO: Implement invalidate_principal_cache method in AuthorizationManager
-        // For now, we'll skip cache invalidation
+        // Invalidate cache for the principal
+        self.authorization_manager.invalidate_principal_cache(&principal).await?;
 
         let response = AclRuleCreationResponse {
             rule_id: created_rule.id.clone(),
@@ -152,16 +152,8 @@ impl AclHandlers {
     ) -> Result<AclRuleCreationResponse> {
         info!("Updating ACL rule: {}", rule_id);
 
-        // TODO: Implement get_rule method in AclManager
-        // For now, return a placeholder rule
-        let mut existing_rule = AclRule {
-            id: rule_id.clone(),
-            principal: "placeholder".to_string(),
-            resource: ResourcePattern::new(ResourceType::Topic, "*".to_string()),
-            operations: vec![],
-            effect: Effect::Allow,
-            conditions: HashMap::new(),
-        };
+        // Get the existing rule
+        let mut existing_rule = self.acl_manager.get_rule(rule_id.clone()).await?;
         let original_principal = existing_rule.principal.clone();
 
         // Update fields if provided
@@ -197,13 +189,12 @@ impl AclHandlers {
         // Note: AclRule doesn't have updated_at or version fields
 
         // Update the rule
-        // TODO: Implement update_rule method in AclManager
-        let updated_rule = existing_rule.clone();
+        let updated_rule = self.acl_manager.update_rule(rule_id.clone(), existing_rule.clone()).await?;
 
         // Invalidate caches for both old and new principals
-        // TODO: Implement invalidate_principal_cache method
+        self.authorization_manager.invalidate_principal_cache(&original_principal).await?;
         if original_principal != updated_rule.principal {
-            // TODO: Implement invalidate_principal_cache method
+            self.authorization_manager.invalidate_principal_cache(&updated_rule.principal).await?;
         }
 
         let response = AclRuleCreationResponse {
@@ -226,10 +217,15 @@ impl AclHandlers {
     pub async fn delete_acl_rule(&self, rule_id: String) -> Result<String> {
         info!("Deleting ACL rule: {}", rule_id);
 
-        // TODO: Implement get_rule and delete_rule methods in AclManager
-        // TODO: Implement invalidate_principal_cache method in AuthorizationManager
-        // For now, just log the operation
-        let principal = "placeholder".to_string();
+        // Get the rule to find the principal for cache invalidation
+        let rule = self.acl_manager.get_rule(rule_id.clone()).await?;
+        let principal = rule.principal.clone();
+
+        // Delete the rule
+        self.acl_manager.delete_rule(rule_id.clone()).await?;
+
+        // Invalidate cache for the principal
+        self.authorization_manager.invalidate_principal_cache(&principal).await?;
 
         info!("Successfully deleted ACL rule: {}", rule_id);
         Ok(format!("ACL rule '{}' deleted successfully", rule_id))
@@ -255,8 +251,19 @@ impl AclHandlers {
             .and_then(|o| o.parse::<usize>().ok())
             .unwrap_or(0);
 
-        // TODO: Implement list_rules method in AclManager
-        let mut rules: Vec<AclRule> = Vec::new();
+        // Build filter for AclManager
+        let acl_filter = crate::security::acl::storage::AclRuleFilter {
+            principal: principal_filter.clone(),
+            resource_pattern: resource_filter.clone(),
+            operations: None, // We'll filter operations manually if needed
+            effect: effect_filter.clone(),
+            version_range: None,
+            include_deleted: false,
+            limit: Some(limit + offset), // Get enough for pagination
+        };
+
+        // Get rules from AclManager
+        let mut rules = self.acl_manager.list_rules(Some(acl_filter)).await?;
 
         // Apply filters
         if let Some(principal) = principal_filter {
@@ -300,9 +307,30 @@ impl AclHandlers {
         // Create evaluation context
         let eval_context = context.unwrap_or_default();
 
-        // Perform authorization check
-        // TODO: Implement authorize method in AuthorizationManager
-        let authorization_result = crate::security::acl::policy::PolicyDecision::Allow;
+        // Perform authorization check using AuthorizationManager
+        let l1_cache = self.authorization_manager.create_connection_cache();
+        let principal_obj: crate::security::auth::Principal = Arc::from(principal.as_str());
+        let permission = match operation_enum {
+            AclOperation::Read | AclOperation::Describe | AclOperation::List => crate::security::auth::Permission::Read,
+            AclOperation::Write | AclOperation::Create => crate::security::auth::Permission::Write,
+            AclOperation::Admin | AclOperation::Alter | AclOperation::Delete | AclOperation::Cluster | AclOperation::All => crate::security::auth::Permission::Admin,
+            AclOperation::Connect => crate::security::auth::Permission::Read, // Map connect to read for simplicity
+        };
+
+        let allowed = self.authorization_manager.check_permission(
+            &*l1_cache,
+            &principal_obj,
+            &resource,
+            permission,
+        ).await?;
+
+        let authorization_result = if allowed {
+            crate::security::acl::policy::PolicyDecision::Allow
+        } else {
+            crate::security::acl::policy::PolicyDecision::Deny {
+                reason: format!("Permission denied for {} on {}", principal, resource),
+            }
+        };
 
         let evaluation_time = start_time.elapsed().as_nanos() as u64;
 
@@ -344,8 +372,11 @@ impl AclHandlers {
         debug!("Getting permissions analysis for principal: {}", principal);
 
         // Get all rules for this principal
-        // TODO: Implement get_rules_for_principal method in AclManager
-        let rules: Vec<AclRule> = Vec::new();
+        let versioned_rules = self.acl_manager.get_rules_for_principal(&principal).await?;
+        let rules: Vec<AclRule> = versioned_rules.iter()
+            .filter(|vr| !vr.deleted)
+            .map(|vr| vr.rule.clone())
+            .collect();
 
         // Analyze rules
         let total_rules = rules.len() as u32;
@@ -368,9 +399,23 @@ impl AclHandlers {
                 .push(operation_str);
         }
 
-        // Get effective permissions from authorization manager
-        // TODO: Implement get_principal_permissions method in AuthorizationManager
-        let effective_permissions = PermissionSet::new();
+        // Get effective permissions from ACL manager
+        let permissions = self.acl_manager.get_principal_permissions(&principal).await?;
+        let mut effective_permissions = PermissionSet::new();
+
+        // Convert permissions to PermissionSet
+        for perm in permissions {
+            for op in perm.operations {
+                // Convert AclOperation to Permission
+                let permission = match op {
+                    AclOperation::Read | AclOperation::Describe | AclOperation::List => crate::security::auth::Permission::Read,
+                    AclOperation::Write | AclOperation::Create => crate::security::auth::Permission::Write,
+                    AclOperation::Admin | AclOperation::Alter | AclOperation::Delete | AclOperation::Cluster | AclOperation::All => crate::security::auth::Permission::Admin,
+                    AclOperation::Connect => crate::security::auth::Permission::Read,
+                };
+                effective_permissions.add_permission(permission);
+            }
+        }
 
         // Perform risk assessment
         let risk_assessment = self.assess_principal_risk(&principal, &rules).await?;
@@ -396,8 +441,16 @@ impl AclHandlers {
         debug!("Getting rules for resource: {}", resource);
 
         // Get all rules that might affect this resource
-        // TODO: Implement list_rules method in AclManager
-        let all_rules: Vec<AclRule> = Vec::new();
+        let filter = crate::security::acl::storage::AclRuleFilter {
+            principal: None,
+            resource_pattern: Some(resource.clone()),
+            operations: None,
+            effect: None,
+            version_range: None,
+            include_deleted: false,
+            limit: None,
+        };
+        let all_rules = self.acl_manager.list_rules(Some(filter)).await?;
         let matching_rules: Vec<AclRule> = all_rules
             .into_iter()
             .filter(|rule| self.resource_matches_pattern(&resource, &rule.resource.pattern))
@@ -464,7 +517,7 @@ impl AclHandlers {
         info!("Forcing ACL synchronization to brokers");
 
         // Trigger synchronization
-        // TODO: Implement force_sync method in AclManager
+        self.acl_manager.force_sync().await?;
 
         // Get sync status
         let sync_status = self.get_acl_sync_status().await?;
@@ -476,10 +529,10 @@ impl AclHandlers {
     pub async fn get_acl_version(&self) -> Result<(u64, DateTime<Utc>, u32)> {
         debug!("Getting current ACL version");
 
-        // TODO: Implement get_current_version, get_last_update_time, get_rules_count methods in AclManager
-        let version = 1u64;
-        let last_updated = chrono::Utc::now();
-        let rules_count = 0u32;
+        let version = self.acl_manager.get_current_version().await;
+        let last_updated = self.acl_manager.get_last_update_time().await
+            .unwrap_or_else(|| chrono::Utc::now());
+        let rules_count = self.acl_manager.get_rules_count().await as u32;
 
         Ok((version, last_updated, rules_count))
     }
@@ -489,7 +542,7 @@ impl AclHandlers {
         info!("Invalidating ACL caches");
 
         // Invalidate all authorization caches
-        // TODO: Implement invalidate_all_caches method in AuthorizationManager
+        self.authorization_manager.invalidate_all_caches().await?;
 
         Ok("ACL caches invalidated successfully".to_string())
     }
@@ -498,10 +551,16 @@ impl AclHandlers {
     pub async fn warm_acl_cache(&self, principals: Vec<String>) -> Result<String> {
         info!("Warming ACL caches for {} principals", principals.len());
 
-        // Warm caches for each principal
-        for principal in principals {
-            // TODO: Implement warm_cache method in AuthorizationManager
-        }
+        // Get all resources to warm the cache with
+        // In production, you might want to limit this to frequently accessed resources
+        let resources: Vec<String> = vec![
+            "topic.*".to_string(),
+            "group.*".to_string(),
+            "cluster.*".to_string(),
+        ];
+
+        // Warm caches
+        self.authorization_manager.warm_cache(principals, resources).await?;
 
         Ok("ACL caches warmed successfully".to_string())
     }
@@ -510,9 +569,9 @@ impl AclHandlers {
 
     async fn get_acl_sync_status(&self) -> Result<AclSyncStatus> {
         // This would normally query the actual broker sync status
-        // For now, return mock data
+        // For now, return mock data with actual version
         let sync_status = AclSyncStatus {
-            version: 1u64, // TODO: Implement get_current_version method in AclManager
+            version: self.acl_manager.get_current_version().await,
             last_sync: Utc::now() - chrono::Duration::minutes(5),
             broker_sync_status: {
                 let mut status = HashMap::new();

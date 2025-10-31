@@ -4,7 +4,7 @@
 //! cache management, security validation, and audit logging.
 
 use super::{
-    AclRule, AclEntry, AclOperation, Effect, PolicyDecision, 
+    AclRule, AclEntry, AclOperation, Effect, PolicyDecision,
     storage::{AclStorage, VersionedAclRule, AclRuleFilter, AclPermission},
     raft::RaftAclManager,
 };
@@ -20,6 +20,7 @@ use tokio::time::{Duration, Instant, interval};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use regex::Regex;
+use chrono::{DateTime, Utc};
 
 /// Enhanced ACL manager with enterprise features
 pub struct AclManager {
@@ -645,10 +646,149 @@ impl AclManager {
     
     /// Get ACL version (convenience method for tests)
     pub async fn get_acl_version(&self) -> Result<u64> {
-        // Return placeholder version for tests
-        Ok(1)
+        self.raft_manager.get_acl_version().await
     }
-    
+
+    // New CRUD methods for ACL Admin API
+
+    /// Create a new ACL rule
+    pub async fn create_rule(&self, rule: AclRule) -> Result<AclRule> {
+        // Validate the rule
+        self.security_validator.validate_rule(&rule)?;
+
+        // Create the rule via Raft manager
+        let rule_id = self.raft_manager.create_acl_rule(rule.clone(), "admin", "Created via Admin API").await?;
+
+        // Invalidate related cache entries
+        let cache_keys = vec![format!("{}:*", rule.principal)];
+        self.invalidate_cache(cache_keys).await?;
+
+        // Sync to all brokers
+        if let Err(e) = self.sync_acls_to_all_brokers().await {
+            tracing::warn!("Failed to sync ACLs to brokers after rule creation: {}", e);
+        }
+
+        // Return the rule with the generated ID
+        let mut created_rule = rule;
+        created_rule.id = rule_id;
+        Ok(created_rule)
+    }
+
+    /// Update an existing ACL rule
+    pub async fn update_rule(&self, id: String, rule: AclRule) -> Result<AclRule> {
+        // Validate the rule
+        self.security_validator.validate_rule(&rule)?;
+
+        // Get old rule for cache invalidation
+        let old_rule = self.raft_manager.get_acl_rule(&id).await?
+            .ok_or_else(|| RustMqError::AclEvaluation(format!("Rule {} not found", id)))?;
+
+        // Update the rule
+        self.raft_manager.update_acl_rule(&id, rule.clone(), "admin", "Updated via Admin API").await?;
+
+        // Invalidate cache entries for both old and new principals
+        let mut cache_keys = vec![format!("{}:*", rule.principal)];
+        if old_rule.rule.principal != rule.principal {
+            cache_keys.push(format!("{}:*", old_rule.rule.principal));
+        }
+        self.invalidate_cache(cache_keys).await?;
+
+        // Sync to all brokers
+        if let Err(e) = self.sync_acls_to_all_brokers().await {
+            tracing::warn!("Failed to sync ACLs to brokers after rule update: {}", e);
+        }
+
+        // Return the updated rule
+        let mut updated_rule = rule;
+        updated_rule.id = id;
+        Ok(updated_rule)
+    }
+
+    /// Delete an ACL rule by ID
+    pub async fn delete_rule(&self, id: String) -> Result<()> {
+        // Get rule for cache invalidation
+        let rule = self.raft_manager.get_acl_rule(&id).await?
+            .ok_or_else(|| RustMqError::AclEvaluation(format!("Rule {} not found", id)))?;
+
+        // Delete the rule
+        self.raft_manager.delete_acl_rule(&id, "admin", "Deleted via Admin API").await?;
+
+        // Invalidate cache entries
+        let cache_keys = vec![format!("{}:*", rule.rule.principal)];
+        self.invalidate_cache(cache_keys).await?;
+
+        // Sync to all brokers
+        if let Err(e) = self.sync_acls_to_all_brokers().await {
+            tracing::warn!("Failed to sync ACLs to brokers after rule deletion: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Get a single ACL rule by ID
+    pub async fn get_rule(&self, id: String) -> Result<AclRule> {
+        let versioned_rule = self.raft_manager.get_acl_rule(&id).await?
+            .ok_or_else(|| RustMqError::AclEvaluation(format!("Rule {} not found", id)))?;
+        Ok(versioned_rule.rule)
+    }
+
+    /// List ACL rules with optional filtering
+    pub async fn list_rules(&self, filter: Option<AclRuleFilter>) -> Result<Vec<AclRule>> {
+        let filter = filter.unwrap_or_else(|| AclRuleFilter {
+            principal: None,
+            resource_pattern: None,
+            operations: None,
+            effect: None,
+            version_range: None,
+            include_deleted: false,
+            limit: Some(1000), // Default limit
+        });
+
+        let versioned_rules = self.raft_manager.list_acl_rules(filter).await?;
+        Ok(versioned_rules.into_iter().map(|vr| vr.rule).collect())
+    }
+
+    /// Get current ACL version number
+    pub async fn get_current_version(&self) -> u64 {
+        self.raft_manager.get_acl_version().await.unwrap_or(0)
+    }
+
+    /// Get last update time (placeholder - would need to track in storage)
+    pub async fn get_last_update_time(&self) -> Option<DateTime<Utc>> {
+        // This would require tracking update times in the storage layer
+        // For now, return current time as a placeholder
+        Some(Utc::now())
+    }
+
+    /// Get total number of rules
+    pub async fn get_rules_count(&self) -> usize {
+        let filter = AclRuleFilter {
+            principal: None,
+            resource_pattern: None,
+            operations: None,
+            effect: None,
+            version_range: None,
+            include_deleted: false,
+            limit: None,
+        };
+
+        match self.raft_manager.list_acl_rules(filter).await {
+            Ok(rules) => rules.len(),
+            Err(_) => 0,
+        }
+    }
+
+    /// Force synchronization with controller
+    pub async fn force_sync(&self) -> Result<()> {
+        // Trigger sync to all brokers
+        self.sync_acls_to_all_brokers().await?;
+
+        // Optionally, we could also trigger a Raft snapshot here
+        // self.raft_manager.trigger_snapshot().await?;
+
+        Ok(())
+    }
+
     // Private helper methods
     
     async fn check_l1_cache(&self, key: &str) -> Option<CachedAclEntry> {

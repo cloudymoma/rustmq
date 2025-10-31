@@ -377,16 +377,107 @@ impl AuthorizationManager {
     /// Invalidate cache entries for a principal
     pub async fn invalidate_principal(&self, principal: &str) -> Result<()> {
         let interned_principal = self.intern_string(principal);
-        
+
         // Clear from all L2 shards
         for shard in self.l2_cache.iter() {
             shard.retain(|k, _| k.principal != interned_principal);
         }
-        
+
         // Note: L1 caches are per-connection and will expire naturally
         // We could add a notification mechanism for immediate invalidation
-        
+
         self.metrics.record_cache_invalidation();
+        Ok(())
+    }
+
+    /// Invalidate cache entries for a principal (public API)
+    pub async fn invalidate_principal_cache(&self, principal: &str) -> Result<()> {
+        self.invalidate_principal(principal).await
+    }
+
+    /// Invalidate cache entries for a resource
+    pub async fn invalidate_resource_cache(&self, resource: &str) -> Result<()> {
+        let interned_resource = self.intern_string(resource);
+
+        // Clear from all L2 shards
+        for shard in self.l2_cache.iter() {
+            shard.retain(|k, _| k.topic != interned_resource);
+        }
+
+        // Note: L1 caches are per-connection and will expire naturally
+
+        self.metrics.record_cache_invalidation();
+        Ok(())
+    }
+
+    /// Invalidate all cache levels (L1/L2/L3)
+    pub async fn invalidate_all_caches(&self) -> Result<()> {
+        // Clear all L2 shards
+        for shard in self.l2_cache.iter() {
+            shard.clear();
+        }
+
+        // Clear negative cache (L3)
+        if self.config.negative_cache_enabled {
+            let mut bloom = self.negative_cache.write();
+            *bloom = Bloom::new_for_fp_rate(self.config.bloom_filter_size, 0.001);
+        }
+
+        // Note: L1 caches are per-connection and need to be cleared by connections
+        // In production, we'd send an invalidation signal to all connections
+
+        self.metrics.record_cache_invalidation();
+        Ok(())
+    }
+
+    /// Pre-populate cache with specific principals and resources
+    pub async fn warm_cache(&self, principals: Vec<String>, resources: Vec<String>) -> Result<()> {
+        // If we have an ACL manager, fetch and cache permissions for the given principals
+        if let Some(fetcher) = self.batch_fetcher.acl_manager.as_ref() {
+            let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
+
+            for principal in &principals {
+                let interned_principal = self.intern_string(principal);
+
+                for resource in &resources {
+                    let interned_resource = self.intern_string(resource);
+
+                    // Pre-warm for common permissions
+                    let permissions = vec![Permission::Read, Permission::Write, Permission::Admin];
+
+                    for permission in permissions {
+                        let key = AclKey {
+                            principal: interned_principal.clone(),
+                            topic: interned_resource.clone(),
+                            permission,
+                        };
+
+                        // Convert Permission to AclOperation
+                        let operation = match permission {
+                            Permission::Read => crate::security::acl::AclOperation::Read,
+                            Permission::Write => crate::security::acl::AclOperation::Write,
+                            Permission::Admin => crate::security::acl::AclOperation::Admin,
+                        };
+
+                        // Fetch permission from ACL manager
+                        match fetcher.check_permission(&principal, &resource, operation).await {
+                            Ok(allowed) => {
+                                // Update L2 cache
+                                let shard_idx = self.calculate_shard_index(&key);
+                                self.l2_cache[shard_idx].insert(key, AclCacheEntry::new(allowed, ttl));
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to warm cache for principal={}, resource={}, permission={:?}: {}",
+                                    principal, resource, permission, e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
     
@@ -483,18 +574,7 @@ impl AuthorizationManager {
             negative_cache_size: 0,
         }
     }
-    
-    
-    /// Invalidate all caches (convenience method for tests)
-    #[cfg(test)]
-    pub async fn invalidate_all_caches(&self) -> Result<()> {
-        // Clear all caches
-        for shard in self.l2_cache.iter() {
-            shard.clear();
-        }
-        Ok(())
-    }
-    
+
     /// Batch fetch ACL rules (convenience method for tests)
     #[cfg(test)]
     pub async fn batch_fetch_acl_rules(&self, keys: Vec<AclKey>) -> Result<Vec<bool>> {
