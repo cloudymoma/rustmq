@@ -1184,19 +1184,33 @@ impl CertificateManager {
         
         // Set the distinguished name
         let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(rcgen::DnType::CommonName, 
+        distinguished_name.push(rcgen::DnType::CommonName,
             parsed_cert.subject().iter_common_name().next()
                 .and_then(|cn| cn.as_str().ok())
                 .unwrap_or("Unknown")
                 .to_string());
-        
+
         // Add other DN components if needed
         for attr in parsed_cert.subject().iter_organization() {
             if let Ok(org) = attr.as_str() {
                 distinguished_name.push(rcgen::DnType::OrganizationName, org.to_string());
             }
         }
-        
+
+        // Add Organizational Unit (OU)
+        for attr in parsed_cert.subject().iter_organizational_unit() {
+            if let Ok(ou) = attr.as_str() {
+                distinguished_name.push(rcgen::DnType::OrganizationalUnitName, ou.to_string());
+            }
+        }
+
+        // Add Country (C)
+        for attr in parsed_cert.subject().iter_country() {
+            if let Ok(country) = attr.as_str() {
+                distinguished_name.push(rcgen::DnType::CountryName, country.to_string());
+            }
+        }
+
         cert_params.distinguished_name = distinguished_name;
         
         // Extract and set key usage from the original certificate

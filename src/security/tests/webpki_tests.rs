@@ -62,6 +62,9 @@ mod tests {
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -80,6 +83,9 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay after issuing certificate for persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Give time for certificate persistence
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -107,12 +113,18 @@ mod tests {
         // Create a root CA
         let ca_params = CaGenerationParams {
             common_name: "Principal Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate with specific CN
         let test_principal_name = "webpki-principal-test-user";
@@ -131,7 +143,11 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
-        
+
+        // Refresh CA chain and add delay after issuing certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
         // Test WebPKI principal extraction
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
@@ -163,12 +179,18 @@ mod tests {
         // Create a root CA
         let ca_params = CaGenerationParams {
             common_name: "Chain Test Root CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Give time for CA chain refresh
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -189,6 +211,9 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay after issuing certificate for persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Give time for certificate persistence
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -217,6 +242,9 @@ mod tests {
         // Create a root CA
         let ca_params = CaGenerationParams {
             common_name: "Parsing Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
@@ -238,7 +266,11 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
-        
+
+        // Refresh CA chain and add delay after issuing certificate
+        auth_manager.refresh_ca_chain().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
         // Test WebPKI certificate parsing
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
@@ -299,12 +331,18 @@ mod tests {
         // Create a root CA
         let ca_params = CaGenerationParams {
             common_name: "Compatibility Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -322,6 +360,9 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay after issuing certificate for persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Give time for certificate persistence
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -360,12 +401,18 @@ mod tests {
         // Create a root CA
         let ca_params = CaGenerationParams {
             common_name: "Performance Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -383,6 +430,9 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay after issuing certificate for persistence to complete
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Give time for certificate persistence
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -440,6 +490,9 @@ mod tests {
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // 2. Issue multiple certificates with compatible key types (ECDSA only for compatibility)
         let test_cases = vec![

@@ -846,13 +846,16 @@ impl AuthenticationManager {
     
     /// Legacy certificate signature validation for fallback compatibility
     fn validate_certificate_signature_legacy(
-        &self, 
-        cert: &Certificate, 
+        &self,
+        cert: &Certificate,
         ca_certs: &[Certificate]
     ) -> Result<(), RustMqError> {
         // Parse the client certificate using the legacy parser
         let parsed_cert = self.parse_certificate(&cert.0)?;
-        
+
+        // Debug: Log the number of CA certs
+        tracing::debug!("Legacy validation: checking against {} CA certificates", ca_certs.len());
+
         // Validate against each CA certificate
         for ca_cert in ca_certs {
             if self.validate_certificate_signature(&parsed_cert, ca_cert).is_ok() {
@@ -1080,78 +1083,116 @@ impl AuthenticationManager {
 
     /// Validate certificate signature with simplified root CA validation
     fn validate_certificate_signature(&self, cert: &X509Certificate, ca_cert: &Certificate) -> Result<(), RustMqError> {
-        // Simplified validation for root CA only architecture
-        // Focus on essential checks without overly strict parsing that can reject valid certificates
-        
-        // Extract and validate signature algorithm 
+        // CRITICAL SECURITY: Perform proper cryptographic signature verification
+        // This validates that the certificate was actually signed by the claimed CA
+
+        use ring::signature;
+
+        // Parse the CA certificate to get its public key
+        let ca_parsed = self.parse_certificate_lenient(&ca_cert.0)?;
+
+        // Debug output for DN mismatch troubleshooting
+        let issuer_str = cert.issuer().to_string();
+        let subject_str = ca_parsed.subject().to_string();
+        eprintln!("DEBUG: Cert issuer DN: '{}'", issuer_str);
+        eprintln!("DEBUG: CA subject DN: '{}'", subject_str);
+
+        // Verify the issuer matches the CA subject
+        if cert.issuer() != ca_parsed.subject() {
+            return Err(RustMqError::InvalidCertificate {
+                reason: format!("Certificate issuer '{}' does not match CA subject '{}'",
+                    cert.issuer(), ca_parsed.subject()),
+            });
+        }
+
+        // Extract signature algorithm from the certificate
         let sig_alg = &cert.signature_algorithm;
         let sig_oid = sig_alg.algorithm.to_string();
-        
-        // Verify we support this signature algorithm
-        match sig_oid.as_str() {
+
+        // Get the TBS (to-be-signed) certificate data
+        // This is the actual data that was signed by the CA
+        let tbs_cert = cert.tbs_certificate.as_ref();
+
+        // Get the signature bytes from the certificate
+        let signature_bytes = cert.signature_value.as_ref();
+
+        // Get the CA's public key info
+        let ca_public_key_info = &ca_parsed.tbs_certificate.subject_pki;
+        let ca_public_key_bytes = ca_public_key_info.subject_public_key.as_ref();
+
+        // Perform cryptographic signature verification based on algorithm
+        let verification_result = match sig_oid.as_str() {
             // RSA with SHA256
-            "1.2.840.113549.1.1.11" => {},
-            // ECDSA with SHA256  
-            "1.2.840.10045.4.3.2" => {},
-            // Additional common signature algorithms
-            "1.2.840.113549.1.1.1" => {}, // RSA PKCS#1
-            "1.2.840.10045.4.3.1" => {}, // ECDSA with SHA224
-            "1.2.840.10045.4.3.3" => {}, // ECDSA with SHA384
-            "1.2.840.10045.4.3.4" => {}, // ECDSA with SHA512
+            "1.2.840.113549.1.1.11" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA256,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA with SHA384
+            "1.2.840.113549.1.1.12" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA384,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA with SHA512
+            "1.2.840.113549.1.1.13" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA512,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // ECDSA with SHA256
+            "1.2.840.10045.4.3.2" => {
+                // Try P256 first, then P384
+                signature::UnparsedPublicKey::new(
+                    &signature::ECDSA_P256_SHA256_ASN1,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+                .or_else(|_| {
+                    signature::UnparsedPublicKey::new(
+                        &signature::ECDSA_P384_SHA384_ASN1,
+                        ca_public_key_bytes
+                    ).verify(tbs_cert, signature_bytes)
+                })
+            },
+            // ECDSA with SHA384
+            "1.2.840.10045.4.3.3" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::ECDSA_P384_SHA384_ASN1,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA PKCS#1 (older algorithm, try SHA256)
+            "1.2.840.113549.1.1.1" | "1.2.840.113549.1.1.5" => {
+                // SHA1 is deprecated, try SHA256 instead
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA256,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
             _ => {
                 return Err(RustMqError::InvalidCertificate {
                     reason: format!("Unsupported signature algorithm: {}", sig_oid),
                 });
             }
         };
-        
-        // Basic CA certificate validation with simplified parsing
-        // Use a more lenient approach that focuses on structure rather than strict validation
-        if ca_cert.0.len() < 100 {
-            return Err(RustMqError::InvalidCertificate {
-                reason: "CA certificate too short".to_string(),
-            });
-        }
-        
-        // Check basic ASN.1 structure for CA certificate
-        if ca_cert.0[0] != 0x30 {
-            return Err(RustMqError::InvalidCertificate {
-                reason: "CA certificate has invalid ASN.1 structure".to_string(),
-            });
-        }
-        
-        // Try to parse CA certificate with error handling
-        // If parsing fails with strict validation, we'll still accept it for simplified architecture
-        match self.parse_certificate_lenient(&ca_cert.0) {
-            Ok(_ca_parsed) => {
-                // CA certificate parsed successfully
-                // In simplified architecture, if both certificates parse correctly,
-                // we consider the signature validation successful
+
+        // Check if signature verification succeeded
+        match verification_result {
+            Ok(()) => {
+                tracing::debug!("Certificate signature verified successfully using algorithm: {}", sig_oid);
+                Ok(())
             },
-            Err(_) => {
-                // CA certificate parsing failed with strict validation
-                // For simplified architecture, we'll allow this if basic structure is valid
-                tracing::debug!("CA certificate failed strict parsing but has valid basic structure");
+            Err(e) => {
+                tracing::error!("Certificate signature verification FAILED: {:?}", e);
+                self.metrics.record_authentication_failure("certificate_signature_invalid");
+                Err(RustMqError::InvalidCertificate {
+                    reason: format!("Certificate signature verification failed: Invalid signature - certificate may be forged or corrupted"),
+                })
             }
         }
-        
-        // Verify certificate has required fields
-        if cert.tbs_certificate.subject.as_raw().is_empty() {
-            return Err(RustMqError::InvalidCertificate {
-                reason: "Certificate has no subject".to_string(),
-            });
-        }
-        
-        // Check certificate signature length
-        if cert.signature_value.as_ref().len() < 32 {
-            return Err(RustMqError::InvalidCertificate {
-                reason: "Certificate signature too short".to_string(),
-            });
-        }
-        
-        // For simplified root CA architecture, basic structural validation is sufficient
-        // This ensures compatibility while maintaining security for the simplified model
-        Ok(())
     }
     
     /// Lenient certificate parsing that accepts more certificate formats
@@ -1273,7 +1314,9 @@ impl AuthenticationManager {
     /// Refresh CA chain from certificate manager (lock-free update)
     pub async fn refresh_ca_chain(&self) -> Result<(), RustMqError> {
         let new_ca_chain = self.certificate_manager.get_ca_chain().await?;
+        let ca_count = new_ca_chain.len();
         self.ca_chain.store(Arc::new(new_ca_chain));
+        tracing::debug!("CA chain refreshed with {} certificates", ca_count);
         Ok(())
     }
 

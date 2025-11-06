@@ -245,19 +245,110 @@ impl CertificateStore {
         })
     }
     
-    /// Verify certificate signature (simplified implementation)
+    /// Verify certificate signature using proper cryptographic verification
     fn verify_signature(&self, cert: &X509Certificate, ca_cert: &X509Certificate) -> Result<()> {
-        // This is a simplified signature verification
-        // In production, use webpki or rustls for proper signature verification
-        // Note: verify_signature API may vary - using placeholder for now
-        // TODO: Implement proper signature verification with correct x509-parser API
-        if cert.signature_algorithm != ca_cert.signature_algorithm {
+        // CRITICAL SECURITY: Perform proper cryptographic signature verification
+        // This validates that the certificate was actually signed by the claimed CA
+
+        use ring::signature;
+
+        // Verify the issuer matches the CA subject
+        if cert.issuer() != ca_cert.subject() {
             return Err(RustMqError::InvalidCertificate {
-                reason: "Signature algorithm mismatch".to_string(),
+                reason: format!("Certificate issuer '{}' does not match CA subject '{}'",
+                    cert.issuer(), ca_cert.subject()),
             });
         }
-        
-        Ok(())
+
+        // Extract signature algorithm from the certificate
+        let sig_alg = &cert.signature_algorithm;
+        let sig_oid = sig_alg.algorithm.to_string();
+
+        // Get the TBS (to-be-signed) certificate data
+        // This is the actual data that was signed by the CA
+        let tbs_cert = cert.tbs_certificate.as_ref();
+
+        // Get the signature bytes from the certificate
+        let signature_bytes = cert.signature_value.as_ref();
+
+        // Get the CA's public key info
+        let ca_public_key_info = &ca_cert.tbs_certificate.subject_pki;
+        let ca_public_key_bytes = ca_public_key_info.subject_public_key.as_ref();
+
+        // Perform cryptographic signature verification based on algorithm
+        let verification_result = match sig_oid.as_str() {
+            // RSA with SHA256
+            "1.2.840.113549.1.1.11" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA256,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA with SHA384
+            "1.2.840.113549.1.1.12" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA384,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA with SHA512
+            "1.2.840.113549.1.1.13" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA512,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // ECDSA with SHA256
+            "1.2.840.10045.4.3.2" => {
+                // Try P256 first, then P384
+                signature::UnparsedPublicKey::new(
+                    &signature::ECDSA_P256_SHA256_ASN1,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+                .or_else(|_| {
+                    signature::UnparsedPublicKey::new(
+                        &signature::ECDSA_P384_SHA384_ASN1,
+                        ca_public_key_bytes
+                    ).verify(tbs_cert, signature_bytes)
+                })
+            },
+            // ECDSA with SHA384
+            "1.2.840.10045.4.3.3" => {
+                signature::UnparsedPublicKey::new(
+                    &signature::ECDSA_P384_SHA384_ASN1,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            // RSA PKCS#1 (older algorithm, try SHA256)
+            "1.2.840.113549.1.1.1" | "1.2.840.113549.1.1.5" => {
+                // SHA1 is deprecated, try SHA256 instead
+                signature::UnparsedPublicKey::new(
+                    &signature::RSA_PKCS1_2048_8192_SHA256,
+                    ca_public_key_bytes
+                ).verify(tbs_cert, signature_bytes)
+            },
+            _ => {
+                return Err(RustMqError::InvalidCertificate {
+                    reason: format!("Unsupported signature algorithm: {}", sig_oid),
+                });
+            }
+        };
+
+        // Check if signature verification succeeded
+        match verification_result {
+            Ok(()) => {
+                tracing::debug!("Certificate signature verified successfully using algorithm: {}", sig_oid);
+                self.metrics.record_certificate_validation();
+                Ok(())
+            },
+            Err(e) => {
+                tracing::error!("Certificate signature verification FAILED: {:?}", e);
+                // Record validation failure in metrics
+                Err(RustMqError::InvalidCertificate {
+                    reason: format!("Certificate signature verification failed: Invalid signature - certificate may be forged or corrupted"),
+                })
+            }
+        }
     }
     
     /// Parse certificate on-demand (no caching due to lifetime issues)

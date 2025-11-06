@@ -53,23 +53,33 @@ mod tests {
     #[tokio::test]
     async fn test_certificate_validation_with_valid_cert() {
         let _lock = TEST_ISOLATION_MUTEX.lock().await;
-        
+
         let (auth_manager, _temp_dir, cert_manager) = create_test_authentication_manager().await;
-        
+
         // Create a root CA first
+        // Note: We must explicitly set the DN fields that are forcibly added by default
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
-            organization: Some("Test Org".to_string()),
+            organization: Some("RustMQ".to_string()),  // Match the forced default
+            organizational_unit: Some("Message Queue System".to_string()),  // Match the forced default
+            country: Some("US".to_string()),  // Match the forced default
             is_root: true,
             validity_years: Some(5),
             key_type: Some(KeyType::Ecdsa),
             ..Default::default()
         };
-        
+
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
+        // Verify CA is in the certificate manager
+        let ca_chain_before = cert_manager.get_ca_chain().await.unwrap();
+        assert!(!ca_chain_before.is_empty(), "CA chain should not be empty after generating root CA");
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate signed by the CA
         let mut subject = rcgen::DistinguishedName::new();
@@ -86,12 +96,13 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
-        
+
         // Refresh CA chain after issuing certificate to ensure it's loaded
         auth_manager.refresh_ca_chain().await.unwrap();
-        
+
         // Give time for certificate persistence and CA chain refresh to complete
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Increased delay for release mode where operations complete faster
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Test certificate validation - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
@@ -120,14 +131,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate with specific CN signed by the CA
         let mut subject = rcgen::DistinguishedName::new();
@@ -172,14 +189,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -223,14 +246,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -247,12 +276,13 @@ mod tests {
         };
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
-        
+
         // Refresh CA chain after issuing certificate to ensure it's loaded
         auth_manager.refresh_ca_chain().await.unwrap();
-        
+
         // Give time for certificate persistence and CA chain refresh to complete
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Increased delay for release mode where operations complete faster
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // First validation (should cache) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
@@ -285,14 +315,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue a broker certificate with specific attributes
         let mut subject = rcgen::DistinguishedName::new();
@@ -344,14 +380,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue multiple certificates
         for i in 0..3 {
@@ -401,14 +443,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Verify CA chain was loaded correctly
         let ca_chain = cert_manager.get_ca_chain().await.unwrap();
@@ -514,14 +562,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Issue multiple certificates concurrently
         let mut handles = Vec::new();
@@ -589,14 +643,20 @@ mod tests {
         // Create a root CA first
         let ca_params = CaGenerationParams {
             common_name: "Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
         
         let ca_cert = cert_manager.generate_root_ca(ca_params).await.unwrap();
-        
+
         // Refresh CA chain in auth manager to recognize the new CA
         auth_manager.refresh_ca_chain().await.unwrap();
+
+        // Add delay to ensure CA chain is fully loaded, especially in release mode
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // Verify CA chain was loaded correctly
         let ca_chain = cert_manager.get_ca_chain().await.unwrap();

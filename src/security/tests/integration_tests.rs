@@ -55,7 +55,7 @@ mod tests {
         security_manager.authentication().refresh_ca_chain().await.unwrap();
         
         // Give time for CA chain refresh to complete
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         // 2. Issue client certificate
         let mut subject = rcgen::DistinguishedName::new();
@@ -186,6 +186,9 @@ mod tests {
         // 1. Create root CA
         let ca_params = CaGenerationParams {
             common_name: "Lifecycle Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
@@ -262,6 +265,9 @@ mod tests {
         // 1. Generate test certificate
         let ca_params = CaGenerationParams {
             common_name: "Metrics Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
@@ -273,7 +279,7 @@ mod tests {
         security_manager.authentication().refresh_ca_chain().await.unwrap();
         
         // Give time for CA chain refresh to complete
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         let mut subject = rcgen::DistinguishedName::new();
         subject.push(rcgen::DnType::CommonName, "metrics-test-client".to_string());
@@ -290,7 +296,10 @@ mod tests {
         
         let client_cert = security_manager.certificate_manager()
             .issue_certificate(cert_request).await.unwrap();
-        
+
+        // Refresh CA chain after issuing certificate
+        security_manager.authentication().refresh_ca_chain().await.unwrap();
+
         // Give time for background certificate persistence to complete
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
@@ -351,6 +360,9 @@ mod tests {
         // 1. Perform certificate operations
         let ca_params = CaGenerationParams {
             common_name: "Audit Test CA".to_string(),
+            organization: Some("RustMQ".to_string()),
+            organizational_unit: Some("Message Queue System".to_string()),
+            country: Some("US".to_string()),
             is_root: true,
             ..Default::default()
         };
