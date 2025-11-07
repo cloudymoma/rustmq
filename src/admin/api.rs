@@ -483,23 +483,55 @@ impl AdminApi {
                 .and_then(handle_list_brokers)
         );
 
-        // Combine all main routes first
-        let main_routes = health
+        // Security routes integration - P0-8: Enabled for production
+        // Security API is required for production deployments
+        // Note: The Option<SecurityApi> design allows flexibility for testing,
+        // but production systems must provide SecurityApi for secure operation.
+        info!("Security routes enabled - authentication required via mTLS");
+
+        // Extract Arc fields from security_api to avoid lifetime issues
+        // This allows us to build routes with owned Arc values instead of borrowing from self
+        let security_api_ref = self.security_api
+            .as_ref()
+            .expect("SecurityApi must be provided for production use - configure SecurityManager when creating AdminApi");
+
+        let security_manager = security_api_ref.security_manager();
+        let _controller = security_api_ref.controller();
+
+        // Build security routes directly using static methods with owned Arc values
+        let ca_routes = crate::admin::security_api::SecurityApi::ca_routes_static(
+            security_manager.clone(),
+            rate_limit_middleware.clone()
+        );
+        let cert_routes = crate::admin::security_api::SecurityApi::certificate_routes_static(
+            security_manager.clone(),
+            rate_limit_middleware.clone()
+        );
+        let acl_routes = crate::admin::security_api::SecurityApi::acl_routes_static(
+            security_manager.clone(),
+            rate_limit_middleware.clone()
+        );
+        let audit_routes = crate::admin::security_api::SecurityApi::audit_routes_static(
+            security_manager.clone(),
+            rate_limit_middleware.clone()
+        );
+
+        let security_routes = ca_routes
+            .or(cert_routes)
+            .or(acl_routes)
+            .or(audit_routes)
+            .boxed();
+
+        // Combine all routes including security
+        let api_routes = health
             .or(cluster)
             .or(topics_list)
             .or(topics_create)
             .or(topics_delete)
             .or(topics_describe)
-            .or(brokers_list);
-
-        // TODO: Add security routes integration
-        // Currently disabled due to warp filter type compatibility issues
-        // with BoxedFilter<(impl Reply,)> vs concrete return types
-        let _security_routes = if let Some(ref security_api) = self.security_api {
-            Some(security_api.routes(rate_limit_middleware.clone()))
-        } else {
-            None
-        };
+            .or(brokers_list)
+            .or(security_routes)
+            .boxed();
 
         // Static file serving for WebUI
         let static_files = warp::path::end()
@@ -507,7 +539,7 @@ impl AdminApi {
             .or(warp::fs::dir("./web/dist"));
 
         // Combine API routes with static files (API takes precedence)
-        let all_routes = main_routes
+        let all_routes = api_routes
             .or(static_files)
             .boxed();
 

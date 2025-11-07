@@ -10,6 +10,7 @@ use tracing::{info, warn, debug};
 use chrono::{DateTime, Utc, TimeZone};
 
 /// Security API extension for the Admin REST API
+#[derive(Clone)]
 pub struct SecurityApi {
     security_manager: Arc<SecurityManager>,
     controller: Arc<ControllerService>,
@@ -293,6 +294,16 @@ impl SecurityApi {
         }
     }
 
+    /// Get cloned security_manager Arc - useful for building routes without lifetime issues
+    pub fn security_manager(&self) -> Arc<SecurityManager> {
+        self.security_manager.clone()
+    }
+
+    /// Get cloned controller Arc - useful for building routes without lifetime issues
+    pub fn controller(&self) -> Arc<ControllerService> {
+        self.controller.clone()
+    }
+
     /// Create all security-related routes
     pub fn routes(
         &self,
@@ -306,13 +317,13 @@ impl SecurityApi {
 
         // Certificate Authority endpoints
         let ca_routes = Self::ca_routes_static(security_manager.clone(), rate_limit_middleware.clone());
-        
+
         // Certificate lifecycle endpoints
         let cert_routes = Self::certificate_routes_static(security_manager.clone(), rate_limit_middleware.clone());
-        
+
         // ACL management endpoints
         let acl_routes = Self::acl_routes_static(security_manager.clone(), rate_limit_middleware.clone());
-        
+
         // Security audit and monitoring endpoints
         let audit_routes = Self::audit_routes_static(security_manager.clone(), rate_limit_middleware.clone());
 
@@ -324,7 +335,7 @@ impl SecurityApi {
     }
 
     /// Certificate Authority management routes
-    fn ca_routes_static(
+    pub fn ca_routes_static(
         security_manager: Arc<SecurityManager>,
         rate_limit_middleware: Option<warp::filters::BoxedFilter<()>>,
     ) -> warp::filters::BoxedFilter<(impl Reply,)> {
@@ -372,7 +383,7 @@ impl SecurityApi {
     }
 
     /// Certificate lifecycle management routes
-    fn certificate_routes_static(
+    pub fn certificate_routes_static(
         security_manager: Arc<SecurityManager>,
         rate_limit_middleware: Option<warp::filters::BoxedFilter<()>>,
     ) -> warp::filters::BoxedFilter<(impl Reply,)> {
@@ -469,7 +480,7 @@ impl SecurityApi {
     }
 
     /// ACL management routes
-    fn acl_routes_static(
+    pub fn acl_routes_static(
         security_manager: Arc<SecurityManager>,
         rate_limit_middleware: Option<warp::filters::BoxedFilter<()>>,
     ) -> warp::filters::BoxedFilter<(impl Reply,)> {
@@ -581,7 +592,7 @@ impl SecurityApi {
     }
 
     /// Security audit and monitoring routes
-    fn audit_routes_static(
+    pub fn audit_routes_static(
         security_manager: Arc<SecurityManager>,
         rate_limit_middleware: Option<warp::filters::BoxedFilter<()>>,
     ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
