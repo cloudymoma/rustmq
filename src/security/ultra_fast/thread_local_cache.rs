@@ -294,27 +294,33 @@ thread_local! {
 
 impl ThreadLocalAuthCache {
     /// Get or create thread-local cache
-    pub fn get_or_create(capacity: usize) -> &'static ThreadLocalAuthCache {
+    ///
+    /// Returns an Arc to the thread-local cache, creating it if necessary.
+    /// This is safe because the Arc manages the lifetime correctly without
+    /// requiring unsafe transmute operations.
+    ///
+    /// # Performance
+    /// Arc::clone is just an atomic increment (~1-2ns one-time cost during
+    /// ConnectionCache creation). The hot path (get_fast/insert_fast) never
+    /// clones the Arc, just dereferences it via the Deref trait, so there's
+    /// zero overhead in the authorization path.
+    pub fn get_or_create(capacity: usize) -> Arc<ThreadLocalAuthCache> {
         L1_CACHE.with(|cache_cell| {
             let mut cache_opt = cache_cell.borrow_mut();
-            
+
             if cache_opt.is_none() {
                 let config = L1CacheConfig {
                     capacity,
                     ..Default::default()
                 };
-                
+
                 let cache = Arc::new(ThreadLocalAuthCache::new(config));
                 *cache_opt = Some(cache);
             }
-            
-            // Safety: We ensure the cache exists and use Arc to manage lifetime
-            // The thread_local ensures this reference remains valid for the thread lifetime
-            unsafe {
-                std::mem::transmute::<&ThreadLocalAuthCache, &'static ThreadLocalAuthCache>(
-                    cache_opt.as_ref().unwrap().as_ref()
-                )
-            }
+
+            // Clone the Arc - this is just an atomic increment, extremely cheap (~1-2ns)
+            // The hot path (get_fast/insert_fast) never clones, just dereferences via Deref trait
+            cache_opt.as_ref().unwrap().clone()
         })
     }
     
@@ -452,11 +458,15 @@ pub struct L1CacheStats {
 /// Connection-specific cache with usage pattern prediction
 pub struct ConnectionCache {
     /// Base thread-local cache
-    base_cache: &'static ThreadLocalAuthCache,
-    
+    ///
+    /// Using Arc instead of &'static eliminates unsafe transmute while
+    /// maintaining performance. Arc auto-derefs to &T for method calls,
+    /// so there's zero overhead in the hot path (get_fast/insert_fast).
+    base_cache: Arc<ThreadLocalAuthCache>,
+
     /// Connection-specific predictions
     predictor: AccessPatternPredictor,
-    
+
     /// Connection ID for metrics
     connection_id: u64,
 }

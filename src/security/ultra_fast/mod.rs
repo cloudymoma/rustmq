@@ -137,7 +137,10 @@ impl ThreadLocalCacheFactory {
     }
     
     /// Get or create thread-local L1 cache
-    pub fn get_cache(&self) -> &'static ThreadLocalAuthCache {
+    ///
+    /// Returns an Arc to the thread-local cache. Arc auto-derefs for method calls,
+    /// so there's zero overhead in the hot path.
+    pub fn get_cache(&self) -> Arc<ThreadLocalAuthCache> {
         ThreadLocalAuthCache::get_or_create(self.cache_size)
     }
 }
