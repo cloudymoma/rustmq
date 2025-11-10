@@ -72,88 +72,88 @@ build-release:
 test: test-debug test-release
 
 test-debug:
-	@echo "$(YELLOW)🧪 Running debug tests (excluding benchmarks)...$(RESET)"
+	@printf "$(YELLOW)🧪 Running debug tests (excluding benchmarks)...$(RESET)\n"
 	cargo test --lib $(FEATURES)
 	cargo test --bins $(FEATURES)
 	cargo test --tests $(FEATURES)
-	@echo "$(GREEN)✅ Debug tests completed$(RESET)"
+	@printf "$(GREEN)✅ Debug tests completed$(RESET)\n"
 
 # WASM test targets
 .PHONY: test-wasm wasm-build wasm-test
 test-wasm: wasm-build wasm-test
 
 wasm-build:
-	@echo "$(YELLOW)🔨 Building WASM test modules...$(RESET)"
+	@printf "$(YELLOW)🔨 Building WASM test modules...$(RESET)\n"
 	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
 	@rustup target list --installed | grep -q wasm32-unknown-unknown || (echo "$(YELLOW)📦 Installing wasm32-unknown-unknown target...$(RESET)" && rustup target add wasm32-unknown-unknown)
 	@chmod +x tests/wasm_modules/build-all.sh
 	@cd tests/wasm_modules && ./build-all.sh
-	@echo "$(GREEN)✅ WASM modules built$(RESET)"
+	@printf "$(GREEN)✅ WASM modules built$(RESET)\n"
 
 wasm-test:
-	@echo "$(YELLOW)🧪 Running WASM integration tests...$(RESET)"
+	@printf "$(YELLOW)🧪 Running WASM integration tests...$(RESET)\n"
 	cargo test --test wasm_integration_simple --features wasm -- --nocapture
-	@echo "$(GREEN)✅ WASM integration tests completed$(RESET)"
+	@printf "$(GREEN)✅ WASM integration tests completed$(RESET)\n"
 
 test-release:
-	@echo "$(YELLOW)🧪 Running release tests with benchmarks...$(RESET)"
+	@printf "$(YELLOW)🧪 Running release tests with benchmarks...$(RESET)\n"
 	cargo test --release $(FEATURES)
-	@echo "$(YELLOW)🏃 Running benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running benchmarks...$(RESET)\n"
 	cargo bench $(FEATURES)
-	@echo "$(GREEN)✅ Release tests and benchmarks completed$(RESET)"
+	@printf "$(GREEN)✅ Release tests and benchmarks completed$(RESET)\n"
 
 # Miri memory safety tests
 .PHONY: test-miri miri-quick miri-core miri-proptest miri-full
 test-miri: miri-quick
-	@echo "$(GREEN)✅ Miri memory safety tests completed$(RESET)"
+	@printf "$(GREEN)✅ Miri memory safety tests completed$(RESET)\n"
 
 miri-quick:
-	@echo "$(YELLOW)🔍 Running quick Miri memory safety tests...$(RESET)"
+	@printf "$(YELLOW)🔍 Running quick Miri memory safety tests...$(RESET)\n"
 	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
 	@chmod +x scripts/miri-test.sh
 	./scripts/miri-test.sh --quick
-	@echo "$(GREEN)✅ Quick Miri tests completed$(RESET)"
+	@printf "$(GREEN)✅ Quick Miri tests completed$(RESET)\n"
 
 miri-core:
-	@echo "$(YELLOW)🔍 Running core library Miri tests...$(RESET)"
+	@printf "$(YELLOW)🔍 Running core library Miri tests...$(RESET)\n"
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
 	@chmod +x scripts/miri-test.sh
 	./scripts/miri-test.sh --core-only --verbose
-	@echo "$(GREEN)✅ Core Miri tests completed$(RESET)"
+	@printf "$(GREEN)✅ Core Miri tests completed$(RESET)\n"
 
 miri-proptest:
-	@echo "$(YELLOW)🔍 Running property-based Miri tests...$(RESET)"
+	@printf "$(YELLOW)🔍 Running property-based Miri tests...$(RESET)\n"
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
 	@chmod +x scripts/miri-test.sh
 	./scripts/miri-test.sh --proptest-only --verbose
-	@echo "$(GREEN)✅ Property-based Miri tests completed$(RESET)"
+	@printf "$(GREEN)✅ Property-based Miri tests completed$(RESET)\n"
 
 miri-full:
-	@echo "$(YELLOW)🔍 Running full Miri test suite (slow)...$(RESET)"
+	@printf "$(YELLOW)🔍 Running full Miri test suite (slow)...$(RESET)\n"
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
 	@chmod +x scripts/miri-test.sh
 	./scripts/miri-test.sh --verbose
-	@echo "$(GREEN)✅ Full Miri test suite completed$(RESET)"
+	@printf "$(GREEN)✅ Full Miri test suite completed$(RESET)\n"
 
 # Pre-commit sanity check - comprehensive validation
 .PHONY: sanity
 sanity: test sdk-test test-wasm
-	@echo "$(YELLOW)🔍 Running final sanity checks...$(RESET)"
+	@printf "$(YELLOW)🔍 Running final sanity checks...$(RESET)\n"
 	cargo test --lib
 	cargo test --bins
-	@echo "$(GREEN)✅ Sanity checks completed$(RESET)"
+	@printf "$(GREEN)✅ Sanity checks completed$(RESET)\n"
 
 # Individual binary builds
 .PHONY: build-binaries
 build-binaries:
-	@echo "$(YELLOW)🔨 Building all binaries...$(RESET)"
+	@printf "$(YELLOW)🔨 Building all binaries...$(RESET)\n"
 	cargo build --release --bin rustmq-broker $(FEATURES)
 	cargo build --release --bin rustmq-controller $(FEATURES)
 	cargo build --release --bin rustmq-admin $(FEATURES)
 	cargo build --release --bin rustmq-bigquery-subscriber $(FEATURES)
 	cargo build --release --bin rustmq-admin-server $(FEATURES)
-	@echo "$(GREEN)✅ All binaries built$(RESET)"
+	@printf "$(GREEN)✅ All binaries built$(RESET)\n"
 
 # SDK build targets (Rust and Go)
 .PHONY: sdk-build sdk-build-debug sdk-build-release
@@ -168,84 +168,84 @@ sdk-build-release: sdk-rust-build-release sdk-go-build
 sdk-rust-build: sdk-rust-build-debug sdk-rust-build-release
 
 sdk-rust-build-debug:
-	@echo "$(YELLOW)🔨 Building Rust SDK debug mode...$(RESET)"
+	@printf "$(YELLOW)🔨 Building Rust SDK debug mode...$(RESET)\n"
 	cd sdk/rust && cargo build
-	@echo "$(GREEN)✅ Rust SDK debug build completed$(RESET)"
+	@printf "$(GREEN)✅ Rust SDK debug build completed$(RESET)\n"
 
 sdk-rust-build-release:
-	@echo "$(YELLOW)🔨 Building Rust SDK release mode...$(RESET)"
+	@printf "$(YELLOW)🔨 Building Rust SDK release mode...$(RESET)\n"
 	cd sdk/rust && cargo build --release
-	@echo "$(GREEN)✅ Rust SDK release build completed$(RESET)"
+	@printf "$(GREEN)✅ Rust SDK release build completed$(RESET)\n"
 
 # Go SDK build targets
 .PHONY: sdk-go-build sdk-go-test sdk-go-bench sdk-go-examples
 sdk-go-build:
-	@echo "$(YELLOW)🔨 Building Go SDK...$(RESET)"
+	@printf "$(YELLOW)🔨 Building Go SDK...$(RESET)\n"
 	cd sdk/go && go build ./...
-	@echo "$(GREEN)✅ Go SDK build completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK build completed$(RESET)\n"
 
 # Code quality checks
 .PHONY: check lint fmt clippy
 check:
-	@echo "$(YELLOW)🔍 Running cargo check...$(RESET)"
+	@printf "$(YELLOW)🔍 Running cargo check...$(RESET)\n"
 	cargo check $(FEATURES)
-	@echo "$(GREEN)✅ Check completed$(RESET)"
+	@printf "$(GREEN)✅ Check completed$(RESET)\n"
 
 lint: clippy fmt sdk-go-fmt sdk-go-vet
 
 clippy:
-	@echo "$(YELLOW)📎 Running clippy...$(RESET)"
+	@printf "$(YELLOW)📎 Running clippy...$(RESET)\n"
 	cargo clippy --all-targets $(FEATURES) -- -D warnings
-	@echo "$(GREEN)✅ Clippy completed$(RESET)"
+	@printf "$(GREEN)✅ Clippy completed$(RESET)\n"
 
 fmt:
-	@echo "$(YELLOW)📝 Running rustfmt...$(RESET)"
+	@printf "$(YELLOW)📝 Running rustfmt...$(RESET)\n"
 	cargo fmt --check
-	@echo "$(GREEN)✅ Format check completed$(RESET)"
+	@printf "$(GREEN)✅ Format check completed$(RESET)\n"
 
 # Clean targets
 .PHONY: clean clean-all
 clean:
-	@echo "$(YELLOW)🧹 Cleaning build artifacts...$(RESET)"
+	@printf "$(YELLOW)🧹 Cleaning build artifacts...$(RESET)\n"
 	cargo clean
-	@echo "$(GREEN)✅ Clean completed$(RESET)"
+	@printf "$(GREEN)✅ Clean completed$(RESET)\n"
 
 clean-all: clean
-	@echo "$(YELLOW)🧹 Removing target directory...$(RESET)"
+	@printf "$(YELLOW)🧹 Removing target directory...$(RESET)\n"
 	rm -rf target/
-	@echo "$(GREEN)✅ Deep clean completed$(RESET)"
+	@printf "$(GREEN)✅ Deep clean completed$(RESET)\n"
 
 # Performance-specific targets (all benchmarks run in release mode for accurate results)
 .PHONY: bench bench-cache bench-security bench-wal bench-replication
 bench:
-	@echo "$(YELLOW)🏃 Running all benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running all benchmarks...$(RESET)\n"
 	cargo bench $(FEATURES)
 
 bench-cache:
-	@echo "$(YELLOW)🏃 Running cache benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running cache benchmarks...$(RESET)\n"
 	cargo bench --bench cache_performance_bench $(FEATURES)
 
 bench-security:
-	@echo "$(YELLOW)🏃 Running security benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running security benchmarks...$(RESET)\n"
 	cargo bench --bench security_performance $(FEATURES)
 	cargo bench --bench authorization_benchmarks $(FEATURES)
 	cargo bench --bench simple_security_benchmarks $(FEATURES)
 	cargo bench --bench standalone_security_bench $(FEATURES)
 
 bench-wal:
-	@echo "$(YELLOW)🏃 Running WAL benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running WAL benchmarks...$(RESET)\n"
 	cargo bench --bench wal_performance_bench $(FEATURES)
 
 bench-replication:
-	@echo "$(YELLOW)🏃 Running replication benchmarks...$(RESET)"
+	@printf "$(YELLOW)🏃 Running replication benchmarks...$(RESET)\n"
 	cargo bench --bench replication_manager_benchmarks $(FEATURES)
 
 # Legacy LRU cache testing (without default features)
 .PHONY: test-legacy-cache
 test-legacy-cache:
-	@echo "$(YELLOW)🧪 Testing with legacy LRU cache...$(RESET)"
+	@printf "$(YELLOW)🧪 Testing with legacy LRU cache...$(RESET)\n"
 	cargo test --lib $(FEATURES_NO_DEFAULT)
-	@echo "$(GREEN)✅ Legacy cache tests completed$(RESET)"
+	@printf "$(GREEN)✅ Legacy cache tests completed$(RESET)\n"
 
 # SDK test targets (Rust and Go)
 .PHONY: sdk-test sdk-test-debug sdk-test-release sdk-quick-test
@@ -257,73 +257,73 @@ sdk-test-release: sdk-rust-test-release sdk-go-test-release
 
 # Quick SDK test - library tests only for rapid verification
 sdk-quick-test:
-	@echo "$(YELLOW)⚡ Quick SDK verification (library tests only)...$(RESET)"
+	@printf "$(YELLOW)⚡ Quick SDK verification (library tests only)...$(RESET)\n"
 	cd sdk/rust && cargo test --lib
 	cd sdk/go && go test ./rustmq -v
-	@echo "$(GREEN)✅ Quick SDK tests completed$(RESET)"
+	@printf "$(GREEN)✅ Quick SDK tests completed$(RESET)\n"
 
 # Rust SDK test targets
 .PHONY: sdk-rust-test sdk-rust-test-debug sdk-rust-test-release sdk-rust-bench sdk-rust-miri
 sdk-rust-test: sdk-rust-test-debug sdk-rust-test-release
 
 sdk-rust-test-debug:
-	@echo "$(YELLOW)🧪 Running Rust SDK debug tests (library only)...$(RESET)"
+	@printf "$(YELLOW)🧪 Running Rust SDK debug tests (library only)...$(RESET)\n"
 	cd sdk/rust && cargo test --lib
-	@echo "$(GREEN)✅ Rust SDK debug tests completed (31 tests passed)$(RESET)"
+	@printf "$(GREEN)✅ Rust SDK debug tests completed (31 tests passed)$(RESET)\n"
 
 sdk-rust-test-release:
-	@echo "$(YELLOW)🧪 Running Rust SDK release tests...$(RESET)"
+	@printf "$(YELLOW)🧪 Running Rust SDK release tests...$(RESET)\n"
 	cd sdk/rust && cargo test --lib --release
-	@echo "$(YELLOW)🏃 Running Rust SDK benchmarks...$(RESET)"
-	cd sdk/rust && cargo bench || echo "$(YELLOW)⚠️  Some benchmarks may fail due to missing certificates but performance tests work$(RESET)"
-	@echo "$(GREEN)✅ Rust SDK release tests completed (31 tests passed)$(RESET)"
+	@printf "$(YELLOW)🏃 Running Rust SDK benchmarks...$(RESET)\n"
+	cd sdk/rust && cargo bench || echo "$(YELLOW)⚠️  Some benchmarks may fail due to missing certificates but performance tests work$(RESET)\n"
+	@printf "$(GREEN)✅ Rust SDK release tests completed (31 tests passed)$(RESET)\n"
 
 sdk-rust-bench:
-	@echo "$(YELLOW)🏃 Running Rust SDK benchmarks only...$(RESET)"
+	@printf "$(YELLOW)🏃 Running Rust SDK benchmarks only...$(RESET)\n"
 	cd sdk/rust && cargo bench
-	@echo "$(GREEN)✅ Rust SDK benchmarks completed$(RESET)"
+	@printf "$(GREEN)✅ Rust SDK benchmarks completed$(RESET)\n"
 
 # Rust SDK Miri memory safety tests
 .PHONY: sdk-rust-miri sdk-rust-miri-quick sdk-rust-miri-full
 sdk-rust-miri: sdk-rust-miri-quick
-	@echo "$(GREEN)✅ Rust SDK Miri memory safety tests completed$(RESET)"
+	@printf "$(GREEN)✅ Rust SDK Miri memory safety tests completed$(RESET)\n"
 
 sdk-rust-miri-quick:
-	@echo "$(YELLOW)🔍 Running Rust SDK Miri memory safety tests (quick)...$(RESET)"
+	@printf "$(YELLOW)🔍 Running Rust SDK Miri memory safety tests (quick)...$(RESET)\n"
 	@which rustup > /dev/null || (echo "$(RED)❌ Rustup not found. Please install Rust via rustup.$(RESET)" && exit 1)
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
-	cd sdk/rust && cargo +nightly miri test --features miri-safe miri::client_tests::test_message_memory_safety || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)"
-	@echo "$(GREEN)✅ Rust SDK quick Miri tests completed$(RESET)"
+	cd sdk/rust && cargo +nightly miri test --features miri-safe miri::client_tests::test_message_memory_safety || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)\n"
+	@printf "$(GREEN)✅ Rust SDK quick Miri tests completed$(RESET)\n"
 
 sdk-rust-miri-full:
-	@echo "$(YELLOW)🔍 Running full Rust SDK Miri test suite...$(RESET)"
+	@printf "$(YELLOW)🔍 Running full Rust SDK Miri test suite...$(RESET)\n"
 	@rustup +nightly component list --installed | grep -q miri || (echo "$(YELLOW)📦 Installing Miri...$(RESET)" && rustup +nightly component add miri && cargo +nightly miri setup)
-	cd sdk/rust && cargo +nightly miri test --features miri-safe miri:: || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)"
-	@echo "$(GREEN)✅ Full Rust SDK Miri tests completed$(RESET)"
+	cd sdk/rust && cargo +nightly miri test --features miri-safe miri:: || echo "$(YELLOW)⚠️  Some SDK Miri tests may be filtered out - this is expected$(RESET)\n"
+	@printf "$(GREEN)✅ Full Rust SDK Miri tests completed$(RESET)\n"
 
 # Go SDK test targets
 .PHONY: sdk-go-test sdk-go-test-debug sdk-go-test-release sdk-go-bench
 sdk-go-test: sdk-go-test-debug sdk-go-test-release
 
 sdk-go-test-debug:
-	@echo "$(YELLOW)🧪 Running Go SDK debug tests (excluding benchmarks)...$(RESET)"
+	@printf "$(YELLOW)🧪 Running Go SDK debug tests (excluding benchmarks)...$(RESET)\n"
 	cd sdk/go && go test ./rustmq ./tests ./benchmarks -v
-	@echo "$(GREEN)✅ Go SDK debug tests completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK debug tests completed$(RESET)\n"
 
 sdk-go-test-release:
-	@echo "$(YELLOW)🧪 Running Go SDK release tests...$(RESET)"
+	@printf "$(YELLOW)🧪 Running Go SDK release tests...$(RESET)\n"
 	cd sdk/go && go test ./rustmq ./tests ./benchmarks -v -ldflags="-s -w"
-	@echo "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)"
+	@printf "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)\n"
 	cd sdk/go && go test -bench=. -benchmem -ldflags="-s -w" ./rustmq ./tests ./benchmarks
-	@echo "$(GREEN)✅ Go SDK release tests and benchmarks completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK release tests and benchmarks completed$(RESET)\n"
 
 sdk-go-bench:
-	@echo "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)"
+	@printf "$(YELLOW)🏃 Running Go SDK benchmarks (release optimized)...$(RESET)\n"
 	cd sdk/go && go test -bench=. -benchmem -ldflags="-s -w" ./rustmq ./tests ./benchmarks
-	@echo "$(GREEN)✅ Go SDK benchmarks completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK benchmarks completed$(RESET)\n"
 
 sdk-go-examples:
-	@echo "$(YELLOW)🔨 Building Go SDK examples...$(RESET)"
+	@printf "$(YELLOW)🔨 Building Go SDK examples...$(RESET)\n"
 	cd sdk/go && go build -o bin/simple_producer examples/simple_producer.go
 	cd sdk/go && go build -o bin/simple_consumer examples/simple_consumer.go
 	cd sdk/go && go build -o bin/stream_processor examples/stream_processor.go
@@ -335,74 +335,74 @@ sdk-go-examples:
 	cd sdk/go && go build -o bin/production-producer examples/production_producer.go
 	cd sdk/go && go build -o bin/high-throughput-producer examples/high_throughput_producer.go
 	cd sdk/go && go build -o bin/secure-mtls-producer examples/secure_production_mtls.go
-	@echo "$(GREEN)✅ Go SDK examples built$(RESET)"
+	@printf "$(GREEN)✅ Go SDK examples built$(RESET)\n"
 
 # Go SDK quality checks
 .PHONY: sdk-go-fmt sdk-go-vet sdk-go-mod-tidy
 sdk-go-fmt:
-	@echo "$(YELLOW)📝 Running go fmt on Go SDK...$(RESET)"
+	@printf "$(YELLOW)📝 Running go fmt on Go SDK...$(RESET)\n"
 	cd sdk/go && go fmt ./...
-	@echo "$(GREEN)✅ Go SDK format check completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK format check completed$(RESET)\n"
 
 sdk-go-vet:
-	@echo "$(YELLOW)🔍 Running go vet on Go SDK...$(RESET)"
+	@printf "$(YELLOW)🔍 Running go vet on Go SDK...$(RESET)\n"
 	cd sdk/go && go vet ./...
-	@echo "$(GREEN)✅ Go SDK vet check completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK vet check completed$(RESET)\n"
 
 sdk-go-mod-tidy:
-	@echo "$(YELLOW)🧹 Running go mod tidy on Go SDK...$(RESET)"
+	@printf "$(YELLOW)🧹 Running go mod tidy on Go SDK...$(RESET)\n"
 	cd sdk/go && go mod tidy
-	@echo "$(GREEN)✅ Go SDK mod tidy completed$(RESET)"
+	@printf "$(GREEN)✅ Go SDK mod tidy completed$(RESET)\n"
 
 # Development helpers
 .PHONY: dev dev-broker dev-controller dev-admin
 dev:
-	@echo "$(BLUE)🚀 Available development commands:$(RESET)"
+	@printf "$(BLUE)🚀 Available development commands:$(RESET)\n"
 	@echo "  make dev-broker     - Run broker in development mode"
 	@echo "  make dev-controller - Run controller in development mode"
 	@echo "  make dev-admin      - Run admin CLI"
 
 dev-broker:
-	@echo "$(YELLOW)🚀 Starting broker in development mode...$(RESET)"
+	@printf "$(YELLOW)🚀 Starting broker in development mode...$(RESET)\n"
 	cargo run --bin rustmq-broker $(FEATURES) -- --config config/broker.toml
 
 dev-controller:
-	@echo "$(YELLOW)🚀 Starting controller in development mode...$(RESET)"
+	@printf "$(YELLOW)🚀 Starting controller in development mode...$(RESET)\n"
 	cargo run --bin rustmq-controller $(FEATURES) -- --config config/controller.toml
 
 dev-admin:
-	@echo "$(YELLOW)🚀 Starting admin CLI...$(RESET)"
+	@printf "$(YELLOW)🚀 Starting admin CLI...$(RESET)\n"
 	cargo run --bin rustmq-admin $(FEATURES) -- --help
 
 # Docker helpers
 .PHONY: docker-build docker-up docker-down
 docker-build:
-	@echo "$(YELLOW)🐳 Building Docker images...$(RESET)"
+	@printf "$(YELLOW)🐳 Building Docker images...$(RESET)\n"
 	docker-compose build
-	@echo "$(GREEN)✅ Docker images built$(RESET)"
+	@printf "$(GREEN)✅ Docker images built$(RESET)\n"
 
 docker-up:
-	@echo "$(YELLOW)🐳 Starting Docker cluster...$(RESET)"
+	@printf "$(YELLOW)🐳 Starting Docker cluster...$(RESET)\n"
 	docker-compose up -d
-	@echo "$(GREEN)✅ Docker cluster started$(RESET)"
+	@printf "$(GREEN)✅ Docker cluster started$(RESET)\n"
 
 docker-down:
-	@echo "$(YELLOW)🐳 Stopping Docker cluster...$(RESET)"
+	@printf "$(YELLOW)🐳 Stopping Docker cluster...$(RESET)\n"
 	docker-compose down
-	@echo "$(GREEN)✅ Docker cluster stopped$(RESET)"
+	@printf "$(GREEN)✅ Docker cluster stopped$(RESET)\n"
 
 # Help target
 .PHONY: help
 help:
-	@echo "$(BLUE)RustMQ Makefile Help$(RESET)"
+	@printf "$(BLUE)RustMQ Makefile Help$(RESET)\n"
 	@echo ""
-	@echo "$(YELLOW)Main Targets:$(RESET)"
+	@printf "$(YELLOW)Main Targets:$(RESET)\n"
 	@echo "  all              - Build and test everything (default)"
 	@echo "  build            - Build debug and release modes"
 	@echo "  test             - Run tests for debug and release modes"
 	@echo "  info             - Show platform and feature detection"
 	@echo ""
-	@echo "$(YELLOW)Build Targets:$(RESET)"
+	@printf "$(YELLOW)Build Targets:$(RESET)\n"
 	@echo "  build-debug      - Build debug mode only"
 	@echo "  build-release    - Build release mode only"
 	@echo "  build-binaries   - Build all binary targets"
@@ -415,7 +415,7 @@ help:
 	@echo "  sdk-go-build     - Build Go SDK"
 	@echo "  sdk-go-examples  - Build Go SDK examples"
 	@echo ""
-	@echo "$(YELLOW)Test Targets:$(RESET)"
+	@printf "$(YELLOW)Test Targets:$(RESET)\n"
 	@echo "  test-debug       - Run debug tests (no benchmarks)"
 	@echo "  test-release     - Run release tests with benchmarks"
 	@echo "  test-legacy-cache - Test with legacy LRU cache"
@@ -441,7 +441,7 @@ help:
 	@echo "  sdk-go-test-release - Run Go SDK release tests with benchmarks"
 	@echo "  sdk-go-bench     - Run Go SDK benchmarks (release optimized)"
 	@echo ""
-	@echo "$(YELLOW)Code Quality:$(RESET)"
+	@printf "$(YELLOW)Code Quality:$(RESET)\n"
 	@echo "  check            - Run cargo check"
 	@echo "  lint             - Run clippy, fmt, and Go quality checks"
 	@echo "  clippy           - Run clippy linter"
@@ -450,27 +450,27 @@ help:
 	@echo "  sdk-go-vet       - Run go vet on Go SDK"
 	@echo "  sdk-go-mod-tidy  - Run go mod tidy on Go SDK"
 	@echo ""
-	@echo "$(YELLOW)Benchmarks:$(RESET)"
+	@printf "$(YELLOW)Benchmarks:$(RESET)\n"
 	@echo "  bench            - Run all benchmarks"
 	@echo "  bench-cache      - Cache performance benchmarks"
 	@echo "  bench-security   - Security performance benchmarks"
 	@echo "  bench-wal        - WAL performance benchmarks"
 	@echo "  bench-replication - Replication benchmarks"
 	@echo ""
-	@echo "$(YELLOW)Development:$(RESET)"
+	@printf "$(YELLOW)Development:$(RESET)\n"
 	@echo "  dev              - Show development commands"
 	@echo "  dev-broker       - Run broker in dev mode"
 	@echo "  dev-controller   - Run controller in dev mode"
 	@echo "  dev-admin        - Run admin CLI"
 	@echo ""
-	@echo "$(YELLOW)Docker:$(RESET)"
+	@printf "$(YELLOW)Docker:$(RESET)\n"
 	@echo "  docker-build     - Build Docker images"
 	@echo "  docker-up        - Start Docker cluster"
 	@echo "  docker-down      - Stop Docker cluster"
 	@echo ""
-	@echo "$(YELLOW)Cleanup:$(RESET)"
+	@printf "$(YELLOW)Cleanup:$(RESET)\n"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  clean-all        - Deep clean (remove target dir)"
 	@echo ""
-	@echo "$(GREEN)Platform: $(PLATFORM_INFO)$(RESET)"
-	@echo "$(GREEN)Features: $(FEATURES)$(RESET)"
+	@printf "$(GREEN)Platform: $(PLATFORM_INFO)$(RESET)\n"
+	@printf "$(GREEN)Features: $(FEATURES)$(RESET)\n"
