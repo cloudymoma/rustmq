@@ -1653,14 +1653,22 @@ criterion_main!(benches);
 
 See the `examples/` directory for complete examples:
 
+### Producer/Consumer Examples
 - [`simple_producer.rs`](examples/simple_producer.rs) - Basic message production
 - [`simple_consumer.rs`](examples/simple_consumer.rs) - Basic message consumption
 - [`advanced_consumer.rs`](examples/advanced_consumer.rs) - Advanced consumer with seeking, error handling, and partition management
 - [`multi_partition_consumer.rs`](examples/multi_partition_consumer.rs) - **Comprehensive multi-partition consumer demonstration**
 - [`stream_processor.rs`](examples/stream_processor.rs) - Stream processing pipeline
+
+### Security Examples
 - [`secure_producer.rs`](examples/secure_producer.rs) - **Secure producer with mTLS authentication**
 - [`secure_consumer.rs`](examples/secure_consumer.rs) - **Secure consumer with ACL authorization**
 - [`token_authentication.rs`](examples/token_authentication.rs) - **JWT token-based authentication**
+
+### Admin SDK Examples
+- [`admin_api_example.rs`](examples/admin_api_example.rs) - **Complete Admin SDK usage** - Demonstrates cluster management, CA operations, certificate lifecycle, ACL management, and audit logging with production-ready patterns
+
+For detailed Admin SDK documentation, see [`ADMIN_API_CLIENT.md`](ADMIN_API_CLIENT.md).
 
 ### Running Examples
 
@@ -2460,3 +2468,274 @@ cargo fmt
 **Repository**: https://github.com/rustmq/rustmq
 
 **Documentation**: Run `cargo doc --open` for detailed API docs
+## Admin API Client
+
+The RustMQ SDK includes a comprehensive Admin API client for cluster management, security operations, and administrative tasks via HTTP REST API.
+
+### Quick Start
+
+```rust
+use rustmq_client::admin::{AdminClient, AdminConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create admin client
+    let config = AdminConfig::new("http://localhost:8080");
+    let client = AdminClient::new(config)?;
+
+    // Check cluster health
+    let health = client.health().await?;
+    println!("Cluster status: {}", health.status);
+
+    Ok(())
+}
+```
+
+### Features
+
+- **Cluster Management**: Health checks, broker status, cluster information
+- **Topic Management**: Create, delete, list, and describe topics
+- **CA Management**: Generate and manage Certificate Authorities
+- **Certificate Management**: Issue, renew, revoke, and list certificates
+- **ACL Management**: Create, list, delete ACL rules and evaluate permissions
+- **Audit Logs**: Query audit logs and get principal audit trails
+
+### Configuration
+
+```rust
+use rustmq_client::admin::AdminConfig;
+use std::time::Duration;
+
+let config = AdminConfig::new("https://rustmq.example.com:8443")
+    .with_timeout(Duration::from_secs(60))
+    .with_tls_verify(true)
+    .with_auth_token("your-api-token")
+    .with_max_retries(5);
+
+let client = AdminClient::new(config)?;
+```
+
+### Cluster Management
+
+```rust
+// Check health
+let health = client.health().await?;
+println!("Status: {}, Version: {}", health.status, health.version);
+
+// Get cluster status
+let status = client.cluster_status().await?;
+println!("Brokers: {}, Topics: {}", status.brokers.len(), status.topics.len());
+
+// List brokers
+let brokers = client.list_brokers().await?;
+for broker in brokers {
+    println!("Broker {} @ {}:{} ({})",
+        broker.id, broker.host, broker.port_quic,
+        if broker.online { "online" } else { "offline" });
+}
+```
+
+### Topic Management
+
+```rust
+use rustmq_client::admin::CreateTopicRequest;
+
+// Create topic
+let request = CreateTopicRequest {
+    name: "events".to_string(),
+    partitions: 3,
+    replication_factor: 2,
+    retention_ms: Some(86400000),
+    segment_bytes: Some(1073741824),
+    compression_type: Some("lz4".to_string()),
+};
+client.create_topic(request).await?;
+
+// List topics
+let topics = client.list_topics().await?;
+
+// Describe topic
+let topic = client.describe_topic("events").await?;
+
+// Delete topic
+client.delete_topic("events").await?;
+```
+
+### CA Management
+
+```rust
+use rustmq_client::admin::GenerateCaRequest;
+
+// Generate CA
+let ca_request = GenerateCaRequest {
+    common_name: "RustMQ Root CA".to_string(),
+    organization: Some("My Org".to_string()),
+    country: Some("US".to_string()),
+    validity_days: Some(365),
+    key_size: Some(2048),
+};
+let ca = client.generate_ca(ca_request).await?;
+
+// List CAs
+let cas = client.list_cas().await?;
+
+// Get CA info
+let ca_info = client.get_ca("ca-123").await?;
+
+// Delete CA
+client.delete_ca("ca-123").await?;
+```
+
+### Certificate Management
+
+```rust
+use rustmq_client::admin::{IssueCertificateRequest, RevokeCertificateRequest};
+
+// Issue certificate
+let cert_request = IssueCertificateRequest {
+    ca_id: "ca-123".to_string(),
+    common_name: "broker-1.example.com".to_string(),
+    subject_alt_names: Some(vec!["broker-1.local".to_string()]),
+    organization: Some("My Org".to_string()),
+    role: Some("broker".to_string()),
+    validity_days: Some(90),
+    key_usage: Some(vec!["digitalSignature".to_string()]),
+    extended_key_usage: Some(vec!["serverAuth".to_string()]),
+};
+let cert = client.issue_certificate(cert_request).await?;
+
+// List certificates
+let certs = client.list_certificates(None).await?;
+
+// Get certificate
+let cert = client.get_certificate("cert-123").await?;
+
+// Revoke certificate
+let revoke_req = RevokeCertificateRequest {
+    reason: "key_compromise".to_string(),
+    reason_code: Some(1),
+};
+client.revoke_certificate("cert-123", revoke_req).await?;
+
+// Renew certificate
+let renewed = client.renew_certificate("cert-123").await?;
+
+// Get certificate status
+let status = client.get_certificate_status("cert-123").await?;
+
+// Get certificate chain
+let chain = client.get_certificate_chain("cert-123").await?;
+```
+
+### ACL Management
+
+```rust
+use rustmq_client::admin::{CreateAclRuleRequest, AclEvaluationRequest};
+use std::collections::HashMap;
+
+// Create ACL rule
+let acl_request = CreateAclRuleRequest {
+    principal: "user@example.com".to_string(),
+    resource_pattern: "topic.events.*".to_string(),
+    resource_type: "topic".to_string(),
+    operation: "read".to_string(),
+    effect: "allow".to_string(),
+    conditions: Some(HashMap::from([
+        ("source_ip".to_string(), "192.168.1.0/24".to_string()),
+    ])),
+};
+let rule = client.create_acl_rule(acl_request).await?;
+
+// List ACL rules
+let rules = client.list_acl_rules(None).await?;
+
+// Delete ACL rule
+client.delete_acl_rule("rule-123").await?;
+
+// Evaluate ACL permission
+let eval_request = AclEvaluationRequest {
+    principal: "user@example.com".to_string(),
+    resource: "topic.events.payments".to_string(),
+    operation: "read".to_string(),
+    context: Some(HashMap::from([
+        ("source_ip".to_string(), "192.168.1.100".to_string()),
+    ])),
+};
+let result = client.evaluate_acl(eval_request).await?;
+println!("Allowed: {}, Evaluation time: {} ns",
+    result.allowed, result.evaluation_time_ns);
+```
+
+### Audit Logs
+
+```rust
+use rustmq_client::admin::AuditLogRequest;
+
+// Query audit logs
+let request = AuditLogRequest {
+    start_time: None,
+    end_time: None,
+    event_type: Some("authentication".to_string()),
+    principal: Some("user@example.com".to_string()),
+    limit: Some(100),
+    offset: Some(0),
+};
+let logs = client.get_audit_logs(request).await?;
+
+// Get audit trail for principal
+let trail = client.get_audit_trail("user@example.com").await?;
+```
+
+### Admin API Example
+
+Run the comprehensive example:
+
+```bash
+cargo run --example admin_api_example
+```
+
+This demonstrates all Admin API features including:
+- Health checks and cluster status
+- Broker and topic management
+- CA generation and certificate issuance
+- ACL rule creation and evaluation
+- Audit log queries
+
+### Admin API Reference
+
+**Cluster Management:**
+- `health()` - Check cluster health
+- `cluster_status()` - Get cluster status
+- `list_brokers()` - List all brokers
+
+**Topic Management:**
+- `list_topics()` - List all topics
+- `create_topic()` - Create new topic
+- `delete_topic()` - Delete topic
+- `describe_topic()` - Get topic details
+
+**CA Management:**
+- `generate_ca()` - Generate Certificate Authority
+- `list_cas()` - List all CAs
+- `get_ca()` - Get CA information
+- `delete_ca()` - Delete CA
+
+**Certificate Management:**
+- `issue_certificate()` - Issue new certificate
+- `list_certificates()` - List certificates
+- `get_certificate()` - Get certificate details
+- `revoke_certificate()` - Revoke certificate
+- `renew_certificate()` - Renew certificate
+- `get_certificate_status()` - Get certificate status
+- `get_certificate_chain()` - Get certificate chain
+
+**ACL Management:**
+- `create_acl_rule()` - Create ACL rule
+- `list_acl_rules()` - List ACL rules
+- `delete_acl_rule()` - Delete ACL rule
+- `evaluate_acl()` - Evaluate permissions
+
+**Audit Logs:**
+- `get_audit_logs()` - Query audit logs
+- `get_audit_trail()` - Get principal audit trail
+

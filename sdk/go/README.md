@@ -1920,9 +1920,12 @@ See the `examples/` directory for complete working examples:
 
 ### Basic Examples
 - `simple_producer.go` - Basic message production
-- `simple_consumer.go` - Basic message consumption  
+- `simple_consumer.go` - Basic message consumption
 - `stream_processor.go` - Real-time stream processing
 - `advanced_stream_processor.go` - Advanced stream processing with custom processors
+
+### Admin SDK Examples
+- `admin_api_example.go` - **Complete Admin SDK usage** - Demonstrates cluster management, CA operations, certificate lifecycle, ACL management, and audit logging with production-ready patterns
 
 ### Security Examples
 - `secure_producer_mtls.go` - **mTLS Authentication** - Demonstrates mutual TLS authentication with client certificates, comprehensive certificate validation, ACL authorization, and security metrics monitoring
@@ -1935,6 +1938,62 @@ Each security example includes:
 - Security metrics collection and monitoring
 - Error handling and recovery strategies
 - Production-ready security configurations
+
+### Admin SDK
+
+The Go SDK includes a comprehensive Admin API client for cluster management and security operations:
+
+**Available in**: `rustmq.AdminClient`
+
+**Key Features**:
+- Cluster management (health, status, broker listing)
+- Topic management (create, delete, list, details)
+- CA operations (initialize, info, refresh)
+- Certificate lifecycle (issue, revoke, list, status, chain)
+- ACL management (create, update, delete, list, evaluate, sync)
+- Audit logging (query logs, trails, events)
+
+**Quick Example**:
+```go
+import "github.com/rustmq/rustmq/sdk/go/rustmq"
+
+// Create Admin client with mTLS
+config := &rustmq.AdminClientConfig{
+    TLSConfig:   tlsConfig,
+    Timeout:     30 * time.Second,
+    BearerToken: "admin-token",
+}
+
+client, _ := rustmq.NewAdminClient("https://localhost:8080", config)
+
+// Health check
+health, _ := client.Health(ctx)
+
+// Create topic
+_ = client.CreateTopic(ctx, &rustmq.CreateTopicRequest{
+    Name:              "events",
+    Partitions:        3,
+    ReplicationFactor: 2,
+})
+
+// Initialize CA
+caInfo, _ := client.InitCA(ctx, &rustmq.InitCARequest{
+    CommonName:   "RustMQ CA",
+    Organization: "MyCompany",
+    ValidityDays: 3650,
+})
+
+// Create ACL rule
+acl, _ := client.CreateACL(ctx, &rustmq.CreateAclRuleRequest{
+    Principal:       "user@example.com",
+    ResourcePattern: "topic.events.*",
+    ResourceType:    "topic",
+    Operation:       "read",
+    Effect:          "allow",
+})
+```
+
+**Complete Documentation**: See `rustmq/admin.go` for full API reference and `rustmq/admin_test.go` for comprehensive usage examples.
 
 ## Performance
 

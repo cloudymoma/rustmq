@@ -12,6 +12,7 @@ pub mod consumer;
 pub mod stream;
 pub mod types;
 pub mod security;
+pub mod admin;
 
 pub use client::RustMqClient;
 pub use config::{
@@ -31,6 +32,14 @@ pub use security::{
     SecurityManager, SecurityContext, CertificateInfo, PermissionSet,
     Principal, PrincipalExtractor, CertificateValidator, AclCache,
     SecurityMetrics,
+};
+pub use admin::{
+    AdminClient, AdminConfig, HealthResponse, BrokerStatus, ClusterStatus,
+    TopicSummary, CreateTopicRequest, TopicDetail, GenerateCaRequest,
+    CaInfo, IssueCertificateRequest, CertificateListItem, CertificateDetail,
+    RevokeCertificateRequest, CreateAclRuleRequest, AclRuleResponse,
+    AclEvaluationRequest, AclEvaluationResponse, AuditLogEntry,
+    AuditLogRequest, AuditLogResponse,
 };
 
 #[cfg(test)]

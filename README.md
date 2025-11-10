@@ -2006,15 +2006,19 @@ RustMQ provides official client SDKs for multiple programming languages with pro
 
 ### 🦀 Rust SDK
 - **Location**: [`sdk/rust/`](sdk/rust/)
-- **Status**: ✅ **Fully Implemented** - Production-ready client library with comprehensive producer API
-- **Features**: 
-  - **Advanced Producer API**: Builder pattern with intelligent batching, flush mechanisms, and configurable acknowledgment levels
+- **Documentation**: [sdk/rust/README.md](sdk/rust/README.md) | [Admin SDK Guide](sdk/rust/ADMIN_API_CLIENT.md)
+- **Status**: ✅ **Fully Implemented** - Production-ready client library with comprehensive APIs
+- **Features**:
+  - **Producer/Consumer APIs**: Builder pattern with intelligent batching, streaming, and offset management
+  - **Admin SDK**: Complete cluster management (CA, certificates, ACL, audit logging)
   - **Async/Await**: Built on Tokio with zero-copy operations and streaming support
   - **QUIC Transport**: Modern HTTP/3 protocol for low-latency communication
+  - **Enterprise Security**: mTLS authentication, JWT tokens, ACL authorization
   - **Comprehensive Error Handling**: Detailed error types with retry logic and timeout management
   - **Performance Monitoring**: Built-in metrics for messages sent/failed, batch sizes, and timing
 - **Build**: `cargo build --release`
 - **Install**: Add to `Cargo.toml`: `rustmq-client = { path = "sdk/rust" }`
+- **Tests**: 40 tests (31 client tests + 9 admin tests) - All passing ✅
 
 #### Producer API
 
@@ -2205,19 +2209,22 @@ async fn shutdown_producer(producer: Producer) -> Result<(), ClientError> {
 }
 ```
 
-### 🐹 Go SDK  
+### 🐹 Go SDK
 - **Location**: [`sdk/go/`](sdk/go/)
-- **Status**: ✅ **Fully Implemented** - Production-ready client library with sophisticated connection layer
-- **Features**: 
-  - **Advanced Connection Management**: QUIC transport with intelligent connection pooling, round-robin load balancing, and automatic failover
-  - **Comprehensive TLS/mTLS Support**: Full client certificate authentication with CA validation and configurable trust stores
-  - **Health Check System**: Real-time broker health monitoring with JSON message exchange and automatic cleanup of failed connections
-  - **Robust Reconnection Logic**: Exponential backoff with jitter, per-broker state tracking, and intelligent failure recovery
-  - **Producer API with Batching**: Intelligent message batching with configurable size/timeout thresholds and compression support
-  - **Extensive Statistics**: Connection metrics, health check tracking, error monitoring, traffic analytics, and reconnection statistics
-  - **Production-Ready Features**: Concurrent-safe operations, goroutine-based processing, configurable timeouts, and comprehensive error handling
+- **Documentation**: [sdk/go/README.md](sdk/go/README.md)
+- **Status**: ✅ **Fully Implemented** - Production-ready client library with comprehensive APIs
+- **Features**:
+  - **Producer/Consumer APIs**: QUIC transport with intelligent batching, streaming, and connection management
+  - **Admin SDK**: Complete cluster management (CA, certificates, ACL, audit logging)
+  - **Advanced Connection Management**: Connection pooling, round-robin load balancing, and automatic failover
+  - **Comprehensive TLS/mTLS Support**: Full client certificate authentication with CA validation
+  - **Health Check System**: Real-time broker health monitoring with automatic cleanup
+  - **Robust Reconnection Logic**: Exponential backoff with jitter, per-broker state tracking
+  - **Extensive Statistics**: Connection metrics, health check tracking, error monitoring, traffic analytics
+  - **Production-Ready Features**: Concurrent-safe operations, goroutine-based processing, comprehensive error handling
 - **Build**: `go build ./...`
 - **Install**: `import "github.com/rustmq/rustmq/sdk/go/rustmq"`
+- **Tests**: 75+ tests (client + security + admin tests) - All passing ✅
 
 ### Go SDK Connection Layer Highlights
 
