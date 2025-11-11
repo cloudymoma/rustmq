@@ -89,6 +89,7 @@ make wasm-build && make wasm-test
 
 | Date | Feature | Achievement |
 |------|---------|-------------|
+| Nov 2025 | Security Facades | Refactored SecurityManager god object into 4 focused facades |
 | Nov 2025 | Security Admin API | 27 REST endpoints (cert, ACL, audit) |
 | Nov 2025 | Lock-Free Pools | DashMap-based connection management |
 | Nov 2025 | CPU-Adaptive Cache | Auto-scales L2 shards with CPU cores |
@@ -138,6 +139,7 @@ See: `ROBUSTMQ_RESEARCH.md`, `ROBUSTMQ_COMPARISON_SUMMARY.md`
 
 ## Recent Fixes
 
+- **Security Facades Refactoring** (Nov 11, 2025): SecurityManager god object refactored into 4 focused facades (Authentication, Authorization, Certificate, HealthCheck) with 100% backward compatibility
 - **WebPKI Validation**: 92% test failure reduction (15→1), fallback to legacy for rcgen certs
 - **Go SDK Perf**: 97% faster (11min→0.6s) via parallelization + timeout reduction
 - **Cache Benchmarks**: Lazy init pattern for benchmark compatibility

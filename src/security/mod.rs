@@ -24,6 +24,7 @@ pub mod acl;
 pub mod tls;
 pub mod metrics;
 pub mod ultra_fast;
+pub mod facades;
 
 #[cfg(test)]
 pub mod tests;
@@ -46,6 +47,10 @@ pub use tls::{
 };
 pub use metrics::SecurityMetrics;
 pub use ultra_fast::{UltraFastAuthSystem, UltraFastConfig, UltraFastAuthResult, PerformanceTargets};
+pub use facades::{
+    AuthenticationFacade, AuthorizationFacade, CertificateFacade,
+    SecurityHealthCheck, SecurityHealthCheckResult,
+};
 
 use crate::error::RustMqError;
 use std::sync::Arc;
@@ -136,23 +141,34 @@ impl Default for AuditConfig {
 }
 
 /// Main security manager that coordinates all security components
+///
+/// This is now a thin coordinator that delegates to focused facades for
+/// different security concerns. The facades provide single-responsibility
+/// interfaces while maintaining backward compatibility through direct manager access.
 pub struct SecurityManager {
+    // Core managers (kept for backward compatibility)
     authentication: Arc<AuthenticationManager>,
     authorization: Arc<AuthorizationManager>,
     certificate_manager: Arc<CertificateManager>,
     metrics: Arc<SecurityMetrics>,
     config: SecurityConfig,
+
+    // Facades for organized access
+    authentication_facade: AuthenticationFacade,
+    authorization_facade: AuthorizationFacade,
+    certificate_facade: CertificateFacade,
+    health_check: SecurityHealthCheck,
 }
 
 impl SecurityManager {
     /// Create a new security manager with the given configuration
     pub async fn new(config: SecurityConfig) -> Result<Self, RustMqError> {
         let metrics = Arc::new(SecurityMetrics::new()?);
-        
+
         let certificate_manager = Arc::new(
             CertificateManager::new(config.certificate_management.clone()).await?
         );
-        
+
         let authentication = Arc::new(
             AuthenticationManager::new(
                 certificate_manager.clone(),
@@ -160,7 +176,7 @@ impl SecurityManager {
                 metrics.clone(),
             ).await?
         );
-        
+
         let authorization = Arc::new(
             AuthorizationManager::new(
                 config.acl.clone(),
@@ -168,33 +184,58 @@ impl SecurityManager {
                 None, // No ACL manager in test mode - fail-secure
             ).await?
         );
-        
+
+        // Create facades
+        let authentication_facade = AuthenticationFacade::new(
+            authentication.clone(),
+            metrics.clone(),
+        );
+
+        let authorization_facade = AuthorizationFacade::new(
+            authorization.clone(),
+            metrics.clone(),
+        );
+
+        let certificate_facade = CertificateFacade::new(
+            certificate_manager.clone(),
+            metrics.clone(),
+        );
+
+        let health_check = SecurityHealthCheck::new(
+            config.tls.clone(),
+            metrics.clone(),
+        );
+
         Ok(Self {
             authentication,
             authorization,
             certificate_manager,
             metrics,
             config,
+            authentication_facade,
+            authorization_facade,
+            certificate_facade,
+            health_check,
         })
     }
     
     /// Create a new security manager with custom storage path (for testing)
     pub async fn new_with_storage_path(config: SecurityConfig, storage_path: &std::path::Path) -> Result<Self, RustMqError> {
         use crate::security::tls::EnhancedCertificateManagementConfig;
-        
+
         let metrics = Arc::new(SecurityMetrics::new()?);
-        
+
         // Create enhanced certificate config with custom storage path
         let enhanced_cert_config = EnhancedCertificateManagementConfig {
             basic: config.certificate_management.clone(),
             storage_path: storage_path.to_string_lossy().to_string(),
             ..Default::default()
         };
-        
+
         let certificate_manager = Arc::new(
             CertificateManager::new_with_enhanced_config(enhanced_cert_config).await?
         );
-        
+
         let authentication = Arc::new(
             AuthenticationManager::new(
                 certificate_manager.clone(),
@@ -202,7 +243,7 @@ impl SecurityManager {
                 metrics.clone(),
             ).await?
         );
-        
+
         let authorization = Arc::new(
             AuthorizationManager::new(
                 config.acl.clone(),
@@ -210,13 +251,38 @@ impl SecurityManager {
                 None, // No ACL manager in test mode - fail-secure
             ).await?
         );
-        
+
+        // Create facades
+        let authentication_facade = AuthenticationFacade::new(
+            authentication.clone(),
+            metrics.clone(),
+        );
+
+        let authorization_facade = AuthorizationFacade::new(
+            authorization.clone(),
+            metrics.clone(),
+        );
+
+        let certificate_facade = CertificateFacade::new(
+            certificate_manager.clone(),
+            metrics.clone(),
+        );
+
+        let health_check = SecurityHealthCheck::new(
+            config.tls.clone(),
+            metrics.clone(),
+        );
+
         Ok(Self {
             authentication,
             authorization,
             certificate_manager,
             metrics,
             config,
+            authentication_facade,
+            authorization_facade,
+            certificate_facade,
+            health_check,
         })
     }
     
@@ -239,7 +305,31 @@ impl SecurityManager {
     pub fn metrics(&self) -> &Arc<SecurityMetrics> {
         &self.metrics
     }
-    
+
+    // ==================== Facade Accessors ====================
+
+    /// Get the authentication facade for focused authentication operations
+    pub fn authentication_facade(&self) -> &AuthenticationFacade {
+        &self.authentication_facade
+    }
+
+    /// Get the authorization facade for focused authorization operations
+    pub fn authorization_facade(&self) -> &AuthorizationFacade {
+        &self.authorization_facade
+    }
+
+    /// Get the certificate facade for focused certificate operations
+    pub fn certificate_facade(&self) -> &CertificateFacade {
+        &self.certificate_facade
+    }
+
+    /// Get the health check facade for security health monitoring
+    pub fn health_check(&self) -> &SecurityHealthCheck {
+        &self.health_check
+    }
+
+    // ==================== Configuration ====================
+
     /// Check if security is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.tls.enabled
@@ -253,28 +343,40 @@ impl SecurityManager {
     /// Update TLS configuration
     pub async fn update_tls_config(&mut self, tls_config: TlsConfig) -> Result<(), RustMqError> {
         self.config.tls = tls_config.clone();
-        
+
         // Recreate authentication manager with new TLS config
         self.authentication = Arc::new(
             AuthenticationManager::new(
                 self.certificate_manager.clone(),
-                tls_config,
+                tls_config.clone(),
                 self.metrics.clone(),
             ).await?
         );
-        
+
+        // Recreate authentication facade
+        self.authentication_facade = AuthenticationFacade::new(
+            self.authentication.clone(),
+            self.metrics.clone(),
+        );
+
+        // Recreate health check with new TLS config
+        self.health_check = SecurityHealthCheck::new(
+            tls_config,
+            self.metrics.clone(),
+        );
+
         Ok(())
     }
-    
+
     /// Update ACL configuration
     pub async fn update_acl_config(&mut self, acl_config: AclConfig) -> Result<(), RustMqError> {
         // Validate ACL configuration
         if acl_config.cache_size_mb == 0 {
             return Err(RustMqError::Config("Cache size cannot be zero".to_string()));
         }
-        
+
         self.config.acl = acl_config.clone();
-        
+
         // Recreate authorization manager with new ACL config
         self.authorization = Arc::new(
             AuthorizationManager::new(
@@ -283,66 +385,67 @@ impl SecurityManager {
                 None, // No ACL manager in test mode - fail-secure
             ).await?
         );
-        
+
+        // Recreate authorization facade
+        self.authorization_facade = AuthorizationFacade::new(
+            self.authorization.clone(),
+            self.metrics.clone(),
+        );
+
         Ok(())
     }
     
-    // Health check support methods for security API
-    
+    // ==================== Health Check Methods (Delegated to Facades) ====================
+    //
+    // These methods are kept for backward compatibility but now delegate to the
+    // focused facades. New code should use the facade accessors directly.
+
     /// Get certificate manager metrics for health checks
+    ///
+    /// Delegates to CertificateFacade. For new code, use:
+    /// `security_manager.certificate_facade().get_metrics()`
     pub async fn get_certificate_metrics(&self) -> Result<CertificateHealthMetrics, RustMqError> {
-        Ok(CertificateHealthMetrics {
-            total_certificates: 25,
-            certificates_expiring_soon: 3,
-            validation_failure_rate: 0.01,
-        })
+        self.certificate_facade.get_metrics().await
     }
-    
+
     /// Get authorization metrics for health checks
+    ///
+    /// Delegates to AuthorizationFacade. For new code, use:
+    /// `security_manager.authorization_facade().get_metrics()`
     pub async fn get_authorization_metrics(&self) -> Result<AuthorizationHealthMetrics, RustMqError> {
-        Ok(AuthorizationHealthMetrics {
-            cache_hit_rate: 0.85,
-            average_latency_ns: 1200,
-            total_rules: 150,
-            is_synchronized: true,
-        })
+        self.authorization_facade.get_metrics().await
     }
-    
-    /// Get authentication metrics for health checks  
+
+    /// Get authentication metrics for health checks
+    ///
+    /// Delegates to AuthenticationFacade. For new code, use:
+    /// `security_manager.authentication_facade().get_metrics()`
     pub async fn get_authentication_metrics(&self) -> Result<AuthenticationHealthMetrics, RustMqError> {
-        Ok(AuthenticationHealthMetrics {
-            success_rate: 0.99,
-            average_auth_time_ms: 25,
-            certificate_validation_enabled: true,
-            failed_attempts_last_hour: 15,
-        })
+        self.authentication_facade.get_metrics().await
     }
-    
+
     /// Test authorization decision for health checks
+    ///
+    /// Delegates to AuthorizationFacade. For new code, use:
+    /// `security_manager.authorization_facade().test_decision()`
     pub async fn test_authorization_decision(&self, principal: &str, resource: &str, operation: &str) -> Result<bool, RustMqError> {
-        // Mock authorization decision for health testing
-        Ok(true)
+        self.authorization_facade.test_decision(principal, resource, operation).await
     }
-    
+
     /// Get TLS configuration status for health checks
+    ///
+    /// Delegates to SecurityHealthCheck. For new code, use:
+    /// `security_manager.health_check().get_tls_status()`
     pub async fn get_tls_configuration_status(&self) -> Result<TlsHealthStatus, RustMqError> {
-        Ok(TlsHealthStatus {
-            has_secure_ciphers: true,
-            allows_weak_protocols: false,
-            requires_client_certificates: true,
-            certificate_rotation_enabled: true,
-        })
+        self.health_check.get_tls_status().await
     }
-    
+
     /// Test security storage health
+    ///
+    /// Delegates to SecurityHealthCheck. For new code, use:
+    /// `security_manager.health_check().get_storage_health()`
     pub async fn test_security_storage_health(&self) -> Result<SecurityStorageMetrics, RustMqError> {
-        Ok(SecurityStorageMetrics {
-            avg_read_latency_ms: 15,
-            avg_write_latency_ms: 25,
-            storage_utilization_percent: 65.5,
-            backup_current: true,
-            replication_healthy: true,
-        })
+        self.health_check.get_storage_health().await
     }
 }
 
