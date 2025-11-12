@@ -330,6 +330,20 @@ impl ControllerService {
         }
     }
 
+    // ==================== Raft State Accessors ====================
+
+    /// Check if this controller is the Raft leader
+    pub fn is_leader(&self) -> bool {
+        self.raft_state.is_leader()
+    }
+
+    /// Get the current Raft term
+    pub fn get_current_term(&self) -> u64 {
+        self.raft_state.get_current_term()
+    }
+
+    // ==================== Decommissioning Operations ====================
+
     /// Acquire a decommissioning slot for a broker
     pub async fn acquire_decommission_slot(
         &self,

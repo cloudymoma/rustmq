@@ -29,16 +29,24 @@ pub use storage::{
 // Raft integration types
 pub use raft::{
     RaftAclManager, AclRaftOperation, AclRaftResult, AclStateMachine,
-    ControllerAclExtension
+    RaftOperations
 };
 
 // Re-export PermissionSet from auth module for backward compatibility
 pub use crate::security::auth::PermissionSet;
 
 /// Create a new ACL manager with all enterprise features
+///
+/// # Arguments
+/// * `config` - ACL configuration
+/// * `raft_ops` - Raft operations provider (dependency injection)
+/// * `object_storage` - Object storage backend
+/// * `cache` - Cache layer
+/// * `network_handler` - Network handler for gRPC communication
+/// * `node_id` - Node identifier
 pub async fn create_acl_manager(
     config: crate::config::AclConfig,
-    controller: std::sync::Arc<crate::controller::service::ControllerService>,
+    raft_ops: std::sync::Arc<dyn RaftOperations>,
     object_storage: std::sync::Arc<dyn crate::storage::traits::ObjectStorage>,
     cache: std::sync::Arc<dyn crate::storage::traits::Cache>,
     network_handler: std::sync::Arc<crate::network::grpc_server::GrpcNetworkHandler>,
@@ -49,12 +57,12 @@ pub async fn create_acl_manager(
     let acl_storage = std::sync::Arc::new(
         storage::ObjectStorageAclStorage::new(object_storage, cache, storage_config).await?
     );
-    
-    // Create Raft manager
+
+    // Create Raft manager with dependency-injected raft operations
     let raft_manager = std::sync::Arc::new(
-        raft::RaftAclManager::new(acl_storage, controller, node_id)
+        raft::RaftAclManager::new(acl_storage, raft_ops, node_id)
     );
-    
+
     // Create enhanced ACL manager
     AclManager::new(config, raft_manager, network_handler).await
 }

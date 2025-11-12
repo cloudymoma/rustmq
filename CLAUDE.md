@@ -89,6 +89,7 @@ make wasm-build && make wasm-test
 
 | Date | Feature | Achievement |
 |------|---------|-------------|
+| Nov 2025 | Circular Dependency Fix | Broke security↔controller cycle using Dependency Inversion |
 | Nov 2025 | Security Facades | Refactored SecurityManager god object into 4 focused facades |
 | Nov 2025 | Security Admin API | 27 REST endpoints (cert, ACL, audit) |
 | Nov 2025 | Lock-Free Pools | DashMap-based connection management |

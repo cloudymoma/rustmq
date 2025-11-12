@@ -1,11 +1,10 @@
 //! ACL Raft Consensus Integration
 //!
-//! Integrates ACL operations with RustMQ's Raft consensus mechanism to ensure 
+//! Integrates ACL operations with RustMQ's Raft consensus mechanism to ensure
 //! consistent ACL state across the controller cluster.
 
 use super::{AclRule, AclStorage, VersionedAclRule, AclRuleFilter};
 use crate::error::{Result, RustMqError};
-use crate::controller::service::{ControllerService, LogEntry};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -13,6 +12,32 @@ use tokio::sync::RwLock as AsyncRwLock;
 use async_trait::async_trait;
 use uuid::Uuid;
 use std::collections::HashMap;
+
+// ==================== Raft Operations Trait ====================
+
+/// Abstraction for Raft consensus operations needed by ACL management.
+///
+/// This trait decouples the ACL subsystem from the controller implementation,
+/// breaking the circular dependency between security and controller modules.
+/// The controller provides an implementation of this trait.
+#[async_trait]
+pub trait RaftOperations: Send + Sync {
+    /// Check if this node is currently the Raft leader
+    async fn is_leader(&self) -> bool;
+
+    /// Get the current Raft term
+    async fn get_current_term(&self) -> u64;
+
+    /// Append an ACL operation to the Raft log
+    ///
+    /// # Arguments
+    /// * `operation_data` - Serialized ACL operation data
+    ///
+    /// # Returns
+    /// * `Ok(())` if the operation was successfully appended
+    /// * `Err` if the operation could not be appended
+    async fn append_acl_operation(&self, operation_data: Vec<u8>) -> Result<()>;
+}
 
 /// ACL operation that can be applied through Raft consensus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,24 +256,29 @@ impl AclStateMachine {
 pub struct RaftAclManager {
     /// Underlying ACL state machine
     state_machine: Arc<AclStateMachine>,
-    /// Reference to the controller service for Raft operations
-    controller: Arc<ControllerService>,
+    /// Raft operations provider (dependency injection)
+    raft_ops: Arc<dyn RaftOperations>,
     /// Node ID of this controller
     node_id: String,
 }
 
 impl RaftAclManager {
     /// Create a new Raft ACL manager
+    ///
+    /// # Arguments
+    /// * `storage` - ACL storage backend
+    /// * `raft_ops` - Raft operations provider (typically ControllerRaftOperations)
+    /// * `node_id` - Node identifier
     pub fn new(
         storage: Arc<dyn AclStorage>,
-        controller: Arc<ControllerService>,
+        raft_ops: Arc<dyn RaftOperations>,
         node_id: String,
     ) -> Self {
         let state_machine = Arc::new(AclStateMachine::new(storage));
-        
+
         Self {
             state_machine,
-            controller,
+            raft_ops,
             node_id,
         }
     }
@@ -256,15 +286,15 @@ impl RaftAclManager {
     /// Submit an ACL operation through Raft consensus
     async fn submit_operation(&self, operation: AclRaftOperation) -> Result<AclRaftResult> {
         // Check if this node is the leader
-        if !self.controller.is_leader().await {
+        if !self.raft_ops.is_leader().await {
             return Err(RustMqError::NotLeader("ACL operations must be submitted to the leader".to_string()));
         }
 
         let operation_id = Uuid::new_v4().to_string();
-        
+
         // Create a channel to receive the result
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         // Store the pending operation
         {
             let mut pending = self.state_machine.pending_operations.write().await;
@@ -272,28 +302,11 @@ impl RaftAclManager {
         }
 
         // Serialize the operation for the Raft log
-        let _operation_data = serde_json::to_vec(&operation)
+        let operation_data = serde_json::to_vec(&operation)
             .map_err(|e| RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
 
-        // Create a Raft log entry (placeholder implementation)
-        let _log_entry = LogEntry {
-            term: self.controller.get_current_term().await,
-            index: 0, // Will be set by Raft
-            command: crate::controller::service::ClusterCommand::CreateTopic {
-                name: "acl_operation".to_string(),
-                partitions: 1,
-                replication_factor: 1,
-                config: crate::controller::service::TopicConfig {
-                    retention_ms: None,
-                    segment_bytes: None,
-                    compression_type: None,
-                },
-            },
-            timestamp: chrono::Utc::now(),
-        };
-
-        // Submit to Raft (placeholder - would use actual log entry)
-        // self.controller.append_log_entry(log_entry).await?;
+        // Submit ACL operation to Raft log through the abstraction
+        self.raft_ops.append_acl_operation(operation_data).await?;
 
         // Wait for the operation to be applied
         match rx.await {
@@ -302,10 +315,19 @@ impl RaftAclManager {
         }
     }
 
-    /// Apply a Raft log entry to the ACL state machine (placeholder)
-    pub async fn apply_log_entry(&self, _entry: &LogEntry) -> Result<()> {
-        // This would deserialize and apply ACL operations from Raft log entries
-        // For now, just return Ok as a placeholder
+    /// Apply a Raft log entry to the ACL state machine
+    ///
+    /// Deserializes and applies ACL operations from Raft log entry data.
+    ///
+    /// # Arguments
+    /// * `entry_data` - Serialized ACL operation data from Raft log
+    pub async fn apply_log_entry(&self, entry_data: &[u8]) -> Result<()> {
+        // Deserialize the ACL operation
+        let operation: AclRaftOperation = serde_json::from_slice(entry_data)
+            .map_err(|e| RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
+
+        // Apply the operation through the state machine
+        self.state_machine.apply_operation(operation).await?;
 
         Ok(())
     }
@@ -422,35 +444,6 @@ struct AclSnapshotData {
     last_applied_index: u64,
 }
 
-/// Extension trait for ControllerService to support ACL operations
-#[async_trait]
-pub trait ControllerAclExtension {
-    async fn is_leader(&self) -> bool;
-    async fn get_current_term(&self) -> u64;
-    async fn append_log_entry(&self, entry: LogEntry) -> Result<()>;
-}
-
-#[async_trait]
-impl ControllerAclExtension for ControllerService {
-    async fn is_leader(&self) -> bool {
-        // This should be implemented in the actual ControllerService
-        // For now, return true as a placeholder
-        true
-    }
-
-    async fn get_current_term(&self) -> u64 {
-        // This should be implemented in the actual ControllerService
-        // For now, return 1 as a placeholder
-        1
-    }
-
-    async fn append_log_entry(&self, _entry: LogEntry) -> Result<()> {
-        // This should be implemented in the actual ControllerService
-        // For now, return Ok as a placeholder
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,18 +453,49 @@ mod tests {
     use crate::storage::object_storage::LocalObjectStorage;
     use tempfile::TempDir;
 
+    /// Mock implementation of RaftOperations for testing
+    struct MockRaftOperations {
+        is_leader: bool,
+        current_term: u64,
+    }
+
+    impl MockRaftOperations {
+        fn new() -> Self {
+            Self {
+                is_leader: true,
+                current_term: 1,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RaftOperations for MockRaftOperations {
+        async fn is_leader(&self) -> bool {
+            self.is_leader
+        }
+
+        async fn get_current_term(&self) -> u64 {
+            self.current_term
+        }
+
+        async fn append_acl_operation(&self, _operation_data: Vec<u8>) -> Result<()> {
+            // Mock implementation - just return Ok
+            Ok(())
+        }
+    }
+
     async fn create_test_raft_manager() -> (RaftAclManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let object_storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
         let cache = Arc::new(LruCache::new(1024 * 1024));
         let config = AclStorageConfig::default();
-        
+
         let storage = Arc::new(ObjectStorageAclStorage::new(object_storage, cache, config).await.unwrap());
-        
-        // Mock controller service
-        let controller = Arc::new(ControllerService::new_for_test());
-        
-        let manager = RaftAclManager::new(storage, controller, "test-node".to_string());
+
+        // Mock raft operations
+        let raft_ops = Arc::new(MockRaftOperations::new());
+
+        let manager = RaftAclManager::new(storage, raft_ops, "test-node".to_string());
         (manager, temp_dir)
     }
 
@@ -591,16 +615,5 @@ mod tests {
 
         assert_eq!(deserialized.snapshot.version_counter, 42);
         assert_eq!(deserialized.last_applied_index, 100);
-    }
-}
-
-// Mock implementation for tests
-#[cfg(test)]
-impl ControllerService {
-    pub fn new_for_test() -> Self {
-        // This is a placeholder for testing
-        // Skip initialization for now as controller service requires full setup
-        // Tests that need this will be marked as #[ignore]
-        panic!("ControllerService::new_for_test() not available - use #[ignore] on tests")
     }
 }
