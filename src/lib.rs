@@ -16,6 +16,7 @@ pub mod security;
 pub mod health;
 pub mod proto;
 pub mod proto_convert;
+pub mod panic_handler;
 
 pub use error::{RustMqError, Result};
 pub use config::Config;

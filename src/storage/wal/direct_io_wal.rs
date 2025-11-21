@@ -235,15 +235,21 @@ impl DirectIOWal {
                         // Atomically read offsets and reset segment tracking to prevent race conditions
                         // with concurrent append operations
                         let (start_offset, end_offset) = {
-                            let _guard = segment_tracking_lock.lock().unwrap();
+                            let _guard = match segment_tracking_lock.lock() {
+                                Ok(guard) => guard,
+                                Err(poisoned) => {
+                                    tracing::error!("Segment tracking lock poisoned - WAL consistency may be compromised");
+                                    poisoned.into_inner()
+                                }
+                            };
                             let end_offset = current_offset.load(Ordering::SeqCst);
                             let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
-                            
+
                             // Reset segment tracking for next segment while holding the lock
                             current_segment_size.store(0, Ordering::SeqCst);
                             current_segment_start_offset.store(end_offset, Ordering::SeqCst); // Next segment starts where this one ends
                             *current_segment_start_time.write() = Instant::now();
-                            
+
                             (start_offset, end_offset)
                         };
                         
@@ -297,7 +303,13 @@ impl DirectIOWal {
 
         // Check if branchless parsing is available
         let use_branchless = {
-            let parser = self.branchless_parser.lock().unwrap();
+            let parser = match self.branchless_parser.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!("Branchless parser lock poisoned during recovery - using poisoned state");
+                    poisoned.into_inner()
+                }
+            };
             parser.is_simd_enabled()
         };
 
@@ -323,7 +335,13 @@ impl DirectIOWal {
 
             // Use branchless parsing for high performance
             let segments = if use_branchless {
-                let mut parser = self.branchless_parser.lock().unwrap();
+                let mut parser = match self.branchless_parser.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => {
+                        tracing::error!("Branchless parser lock poisoned during batch parsing - recovering");
+                        poisoned.into_inner()
+                    }
+                };
                 parser.parse_record_headers_batch(&buffer, file_offset, logical_offset)?
             } else {
                 // Fallback to traditional parsing
@@ -363,10 +381,16 @@ impl DirectIOWal {
         }
 
         self.current_offset.store(logical_offset, Ordering::SeqCst);
-        
+
         // After recovery, reset segment tracking with lock to prevent race conditions
         {
-            let _guard = self.segment_tracking_lock.lock().unwrap();
+            let _guard = match self.segment_tracking_lock.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!("Segment tracking lock poisoned after recovery - WAL consistency may be compromised");
+                    poisoned.into_inner()
+                }
+            };
             self.current_segment_start_offset.store(logical_offset, Ordering::SeqCst);
             self.current_segment_size.store(0, Ordering::SeqCst);
         }
@@ -375,7 +399,13 @@ impl DirectIOWal {
         
         // Log performance statistics
         if use_branchless {
-            let parser = self.branchless_parser.lock().unwrap();
+            let parser = match self.branchless_parser.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!("Branchless parser lock poisoned during stats collection");
+                    poisoned.into_inner()
+                }
+            };
             let stats = parser.get_stats();
             tracing::info!(
                 "WAL recovery completed with branchless parsing: {} records in {:?}, {} bytes processed, {} SIMD ops, {} scalar fallbacks",
@@ -504,10 +534,16 @@ impl WriteAheadLog for DirectIOWal {
         };
 
         self.segments.write().push(segment_meta);
-        
+
         // Update current segment size for upload monitoring (with lock to prevent race conditions)
         {
-            let _guard = self.segment_tracking_lock.lock().unwrap();
+            let _guard = match self.segment_tracking_lock.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!("Segment tracking lock poisoned during append - WAL consistency may be compromised");
+                    poisoned.into_inner()
+                }
+            };
             self.current_segment_size.fetch_add(buffer_len as u64, Ordering::SeqCst);
         }
 
@@ -645,14 +681,20 @@ impl WriteAheadLog for DirectIOWal {
         let mut segments = self.segments.write();
         segments.retain(|seg| seg.start_offset < offset);
         self.current_offset.store(offset, Ordering::SeqCst);
-        
+
         // After truncation, reset segment tracking with lock to prevent race conditions
         {
-            let _guard = self.segment_tracking_lock.lock().unwrap();
+            let _guard = match self.segment_tracking_lock.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::error!("Segment tracking lock poisoned during truncate - WAL consistency may be compromised");
+                    poisoned.into_inner()
+                }
+            };
             self.current_segment_start_offset.store(offset, Ordering::SeqCst);
             self.current_segment_size.store(0, Ordering::SeqCst);
         }
-        
+
         Ok(())
     }
 

@@ -253,11 +253,13 @@ impl QuicServer {
             rustls::PrivateKey(priv_key),
         )?;
 
-        let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+        let transport_config = Arc::get_mut(&mut server_config.transport)
+            .ok_or_else(|| RustMqError::Config("Failed to get mutable transport config - Arc has multiple strong references".to_string()))?;
         transport_config.max_concurrent_uni_streams(quic_config.max_concurrent_uni_streams.into());
         transport_config.max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
         transport_config.max_idle_timeout(Some(
-            Duration::from_millis(quic_config.max_idle_timeout_ms).try_into().unwrap()
+            Duration::from_millis(quic_config.max_idle_timeout_ms).try_into()
+                .map_err(|e| RustMqError::Config(format!("Invalid idle timeout: {}", e)))?
         ));
         // Note: Some stream data configuration methods may not be available in this quinn version
         // We'll configure what's available and focus on the critical parameters
@@ -469,9 +471,10 @@ impl SecureQuicServer {
         tls_config.alpn_protocols = vec![b"rustmq".to_vec()];
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(tls_config));
-        
+
         // Configure QUIC transport parameters
-        let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+        let transport_config = Arc::get_mut(&mut server_config.transport)
+            .ok_or_else(|| RustMqError::Config("Failed to get mutable transport config - Arc has multiple strong references".to_string()))?;
         transport_config.max_concurrent_uni_streams(quic_config.max_concurrent_uni_streams.into());
         transport_config.max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
         transport_config.max_idle_timeout(Some(
@@ -954,10 +957,15 @@ impl SecureQuicServer {
     /// Get server statistics including security metrics
     pub fn stats(&self) -> SecureQuicServerStats {
         let pool_stats = self.authenticated_pool.stats();
-        
+
+        // Default fallback address - safe to unwrap as this is a valid constant
+        const DEFAULT_ADDR: &str = "0.0.0.0:0";
+        let fallback_addr = DEFAULT_ADDR.parse()
+            .expect("DEFAULT_ADDR constant is a valid SocketAddr");
+
         SecureQuicServerStats {
             pool_stats,
-            endpoint_addr: self.endpoint.local_addr().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+            endpoint_addr: self.endpoint.local_addr().unwrap_or(fallback_addr),
         }
     }
 }

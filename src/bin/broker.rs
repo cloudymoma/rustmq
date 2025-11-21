@@ -13,6 +13,9 @@ async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
+    // Install panic hook for production safety
+    rustmq::panic_handler::install_panic_hook();
+
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let default_config = "config/broker.toml".to_string();

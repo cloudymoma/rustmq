@@ -303,17 +303,29 @@ impl ReplicationManager {
     /// - ~6.3x fewer operations for typical replication scenarios
     pub fn find_kth_smallest(offsets: &[u64], k: usize) -> u64 {
         debug_assert!(k > 0 && k <= offsets.len(), "k must be in range [1, offsets.len()]");
-        
+
+        // Runtime validation for release builds where debug_assert is compiled out
+        // This prevents panic in production even if preconditions are violated
+        if k == 0 || k > offsets.len() {
+            tracing::error!(
+                "Invalid k={} for offsets.len()={}, using fallback value 0",
+                k,
+                offsets.len()
+            );
+            return 0;
+        }
+
         match k {
             1 => {
                 // Special case: find minimum - O(n) time, O(1) space
-                *offsets.iter().min().unwrap()
+                // Safe: we validated k <= offsets.len() and k >= 1, so offsets is non-empty
+                offsets.iter().min().copied().unwrap_or(0)
             }
             2 => {
                 // Special case: find 2nd smallest - O(n) time, O(1) space
                 let mut min = u64::MAX;
                 let mut second_min = u64::MAX;
-                
+
                 for &offset in offsets {
                     if offset < min {
                         second_min = min;
@@ -328,12 +340,13 @@ impl ReplicationManager {
                 // General case: use bounded max-heap - O(n log k) time, O(k) space
                 // We maintain a max-heap of size k containing the k smallest elements seen so far
                 let mut max_heap = BinaryHeap::with_capacity(k);
-                
+
                 // Initialize heap with first k elements
+                // Safe: we validated k <= offsets.len()
                 for &offset in offsets.iter().take(k) {
                     max_heap.push(offset);
                 }
-                
+
                 // Process remaining elements
                 // If we find an element smaller than the heap's max, we:
                 // 1. Remove the max (largest of the k smallest)
@@ -346,9 +359,10 @@ impl ReplicationManager {
                         }
                     }
                 }
-                
+
                 // The k-th smallest is the maximum in our heap of k smallest elements
-                *max_heap.peek().unwrap()
+                // Safe: we just populated the heap with exactly k elements
+                max_heap.peek().copied().unwrap_or(0)
             }
         }
     }
