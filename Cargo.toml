@@ -158,6 +158,8 @@ tonic-mock = "0.4"
 proptest = "1.5"
 # Testing utilities
 tracing-test = "0.2"
+# RustMQ SDK for integration tests
+rustmq-client = { path = "sdk/rust" }
 
 [features]
 default = ["wasm", "moka-cache"]

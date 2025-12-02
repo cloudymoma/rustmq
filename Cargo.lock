@@ -5351,6 +5351,7 @@ dependencies = [
  "ring 0.17.14",
  "rustls 0.21.12",
  "rustls-pemfile 1.0.4",
+ "rustmq-client",
  "serde",
  "serde_json",
  "sha2",

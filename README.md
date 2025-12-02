@@ -2930,23 +2930,55 @@ cargo watch -x test -x clippy
 
 ### Testing
 
-```bash
-# Unit tests (currently 88 tests passing)
-cargo test --lib
+RustMQ includes comprehensive test coverage across multiple levels:
 
-# Integration tests (9 broker core tests + others)
-cargo test --test integration_broker_core
+#### Unit Tests
+```bash
+# Run all unit tests (501 tests passing in release mode)
+cargo test --lib
 
 # Run specific module tests
 cargo test storage::
 cargo test scaling::
 cargo test broker::core
+```
 
-# Run with features
+#### Integration Tests
+```bash
+# Core broker integration tests
+cargo test --test integration_broker_core
+
+# Graceful shutdown integration tests (validates v1.0 shutdown implementation)
+cargo test --release --test integration_graceful_shutdown
+
+# Load and performance tests (marked with #[ignore])
+cargo test --release --test integration_load_test -- --ignored
+
+# All integration tests
+cargo test --release
+```
+
+**Integration Test Suite:**
+- **Graceful Shutdown Tests** (4 tests): Validates the broker's graceful shutdown implementation prevents data loss during shutdown, respects timeout phases (WAL flush ≤5s, replication drain ≤10s), and properly transitions through broker states
+- **Load Tests** (2 tests): Performance validation including 10K msg/sec sustained for 60 seconds and burst load handling (10K messages)
+- **Security Integration Tests**: End-to-end authentication and authorization workflows
+- **End-to-End Tests**: Full system integration with controller, WAL, replication, and ETL
+
+#### Running Tests with Features
+```bash
+# Test with specific features
 cargo test --features "io-uring,wasm"
 
-# All tests
-cargo test
+# Test in release mode (recommended for performance tests)
+cargo test --release
+```
+
+#### Memory Safety Tests
+```bash
+# Run Miri tests (requires nightly Rust)
+rustup +nightly component add miri
+./scripts/miri-test.sh              # All tests
+./scripts/miri-test.sh --quick      # Fast subset
 ```
 
 ## 📄 License
