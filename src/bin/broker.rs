@@ -37,12 +37,36 @@ async fn main() -> Result<()> {
     let mut broker = Broker::from_config(config).await?;
     broker.start().await?;
 
-    // Wait for shutdown signal
-    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-    info!("Received shutdown signal (Ctrl+C)");
+    // Wait for shutdown signal (Ctrl+C or SIGTERM)
+    #[cfg(unix)]
+    {
+        use signal::unix::{signal, SignalKind};
+
+        let mut sigterm = signal(SignalKind::terminate())
+            .expect("Failed to register SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt())
+            .expect("Failed to register SIGINT handler");
+
+        tokio::select! {
+            _ = sigterm.recv() => {
+                info!("Received shutdown signal (SIGTERM)");
+            }
+            _ = sigint.recv() => {
+                info!("Received shutdown signal (SIGINT/Ctrl+C)");
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+        info!("Received shutdown signal (Ctrl+C)");
+    }
 
     // Gracefully stop the broker
+    info!("Initiating graceful shutdown...");
     broker.stop().await?;
+    info!("Broker shutdown complete");
 
     Ok(())
 }

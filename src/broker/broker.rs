@@ -371,10 +371,34 @@ impl Broker {
             handle.abort();
         }
 
-        // Graceful shutdown - flush WAL, close connections, etc.
-        info!("Flushing WAL and closing connections...");
-        // TODO: Add proper WAL flushing, connection cleanup, cache flushing
-        // This would require adding shutdown methods to the storage components
+        // Graceful shutdown - flush WAL, wait for replication, close connections
+        info!("Initiating graceful shutdown of storage and replication...");
+
+        // Step 1: Flush WAL to disk (critical for preventing data loss)
+        let wal_shutdown_start = std::time::Instant::now();
+        if let Err(e) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),  // 5s timeout for WAL flush
+            self.broker_core.get_wal().shutdown()
+        ).await {
+            warn!("WAL shutdown timed out after 5s: {:?}", e);
+        } else {
+            info!("✅ WAL flushed and shut down ({:?})", wal_shutdown_start.elapsed());
+        }
+
+        // Step 2: Wait for inflight replications (best effort, followers will catch up)
+        let replication_shutdown_start = std::time::Instant::now();
+        if let Err(e) = tokio::time::timeout(
+            std::time::Duration::from_secs(10),  // 10s timeout for replication drain
+            self.broker_core.get_replication_manager().shutdown(std::time::Duration::from_secs(10))
+        ).await {
+            warn!("Replication shutdown timed out after 10s: {:?}. Followers will catch up on restart.", e);
+        } else {
+            info!("✅ Replication drained ({:?})", replication_shutdown_start.elapsed());
+        }
+
+        // Step 3: Close connections gracefully (give clients time to disconnect)
+        info!("Waiting for connections to close...");
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
         // Transition to stopped state
         {

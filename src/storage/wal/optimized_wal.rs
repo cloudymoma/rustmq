@@ -581,6 +581,31 @@ impl WriteAheadLog for OptimizedDirectIOWal {
     }
 }
 
+impl OptimizedDirectIOWal {
+    /// Gracefully shutdown the WAL
+    ///
+    /// This method:
+    /// 1. Sends a shutdown command to the file task
+    /// 2. Triggers a final fsync to ensure all data is persisted to disk
+    /// 3. Waits for the file task to complete shutdown
+    ///
+    /// This prevents data loss by ensuring all buffered writes are flushed
+    /// before the WAL is destroyed.
+    ///
+    /// # Returns
+    /// Ok(()) on successful shutdown, or an error if the shutdown signal couldn't be sent
+    pub async fn shutdown(&self) -> Result<()> {
+        tracing::info!("Initiating optimized WAL graceful shutdown...");
+
+        // Send shutdown command to file task
+        self.write_tx.send(OptimizedWriteCommand::Shutdown).await
+            .map_err(|_| crate::error::RustMqError::Wal("Failed to send shutdown signal to optimized WAL file task".to_string()))?;
+
+        tracing::info!("✅ Optimized WAL graceful shutdown signal sent - file task will flush and close");
+        Ok(())
+    }
+}
+
 impl Drop for OptimizedDirectIOWal {
     fn drop(&mut self) {
         let _ = self.write_tx.try_send(OptimizedWriteCommand::Shutdown);

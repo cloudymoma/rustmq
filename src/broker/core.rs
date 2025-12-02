@@ -174,6 +174,16 @@ where
         Ok(partitions.get(topic_partition).cloned())
     }
 
+    /// Get reference to WAL for shutdown operations
+    pub fn get_wal(&self) -> &Arc<W> {
+        &self.wal
+    }
+
+    /// Get reference to replication manager for shutdown operations
+    pub fn get_replication_manager(&self) -> &Arc<R> {
+        &self.replication_manager
+    }
+
     /// Internal method to append records to WAL and replicate
     async fn append_records(
         &self,

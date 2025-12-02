@@ -592,6 +592,46 @@ impl ReplicationManager {
     pub fn get_topic_partition(&self) -> &TopicPartition {
         &self.topic_partition
     }
+
+    /// Gracefully shutdown the replication manager
+    ///
+    /// This method waits for inflight replication requests to complete with a timeout.
+    /// If the timeout is reached, replication may be incomplete, but followers will
+    /// catch up on restart via the WAL.
+    ///
+    /// # Arguments
+    /// * `timeout` - Maximum time to wait for inflight replications
+    ///
+    /// # Returns
+    /// Ok(()) on successful shutdown (even if some replications timed out)
+    pub async fn shutdown(&self, timeout_duration: Duration) -> Result<()> {
+        tracing::info!(
+            "Initiating replication manager graceful shutdown for topic-partition {:?} with timeout {:?}",
+            self.topic_partition,
+            timeout_duration
+        );
+
+        // For v1.0, we use a simple approach: wait for the timeout period
+        // This gives inflight RPCs time to complete. Followers will catch up
+        // from the WAL if any replication is incomplete.
+        //
+        // Future enhancement (v1.1+): Track inflight requests and wait for
+        // completion or timeout, whichever comes first.
+        if timeout_duration.as_millis() > 0 {
+            tracing::info!(
+                "Waiting {:?} for inflight replications to complete...",
+                timeout_duration
+            );
+            tokio::time::sleep(timeout_duration).await;
+        }
+
+        tracing::info!(
+            "✅ Replication manager shutdown complete for topic-partition {:?}. \
+             Followers will catch up from WAL on restart if needed.",
+            self.topic_partition
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
