@@ -5350,6 +5350,7 @@ dependencies = [
  "reqwest",
  "ring 0.17.14",
  "rustls 0.21.12",
+ "rustls 0.23.29",
  "rustls-pemfile 1.0.4",
  "rustmq-client",
  "serde",

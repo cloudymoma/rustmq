@@ -158,8 +158,10 @@ tonic-mock = "0.4"
 proptest = "1.5"
 # Testing utilities
 tracing-test = "0.2"
-# RustMQ SDK for integration tests
+# RustMQ SDK for integration tests (uses rustls 0.23)
 rustmq-client = { path = "sdk/rust" }
+# rustls 0.23 for crypto provider initialization in integration tests
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
 
 [features]
 default = ["wasm", "moka-cache"]

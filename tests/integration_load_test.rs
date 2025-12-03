@@ -11,8 +11,20 @@ use rustmq::config::{BrokerConfig, NetworkConfig, WalConfig, ObjectStorageConfig
 use rustmq_client::*;
 use tempfile::TempDir;
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio::time::{Duration, Instant};
+
+// Initialize rustls crypto provider once
+static INIT: Once = Once::new();
+
+fn init_crypto() {
+    INIT.call_once(|| {
+        // Use aws_lc_rs provider (same as SDK tests)
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install crypto provider");
+    });
+}
 
 // Use atomic counter to generate unique ports for each test
 static PORT_COUNTER: AtomicU16 = AtomicU16::new(16000);
@@ -80,6 +92,8 @@ async fn create_test_broker_config(temp_dir: &TempDir, quic_port: u16, rpc_port:
 #[tokio::test]
 #[ignore] // Only run with --ignored flag
 async fn test_10k_messages_per_second_for_one_minute() {
+    init_crypto();
+
     println!("🚀 Starting load test: 10,000 msg/sec for 60 seconds");
     println!("⏱️  Target: 600,000 total messages");
 
@@ -309,6 +323,8 @@ async fn test_10k_messages_per_second_for_one_minute() {
 #[tokio::test]
 #[ignore] // Only run with --ignored flag
 async fn test_burst_load_handling() {
+    init_crypto();
+
     println!("🚀 Starting burst load test");
 
     let temp_dir = TempDir::new().unwrap();
