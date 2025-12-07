@@ -7,25 +7,13 @@ use rustmq::{Config, broker::Broker};
 use rustmq::config::{BrokerConfig, NetworkConfig, WalConfig, ObjectStorageConfig, StorageType, CacheConfig, ReplicationConfig};
 use rustmq::storage::{DirectIOWal, AlignedBufferPool};
 use rustmq::storage::traits::WriteAheadLog;
+use rustmq::broker::core::PartitionMetadata;
+use rustmq::types::TopicPartition;
 use rustmq_client::*;
 use tempfile::TempDir;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use tokio::time::Duration;
-
-// Initialize rustls crypto provider once
-static INIT: Once = Once::new();
-
-fn init_crypto() {
-    INIT.call_once(|| {
-        // Use aws_lc_rs provider (same as SDK tests)
-        // Note: rustmq uses rustls 0.21, but rustmq-client uses rustls 0.23
-        // We need to use 0.23's crypto provider for the client
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .expect("Failed to install crypto provider");
-    });
-}
 
 // Use atomic counter to generate unique ports for each test
 static PORT_COUNTER: AtomicU16 = AtomicU16::new(15000);
@@ -92,7 +80,7 @@ async fn create_test_broker_config(temp_dir: &TempDir, quic_port: u16, rpc_port:
 
 #[tokio::test]
 async fn test_graceful_shutdown_preserves_all_messages() {
-    init_crypto();
+    rustmq_client::init_crypto_provider();
 
     // Test that graceful shutdown prevents data loss
     let temp_dir = TempDir::new().unwrap();
@@ -112,6 +100,22 @@ async fn test_graceful_shutdown_preserves_all_messages() {
 
     // Give QUIC server time to fully start
     tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Create topic partition for the test
+    let topic_partition = TopicPartition {
+        topic: "test-shutdown-topic".to_string(),
+        partition: 0,
+    };
+    let partition_metadata = PartitionMetadata {
+        leader_epoch: 1,
+        high_watermark: 0,
+        is_leader: true,
+        replicas: vec![format!("test-broker-{}", quic_port)],
+        in_sync_replicas: vec![format!("test-broker-{}", quic_port)],
+    };
+    broker.core().add_partition(topic_partition, partition_metadata).await
+        .expect("Failed to create partition");
+    println!("✅ Created topic partition: test-shutdown-topic:0");
 
     // Connect client
     let client_config = ClientConfig {
@@ -250,7 +254,7 @@ async fn test_shutdown_timing_and_phases() {
 
 #[tokio::test]
 async fn test_shutdown_prevents_new_connections() {
-    init_crypto();
+    rustmq_client::init_crypto_provider();
 
     // Test that shutdown stops accepting new connections
     let temp_dir = TempDir::new().unwrap();
