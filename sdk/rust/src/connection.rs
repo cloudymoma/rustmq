@@ -479,10 +479,10 @@ impl Connection {
             ClientError::QuicTransport(format!("Failed to open bidirectional stream: {}", e))
         })?;
         
-        // Create request frame with header
-        let mut frame = Vec::new();
-        frame.extend_from_slice(&request_id.as_bytes()[..]);
-        frame.extend_from_slice(&(request.len() as u32).to_be_bytes());
+        // Create request frame with request type byte (1 = Produce)
+        // Protocol: [1-byte request type][request data]
+        let mut frame = Vec::with_capacity(1 + request.len());
+        frame.push(1u8); // RequestType::Produce
         frame.extend_from_slice(&request);
         
         // Send request with timeout
@@ -529,43 +529,54 @@ impl Connection {
     /// Read response from stream
     async fn read_response(
         recv_stream: &mut quinn::RecvStream,
-        expected_request_id: Uuid,
+        _expected_request_id: Uuid, // Not used in simplified protocol
     ) -> Result<Vec<u8>> {
-        // Read response header (request_id + length)
-        let mut header = [0u8; 20]; // 16 bytes for UUID + 4 bytes for length
-        recv_stream.read_exact(&mut header).await.map_err(|e| {
-            ClientError::QuicTransport(format!("Failed to read response header: {}", e))
+        // Read response type byte (1 = Produce response)
+        // Protocol: [1-byte request type][response data]
+        let mut type_byte = [0u8; 1];
+        recv_stream.read_exact(&mut type_byte).await.map_err(|e| {
+            ClientError::QuicTransport(format!("Failed to read response type: {}", e))
         })?;
-        
-        // Verify request ID
-        let response_request_id = Uuid::from_slice(&header[0..16]).map_err(|e| {
-            ClientError::Protocol(format!("Invalid response request ID: {}", e))
-        })?;
-        
-        if response_request_id != expected_request_id {
+
+        // Check response type
+        if type_byte[0] == 255 {
+            // Error response - read error message
+            let error_data = recv_stream.read_to_end(16 * 1024).await
+                .map_err(|e| match e {
+                    quinn::ReadToEndError::TooLong => ClientError::MessageTooLarge {
+                        size: 16 * 1024,
+                        max_size: 16 * 1024
+                    },
+                    quinn::ReadToEndError::Read(read_err) => {
+                        ClientError::QuicTransport(format!("Failed to read error data: {}", read_err))
+                    }
+                })?;
+
+            let error_msg = String::from_utf8_lossy(&error_data);
+            return Err(ClientError::Broker(format!("Broker error: {}", error_msg)));
+        }
+
+        // Verify it's a Produce response (type 1)
+        if type_byte[0] != 1 {
             return Err(ClientError::Protocol(
-                format!("Response request ID mismatch: expected {}, got {}", 
-                    expected_request_id, response_request_id)
+                format!("Unexpected response type: expected 1 (Produce), got {}", type_byte[0])
             ));
         }
-        
-        // Read response length
-        let response_len = u32::from_be_bytes([header[16], header[17], header[18], header[19]]) as usize;
-        
-        if response_len > 16 * 1024 * 1024 { // 16MB limit
-            return Err(ClientError::MessageTooLarge { 
-                size: response_len, 
-                max_size: 16 * 1024 * 1024 
-            });
-        }
-        
-        // Read response body
-        let mut response = vec![0u8; response_len];
-        recv_stream.read_exact(&mut response).await.map_err(|e| {
-            ClientError::QuicTransport(format!("Failed to read response body: {}", e))
-        })?;
-        
-        Ok(response)
+
+        // Read the rest of the response data (no length prefix - read until EOF)
+        // Quinn's read_to_end(size_limit) enforces max size and returns Vec<u8>
+        let response_data = recv_stream.read_to_end(16 * 1024 * 1024).await
+            .map_err(|e| match e {
+                quinn::ReadToEndError::TooLong => ClientError::MessageTooLarge {
+                    size: 16 * 1024 * 1024,
+                    max_size: 16 * 1024 * 1024
+                },
+                quinn::ReadToEndError::Read(read_err) => {
+                    ClientError::QuicTransport(format!("Failed to read response data: {}", read_err))
+                }
+            })?;
+
+        Ok(response_data)
     }
 
     /// Send a message without waiting for response

@@ -42,6 +42,31 @@ pub use admin::{
     AuditLogRequest, AuditLogResponse,
 };
 
+/// Initialize rustls crypto provider for integration tests
+///
+/// This function must be called before creating any QUIC connections when using the
+/// rustmq-client SDK in integration tests. It initializes the rustls 0.23 crypto provider
+/// with aws_lc_rs backend.
+///
+/// This function is idempotent and can be safely called multiple times - only the first
+/// call will perform initialization.
+///
+/// # Example
+/// ```no_run
+/// rustmq_client::init_crypto_provider();
+/// // Now safe to create RustMqClient instances
+/// ```
+pub fn init_crypto_provider() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install rustls crypto provider");
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

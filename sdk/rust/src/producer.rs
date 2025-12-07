@@ -4,12 +4,15 @@ use crate::{
     error::{ClientError, Result},
     message::Message,
 };
+use rustmq::types::{
+    ProduceRequest, ProduceResponse, Record, AcknowledgmentLevel, Header,
+};
+use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
 /// High-level producer for sending messages to RustMQ
 #[derive(Clone)]
@@ -83,39 +86,15 @@ enum BatchCommand {
     Flush(FlushRequest),
 }
 
-/// Protocol message for sending messages to broker
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProduceRequest {
-    topic: String,
-    messages: Vec<ProduceMessage>,
-    ack_level: AckLevel,
-    producer_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProduceMessage {
-    id: String,
-    key: Option<Vec<u8>>,
-    payload: Vec<u8>,
-    headers: std::collections::HashMap<String, String>,
-    timestamp: u64,
-    sequence: Option<u64>,
-    partition: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProduceResponse {
-    success: bool,
-    error: Option<String>,
-    results: Vec<ProduceMessageResult>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProduceMessageResult {
-    message_id: String,
-    partition: u32,
-    offset: u64,
-    timestamp: u64,
+/// Convert SDK AckLevel to broker AcknowledgmentLevel
+impl From<AckLevel> for AcknowledgmentLevel {
+    fn from(ack_level: AckLevel) -> Self {
+        match ack_level {
+            AckLevel::None => AcknowledgmentLevel::None,
+            AckLevel::Leader => AcknowledgmentLevel::Leader,
+            AckLevel::All => AcknowledgmentLevel::All,
+        }
+    }
 }
 
 /// Result of sending a message
@@ -672,24 +651,32 @@ impl Producer {
         
         debug!("Sending batch {} with {} messages", batch_id, batch_size);
 
-        // Convert messages to protocol format
-        let produce_messages: Vec<ProduceMessage> = messages.iter().map(|batched_message| {
-            ProduceMessage {
-                id: batched_message.message.id.clone(),
-                key: batched_message.message.key.as_ref().map(|k| k.to_vec()),
-                payload: batched_message.message.payload.to_vec(),
-                headers: batched_message.message.headers.clone(),
-                timestamp: batched_message.message.timestamp,
-                sequence: batched_message.message.sequence,
-                partition: batched_message.message.partition,
-            }
+        // Convert SDK Messages to broker Records
+        let records: Vec<Record> = messages.iter().map(|batched_message| {
+            // Convert HashMap<String, String> headers to Vec<Header>
+            let headers: Vec<Header> = batched_message.message.headers.iter()
+                .map(|(k, v)| Header {
+                    key: k.clone(),
+                    value: Bytes::from(v.clone()),
+                })
+                .collect();
+
+            // Use Record::new helper for proper type conversion
+            Record::new(
+                batched_message.message.key.as_ref().map(|k| k.to_vec()),
+                batched_message.message.payload.to_vec(),
+                headers,
+                batched_message.message.timestamp as i64, // Convert u64 to i64
+            )
         }).collect();
 
+        // Create broker-compatible ProduceRequest
         let produce_request = ProduceRequest {
-            topic: self.topic.clone(),
-            messages: produce_messages,
-            ack_level: self.config.ack_level.clone(),
-            producer_id: self.id.clone(),
+            topic: self.topic.clone(), // Use String, not Arc
+            partition_id: 0, // Simplified: all messages to partition 0 for now
+            records,
+            acks: self.config.ack_level.clone().into(),
+            timeout_ms: 30000, // 30 second timeout
         };
 
         // Serialize and send request to broker
@@ -697,21 +684,24 @@ impl Producer {
         
         match request_result {
             Ok(response) => {
+                // Calculate sequential offsets from broker's first offset
+                let base_offset = response.offset;
+
                 // Send successful results back to callers
-                for (batched_message, result) in messages.drain(..).zip(response.results.into_iter()) {
+                for (idx, batched_message) in messages.drain(..).enumerate() {
                     let message_result = MessageResult {
-                        message_id: result.message_id,
+                        message_id: batched_message.message.id.clone(),
                         topic: self.topic.clone(),
-                        partition: result.partition,
-                        offset: result.offset,
-                        timestamp: result.timestamp,
+                        partition: 0, // Simplified: using partition 0
+                        offset: base_offset + idx as u64,
+                        timestamp: batched_message.message.timestamp,
                     };
                     let _ = batched_message.result_sender.send(Ok(message_result));
                 }
-                
+
                 // Update metrics for successful send
                 self.update_metrics(batch_size).await;
-                
+
                 info!("Successfully sent batch {} with {} messages", batch_id, batch_size);
             }
             Err(error) => {
@@ -719,11 +709,11 @@ impl Producer {
                 for batched_message in messages.drain(..) {
                     let _ = batched_message.result_sender.send(Err(error.clone()));
                 }
-                
+
                 // Update failure metrics
                 use std::sync::atomic::Ordering;
                 self.metrics.messages_failed.fetch_add(batch_size as u64, Ordering::Relaxed);
-                
+
                 error!("Failed to send batch {}: {}", batch_id, error);
             }
         }
@@ -734,23 +724,24 @@ impl Producer {
     
     /// Send produce request to broker and get response
     async fn send_produce_request(&self, request: ProduceRequest) -> Result<ProduceResponse> {
-        // Serialize request
-        let request_bytes = serde_json::to_vec(&request)
+        // Serialize request with bincode (matches server expectation)
+        let request_bytes = bincode::serialize(&request)
             .map_err(|e| ClientError::Serialization(format!("Failed to serialize produce request: {}", e)))?;
-        
+
         // Send via connection and get response
         let response_bytes = self.client.connection().send_request(request_bytes).await?;
-        
-        // Deserialize response
-        let response: ProduceResponse = serde_json::from_slice(&response_bytes)
+
+        // Deserialize response with bincode (matches server format)
+        let response: ProduceResponse = bincode::deserialize(&response_bytes)
             .map_err(|e| ClientError::Deserialization(format!("Failed to deserialize produce response: {}", e)))?;
-        
-        if !response.success {
+
+        // Check broker's error_code field (0 = success)
+        if response.error_code != 0 {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown broker error".to_string())
+                response.error_message.unwrap_or_else(|| format!("Broker error code: {}", response.error_code))
             ));
         }
-        
+
         Ok(response)
     }
     
