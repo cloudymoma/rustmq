@@ -5350,7 +5350,6 @@ dependencies = [
  "reqwest",
  "ring 0.17.14",
  "rustls 0.21.12",
- "rustls 0.23.29",
  "rustls-pemfile 1.0.4",
  "rustmq-client",
  "serde",
@@ -5394,6 +5393,7 @@ name = "rustmq-client"
 version = "1.0.0"
 dependencies = [
  "async-trait",
+ "bincode",
  "bytes",
  "chrono",
  "criterion",
@@ -5412,6 +5412,7 @@ dependencies = [
  "rustls-native-certs 0.7.3",
  "rustls-pemfile 2.2.0",
  "rustls-platform-verifier",
+ "rustmq",
  "serde",
  "serde_json",
  "tempfile",

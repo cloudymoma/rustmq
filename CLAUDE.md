@@ -60,14 +60,18 @@ make wasm-build && make wasm-test
 
 ## Status
 
-**Tests**: 492 passing (debug), 510 passing (release) - 100% pass rate
+**Tests**: 501 passing (debug), 100% pass rate (release) - Full integration test coverage
+
+**Integration Tests**:
+- Graceful Shutdown: 4 tests (message preservation, timing, connection handling, health checks)
+- Load Tests: 2 tests (10K msg/sec sustained, burst handling) - run with `--ignored` flag
 
 **Production Components**:
 - OpenRaft 0.9.21 consensus with WAL, crash recovery, log compaction
 - WebPKI certificate validation with fallback (92% test failure reduction)
 - Web UI (Vue 3, 50.2MB Docker, K8s-ready)
 - WASM ETL (wasmtime 25.0, fuel metering, timeout enforcement)
-- SDKs: Rust + Go (Go tests: 0.638s, 97% faster)
+- SDKs: Rust SDK with broker type integration + Go (Go tests: 0.638s, 97% faster)
 
 **Config Files**:
 - `config/broker.toml`: ports 9092-9093
@@ -89,6 +93,9 @@ make wasm-build && make wasm-test
 
 | Date | Feature | Achievement |
 |------|---------|-------------|
+| Dec 2025 | SDK Type Integration | Rust SDK now uses broker's shared types (ProduceRequest, Record, etc.) for compile-time type safety |
+| Dec 2025 | Integration Test Suite | 6 integration tests covering graceful shutdown, load testing (10K msg/sec), and health checks |
+| Dec 2025 | QUIC Protocol Implementation | Fixed client-broker protocol with proper `[1-byte type][data]` framing and bincode serialization |
 | Nov 2025 | Production Unwrap Elimination | Phase 1 complete: 13 critical unwraps fixed, panic hooks installed |
 | Nov 2025 | Broker Core Abstraction | Extracted broker logic to library (bin: 374→45 lines, 88% reduction) |
 | Nov 2025 | Circular Dependency Fix | Broke security↔controller cycle using Dependency Inversion |
