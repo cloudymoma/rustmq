@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: broker
+spec:
+  maxUnavailable: 1  # Only 1 broker down at a time
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: broker
+  unhealthyPodEvictionPolicy: IfHealthyBudget

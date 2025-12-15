@@ -6,20 +6,31 @@ metadata:
   labels:
     app.kubernetes.io/name: rustmq
     app.kubernetes.io/component: broker
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"
+    cloud.google.com/l4-rbs: "enabled"  # Enable L4 ILB subsetting
 spec:
   type: LoadBalancer
-  loadBalancerType: Internal  # Internal LB for within VPC
+  externalTrafficPolicy: Local  # Preserve client IPs for QUIC
   selector:
     app.kubernetes.io/name: rustmq
     app.kubernetes.io/component: broker
   ports:
-  - name: client
+  - name: quic
     port: 9092
     targetPort: 9092
-    protocol: TCP
+    protocol: UDP  # QUIC requires UDP
   - name: internal
     port: 9093
     targetPort: 9093
+    protocol: TCP
+  - name: etl
+    port: 9096
+    targetPort: 9096
+    protocol: TCP
+  - name: admin
+    port: 9643
+    targetPort: 9643
     protocol: TCP
   sessionAffinity: ClientIP  # Sticky sessions for QUIC connections
   sessionAffinityConfig:

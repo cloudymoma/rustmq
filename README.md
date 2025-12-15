@@ -1573,6 +1573,97 @@ RustMQ includes well-structured configuration files for different environments:
 - `config/controller.toml` - Production controller configuration
 - `config/example-production.toml` - Production template with enterprise settings
 
+---
+
+## 🔒 Security Configuration (REQUIRED)
+
+### Certificate Private Key Encryption
+
+**⚠️ CRITICAL**: RustMQ encrypts certificate private keys at rest. You **MUST** set an encryption password before starting any RustMQ component (broker, controller):
+
+```bash
+# Generate strong password (minimum 32 characters recommended)
+export RUSTMQ_KEY_ENCRYPTION_PASSWORD="$(openssl rand -base64 32)"
+```
+
+**What happens without this password?**
+- ❌ Brokers will fail to start with error: `RUSTMQ_KEY_ENCRYPTION_PASSWORD environment variable not set`
+- ❌ Controllers will fail to start with the same error
+- ❌ Certificate operations will fail
+
+### Production Deployment
+
+For production environments, **NEVER** use plain environment variables. Store the password in a secret manager:
+
+- **Google Secret Manager** (GKE)
+  ```bash
+  # Create secret
+  echo -n "$(openssl rand -base64 32)" | \
+    gcloud secrets create rustmq-encryption-password --data-file=-
+
+  # Use in Kubernetes
+  # See gke/manifests/base/external-secrets/encryption-password.yaml
+  ```
+
+- **AWS Secrets Manager** (EKS)
+  ```bash
+  aws secretsmanager create-secret \
+    --name rustmq-encryption-password \
+    --secret-string "$(openssl rand -base64 32)"
+  ```
+
+- **HashiCorp Vault**
+  ```bash
+  vault kv put secret/rustmq/encryption password="$(openssl rand -base64 32)"
+  ```
+
+### Security Best Practices
+
+| Requirement | Details |
+|-------------|---------|
+| **Minimum Length** | 32 characters (use `openssl rand -base64 32`) |
+| **Storage** | Secret manager in production, never in git |
+| **Rotation** | Annually with zero-downtime migration |
+| **Recovery** | Document recovery procedure, store in secure location |
+| **Scope** | Same password used by all brokers/controllers in a cluster |
+
+### Quick Start (Development)
+
+```bash
+# 1. Set encryption password (development only)
+export RUSTMQ_KEY_ENCRYPTION_PASSWORD="dev-password-change-in-production"
+
+# 2. For docker-compose, also set MinIO credentials
+export MINIO_ACCESS_KEY="$(openssl rand -base64 32)"
+export MINIO_SECRET_KEY="$(openssl rand -base64 32)"
+
+# 3. Start services
+cd docker
+cp .env.example .env
+# Edit .env with above values
+docker-compose up -d
+```
+
+### Validation Script
+
+Use the validation script to ensure all required environment variables are set:
+
+```bash
+./scripts/validate-env.sh
+
+# Output:
+# ✅ RUSTMQ_KEY_ENCRYPTION_PASSWORD configured (44 characters)
+# ✅ MinIO credentials configured
+# ✅ All required environment variables validated
+```
+
+**See also**:
+- `docker/.env.example` - Template with all required variables
+- `PORT_ALLOCATION.md` - Complete port reference
+- `SECURITY_AUDIT_SUMMARY.md` - Full security documentation
+
+---
+
 ### Quick Start
 
 ```bash

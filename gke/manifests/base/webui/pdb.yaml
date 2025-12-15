@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-webui
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: webui
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: webui
+  unhealthyPodEvictionPolicy: IfHealthyBudget

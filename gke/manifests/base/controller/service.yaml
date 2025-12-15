@@ -17,12 +17,12 @@ spec:
     port: 9094
     targetPort: 9094
     protocol: TCP
-  - name: admin
-    port: 9095
+  - name: raft
+    port: 9095  # Raft consensus protocol
     targetPort: 9095
     protocol: TCP
-  - name: raft
-    port: 9642
+  - name: admin
+    port: 9642  # HTTP admin API & health checks
     targetPort: 9642
     protocol: TCP
   publishNotReadyAddresses: true  # Important for Raft cluster formation
@@ -46,7 +46,11 @@ spec:
     port: 9094
     targetPort: 9094
     protocol: TCP
-  - name: admin
-    port: 9095
+  - name: raft
+    port: 9095  # Raft consensus protocol
     targetPort: 9095
+    protocol: TCP
+  - name: admin
+    port: 9642  # HTTP admin API & health checks
+    targetPort: 9642
     protocol: TCP

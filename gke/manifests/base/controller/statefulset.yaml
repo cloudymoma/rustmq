@@ -35,11 +35,11 @@ spec:
         - name: grpc
           containerPort: 9094
           protocol: TCP
-        - name: admin
-          containerPort: 9095
-          protocol: TCP
         - name: raft
-          containerPort: 9642
+          containerPort: 9095  # Raft consensus protocol
+          protocol: TCP
+        - name: admin
+          containerPort: 9642  # HTTP admin API & health checks
           protocol: TCP
         env:
         - name: POD_NAME
@@ -58,9 +58,9 @@ spec:
           value: "info"
         - name: RUSTMQ_CONTROLLER_GRPC_PORT
           value: "9094"
-        - name: RUSTMQ_CONTROLLER_ADMIN_PORT
-          value: "9095"
         - name: RUSTMQ_CONTROLLER_RAFT_PORT
+          value: "9095"
+        - name: RUSTMQ_CONTROLLER_ADMIN_PORT
           value: "9642"
         - name: RUSTMQ_CONTROLLER_WAL_DIR
           value: "/var/lib/rustmq/wal"
@@ -84,7 +84,8 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 9095
+            port: 9642  # Use HTTP admin port
+            scheme: HTTP
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -92,7 +93,8 @@ spec:
         readinessProbe:
           httpGet:
             path: /ready
-            port: 9095
+            port: 9642  # Use HTTP admin port
+            scheme: HTTP
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
@@ -100,7 +102,8 @@ spec:
         startupProbe:
           httpGet:
             path: /health
-            port: 9095
+            port: 9642  # Use HTTP admin port
+            scheme: HTTP
           initialDelaySeconds: 0
           periodSeconds: 5
           timeoutSeconds: 3

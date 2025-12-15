@@ -13,17 +13,25 @@ resources:
 - serviceaccount.yaml
 - configmap.yaml
 - networkpolicy.yaml
+# Controller resources
 - controller/statefulset.yaml
 - controller/service.yaml
+- controller/pdb.yaml
+# Broker resources
 - broker/deployment.yaml
 - broker/service.yaml
 - broker/hpa.yaml
+- broker/pdb.yaml
+# Admin Server resources
 - admin-server/deployment.yaml
 - admin-server/service.yaml
+- admin-server/pdb.yaml
+# WebUI resources
 - webui/deployment.yaml
 - webui/service.yaml
 - webui/configmap.yaml
 - webui/ingress.yaml
+- webui/pdb.yaml
 
 commonLabels:
   app.kubernetes.io/name: rustmq

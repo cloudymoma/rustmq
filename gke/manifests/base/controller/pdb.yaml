@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: controller
+spec:
+  minAvailable: 2  # Maintain Raft quorum (3 controllers - allow 1 down)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: controller
+  unhealthyPodEvictionPolicy: IfHealthyBudget

@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustmq-admin-server
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: admin-server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: admin-server
+  unhealthyPodEvictionPolicy: IfHealthyBudget

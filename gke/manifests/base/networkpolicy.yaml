@@ -124,8 +124,14 @@ spec:
   - from:
     - namespaceSelector: {}
     ports:
+    - protocol: UDP  # QUIC requires UDP
+      port: 9092
+  # Allow health checks on admin port
+  - from:
+    - namespaceSelector: {}
+    ports:
     - protocol: TCP
-      port: 9092  # Client port (QUIC)
+      port: 9643  # HTTP admin port
   egress:
   # Allow broker -> controller
   - to:
@@ -193,6 +199,50 @@ spec:
     ports:
     - protocol: TCP
       port: 9094
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rustmq-webui
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: webui-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: webui
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from GKE Ingress controller and external traffic
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow webui -> admin-server
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: admin-server
+    ports:
+    - protocol: TCP
+      port: 8080
   # Allow DNS
   - to:
     - namespaceSelector:
