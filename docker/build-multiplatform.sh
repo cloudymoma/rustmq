@@ -52,6 +52,7 @@ declare -A SERVICES=(
     ["admin"]="rustmq-admin"
     ["admin-server"]="rustmq-admin-server"
     ["bigquery-subscriber"]="rustmq-bigquery-subscriber"
+    ["webui"]="rustmq-webui"
 )
 
 # Print colored message

@@ -1,0 +1,67 @@
+# RustMQ BigQuery Subscriber Configuration
+# ETL pipeline from RustMQ topics to Google BigQuery
+
+[subscriber]
+# Topics to subscribe to (support wildcards: "events.*")
+topics = ["events"]
+
+# Consumer group ID for offset management
+consumer_group = "bigquery-subscriber"
+
+# Batch size for BigQuery inserts (optimize for cost/latency)
+batch_size = 1000
+
+# Flush interval in milliseconds (max time before forcing batch insert)
+flush_interval_ms = 1000
+
+# Maximum number of concurrent batches being processed
+max_concurrent_batches = 10
+
+[bigquery]
+# Google Cloud Project ID (can use environment variable substitution)
+project_id = "${GCP_PROJECT_ID}"
+
+# BigQuery dataset name
+dataset = "${BIGQUERY_DATASET}"
+
+# BigQuery table name
+table = "${BIGQUERY_TABLE}"
+
+# Automatically create table if it doesn't exist
+# Schema will be inferred from first batch of messages
+auto_create_table = false
+
+# Optional: Partitioning configuration
+# partition_field = "timestamp"
+# partition_type = "DAY"  # DAY, HOUR, MONTH, YEAR
+
+[broker]
+# RustMQ broker endpoints for message consumption
+endpoints = ["broker-1:9092", "broker-2:9092", "broker-3:9092"]
+
+# Connection timeout in milliseconds
+connection_timeout_ms = 5000
+
+# Enable TLS for broker connections
+# enable_tls = true
+# tls_ca_path = "/etc/rustmq/tls/ca.pem"
+
+[retry]
+# Maximum retry attempts for failed BigQuery inserts
+max_retries = 3
+
+# Base delay for exponential backoff (milliseconds)
+base_delay_ms = 1000
+
+# Maximum delay for exponential backoff (milliseconds)
+max_delay_ms = 30000
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json or text
+format = "json"
+
+# Log output destination
+# output = "stdout"

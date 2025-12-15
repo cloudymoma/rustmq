@@ -30,3 +30,8 @@ tests/wasm_binaries/
 
 tmp
 .gemini
+
+# Docker environment files with secrets
+# Contains credentials for MinIO and other services
+# Use docker/.env.example as template
+docker/.env

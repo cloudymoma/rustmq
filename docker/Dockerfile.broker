@@ -9,7 +9,7 @@
 # ============================================================
 # Stage 1: Chef - Install cargo-chef
 # ============================================================
-FROM rust:1.82-slim-bookworm AS chef
+FROM rust:1.91-slim-bookworm@sha256:7ef0781beb6f5b7d1647a19c6234a32e16758398cd597b7f8631f93349277f5d AS chef
 
 # Install cargo-chef for dependency caching
 RUN cargo install cargo-chef --locked
@@ -25,8 +25,8 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY .cargo/ ./.cargo/
+COPY sdk/ ./sdk/
 
-# Generate recipe.json with all dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ============================================================
@@ -37,6 +37,7 @@ FROM chef AS builder
 # Install build dependencies including WASM target
 RUN apt-get update && apt-get install -y \
     pkg-config \
+    protobuf-compiler \
     libssl-dev \
     ca-certificates \
     build-essential \
@@ -58,26 +59,27 @@ COPY --from=planner /usr/src/rustmq/recipe.json recipe.json
 
 # Build dependencies only - this layer is cached until dependencies change
 # This is the KEY optimization from cargo-chef: dependencies are built separately
-RUN cargo chef cook --release --recipe-path recipe.json
+COPY benches/ ./benches/
+RUN cargo chef cook --release --bins --recipe-path recipe.json
 
 # Copy source code (this invalidates cache only when source changes)
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY .cargo/ ./.cargo/
+COPY sdk/ ./sdk/
+COPY benches/ ./benches/
 
 # Build the broker binary with optimizations
 # This step is much faster because dependencies are already compiled
 RUN cargo build --release --bin rustmq-broker
 
 # Verify the binary was built
-RUN ls -la target/release/ && \
-    file target/release/rustmq-broker && \
-    ldd target/release/rustmq-broker
+RUN ls -la target/release/
 
 # ============================================================
 # Stage 4: Runtime - Distroless for minimal attack surface
 # ============================================================
-FROM gcr.io/distroless/cc-debian12:latest AS runtime
+FROM gcr.io/distroless/cc-debian12@sha256:0c8eac8ea42a167255d03c3ba6dfad2989c15427ed93d16c53ef9706ea4691df AS runtime
 
 # Copy CA certificates for HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -96,8 +98,8 @@ COPY --chown=nonroot:nonroot config/broker.toml /etc/rustmq/broker.toml
 # Set working directory
 WORKDIR /var/lib/rustmq
 
-# Expose ports (QUIC, RPC, Health, ETL API)
-EXPOSE 9092 9093 9642 9096
+# Expose ports (QUIC, RPC, ETL, Admin HTTP)
+EXPOSE 9092 9093 9096 9643
 
 # Health check using static binary from distroless/base
 # Note: Distroless doesn't include shell, so we use the binary directly
@@ -110,11 +112,10 @@ CMD ["--config", "/etc/rustmq/broker.toml"]
 
 # Metadata labels
 LABEL maintainer="RustMQ Team <team@rustmq.dev>"
-LABEL version="0.2.0"
+LABEL version="1.0.0"
 LABEL description="RustMQ Broker - Cloud-native distributed message queue broker (Optimized)"
 LABEL org.opencontainers.image.source="https://github.com/rustmq/rustmq"
 LABEL org.opencontainers.image.documentation="https://docs.rustmq.dev"
 LABEL org.opencontainers.image.vendor="RustMQ"
 LABEL org.opencontainers.image.title="RustMQ Broker"
 LABEL build.optimization="cargo-chef+distroless"
-LABEL build.phase="phase-1-docker-optimization"

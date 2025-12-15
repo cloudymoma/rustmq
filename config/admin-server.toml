@@ -1,0 +1,46 @@
+# RustMQ Admin Server Configuration
+# HTTP REST API for cluster administration
+
+[server]
+# HTTP server bind address
+listen_addr = "0.0.0.0:8080"
+
+# Controller cluster endpoints for metadata operations
+controller_endpoints = ["controller-1:9094", "controller-2:9094", "controller-3:9094"]
+
+# Request timeout in milliseconds
+timeout_ms = 30000
+
+# Maximum concurrent connections
+max_connections = 1000
+
+# CORS configuration
+enable_cors = true
+cors_origins = ["*"]  # Configure specific origins in production
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json or text
+format = "json"
+
+# Log output: stdout, stderr, or file path
+output = "stdout"
+
+[security]
+# Enable TLS for HTTPS
+enable_tls = false  # Set to true in production
+
+# Require client authentication
+require_authentication = false  # Enable for production with proper auth backend
+
+# TLS certificate paths (when enable_tls = true)
+# tls_cert_path = "/etc/rustmq/tls/cert.pem"
+# tls_key_path = "/etc/rustmq/tls/key.pem"
+
+[metrics]
+# Prometheus metrics endpoint
+enabled = true
+endpoint = "/metrics"
+port = 9090
