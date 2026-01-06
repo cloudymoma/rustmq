@@ -4,9 +4,11 @@ metadata:
   name: rustmq-controller
   namespace: rustmq
 spec:
-  replicas: 5  # 5 controllers for Raft quorum (tolerates 2 failures)
+  replicas: 3  # 3 controllers for Raft quorum (tolerates 1 failure) - cost optimized
   template:
     spec:
+      # Priority class for controllers (critical component)
+      priorityClassName: rustmq-critical
       containers:
       - name: controller
         resources:
@@ -19,6 +21,21 @@ spec:
         env:
         - name: RUST_LOG
           value: "info"
+      # TopologySpreadConstraints for even distribution
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: controller
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: controller
+      # Pod anti-affinity for HA
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -26,7 +43,6 @@ spec:
               matchLabels:
                 app.kubernetes.io/component: controller
             topologyKey: kubernetes.io/hostname  # Spread across different nodes
-        podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100
             podAffinityTerm:

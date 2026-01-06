@@ -1,0 +1,213 @@
+# RustMQ PrometheusRules for alerting
+# Critical alerts for service health and performance monitoring
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rustmq-alerts
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: monitoring
+    prometheus: rustmq
+spec:
+  groups:
+  # Critical alerts - immediate attention required
+  - name: rustmq.critical
+    interval: 30s
+    rules:
+    - alert: RustMQControllerDown
+      expr: up{job="rustmq-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: controller
+        team: platform
+      annotations:
+        summary: "RustMQ controller is down"
+        description: "Controller {{ $labels.instance }} has been down for more than 5 minutes. Immediate investigation required."
+        runbook_url: "https://github.com/rustmq/rustmq/blob/main/gke/runbooks/CONTROLLER_DOWN.md"
+
+    - alert: RustMQRaftQuorumLost
+      expr: count(up{job="rustmq-controller"} == 1) < 2
+      for: 1m
+      labels:
+        severity: critical
+        component: controller
+        team: platform
+      annotations:
+        summary: "RustMQ Raft quorum lost"
+        description: "Less than 2 controllers available. Cluster cannot make progress. Current available: {{ $value }}"
+        runbook_url: "https://github.com/rustmq/rustmq/blob/main/gke/runbooks/RAFT_QUORUM.md"
+
+    - alert: RustMQBrokerDown
+      expr: up{job="rustmq-broker"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: broker
+        team: platform
+      annotations:
+        summary: "RustMQ broker is down"
+        description: "Broker {{ $labels.instance }} has been down for more than 2 minutes. Client connections may be affected."
+        runbook_url: "https://github.com/rustmq/rustmq/blob/main/gke/runbooks/BROKER_DOWN.md"
+
+    - alert: RustMQAllBrokersDown
+      expr: count(up{job="rustmq-broker"} == 1) == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: broker
+        team: platform
+      annotations:
+        summary: "All RustMQ brokers are down"
+        description: "No brokers are available. Complete service outage."
+        runbook_url: "https://github.com/rustmq/rustmq/blob/main/gke/runbooks/ALL_BROKERS_DOWN.md"
+
+  # Warning alerts - performance degradation
+  - name: rustmq.performance
+    interval: 60s
+    rules:
+    - alert: RustMQHighMessageLatency
+      expr: histogram_quantile(0.99, rate(rustmq_message_latency_seconds_bucket[5m])) > 1
+      for: 10m
+      labels:
+        severity: warning
+        component: broker
+        team: platform
+      annotations:
+        summary: "High message latency detected"
+        description: "P99 message latency is {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }}. Expected < 1s."
+
+    - alert: RustMQHighProduceLatency
+      expr: histogram_quantile(0.95, rate(rustmq_produce_latency_seconds_bucket[5m])) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+        component: broker
+        team: platform
+      annotations:
+        summary: "High produce latency detected"
+        description: "P95 produce latency is {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }}. Expected < 500ms."
+
+    - alert: RustMQHighCPU
+      expr: rate(process_cpu_seconds_total{job=~"rustmq-.*"}[5m]) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+        component: system
+        team: platform
+      annotations:
+        summary: "High CPU usage"
+        description: "{{ $labels.job }} {{ $labels.instance }} CPU usage > 80%: {{ $value | printf \"%.1f\" }}%"
+
+    - alert: RustMQHighMemory
+      expr: process_resident_memory_bytes{job=~"rustmq-.*"} / 1024 / 1024 / 1024 > 8
+      for: 10m
+      labels:
+        severity: warning
+        component: system
+        team: platform
+      annotations:
+        summary: "High memory usage"
+        description: "{{ $labels.job }} {{ $labels.instance }} using {{ $value | printf \"%.1f\" }}GB memory. Investigate for memory leaks."
+
+    - alert: RustMQHighGoroutines
+      expr: go_goroutines{job=~"rustmq-.*"} > 10000
+      for: 15m
+      labels:
+        severity: warning
+        component: system
+        team: platform
+      annotations:
+        summary: "High goroutine count"
+        description: "{{ $labels.job }} {{ $labels.instance }} has {{ $value }} goroutines. Possible goroutine leak."
+
+  # Storage alerts
+  - name: rustmq.storage
+    interval: 60s
+    rules:
+    - alert: RustMQWALSyncLatencyHigh
+      expr: histogram_quantile(0.99, rate(rustmq_wal_sync_latency_seconds_bucket[5m])) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+        component: storage
+        team: platform
+      annotations:
+        summary: "High WAL sync latency"
+        description: "WAL sync P99 latency is {{ $value | printf \"%.3f\" }}s on {{ $labels.instance }}. Disk I/O may be saturated."
+
+    - alert: RustMQObjectStorageErrors
+      expr: rate(rustmq_object_storage_errors_total[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: storage
+        team: platform
+      annotations:
+        summary: "Object storage errors detected"
+        description: "{{ $labels.instance }} experiencing object storage errors: {{ $value | printf \"%.2f\" }}/s"
+
+    - alert: RustMQCacheHitRateLow
+      expr: rate(rustmq_cache_hits_total[5m]) / (rate(rustmq_cache_hits_total[5m]) + rate(rustmq_cache_misses_total[5m])) < 0.5
+      for: 30m
+      labels:
+        severity: warning
+        component: cache
+        team: platform
+      annotations:
+        summary: "Low cache hit rate"
+        description: "Cache hit rate is {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}. Consider increasing cache size."
+
+  # Replication alerts
+  - name: rustmq.replication
+    interval: 30s
+    rules:
+    - alert: RustMQReplicationLag
+      expr: rustmq_replication_lag_messages > 10000
+      for: 5m
+      labels:
+        severity: warning
+        component: replication
+        team: platform
+      annotations:
+        summary: "High replication lag"
+        description: "Replication lag is {{ $value }} messages on {{ $labels.instance }}. Followers may be falling behind."
+
+    - alert: RustMQReplicationFailures
+      expr: rate(rustmq_replication_failures_total[5m]) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+        component: replication
+        team: platform
+      annotations:
+        summary: "Replication failures detected"
+        description: "{{ $labels.instance }} experiencing replication failures: {{ $value | printf \"%.2f\" }}/s"
+
+  # Connection alerts
+  - name: rustmq.connections
+    interval: 30s
+    rules:
+    - alert: RustMQHighConnectionCount
+      expr: rustmq_active_connections > 40000
+      for: 10m
+      labels:
+        severity: warning
+        component: network
+        team: platform
+      annotations:
+        summary: "High connection count"
+        description: "{{ $labels.instance }} has {{ $value }} active connections. Approaching limit of 50000."
+
+    - alert: RustMQConnectionErrors
+      expr: rate(rustmq_connection_errors_total[5m]) > 10
+      for: 5m
+      labels:
+        severity: warning
+        component: network
+        team: platform
+      annotations:
+        summary: "Connection errors detected"
+        description: "{{ $labels.instance }} experiencing connection errors: {{ $value | printf \"%.1f\" }}/s"

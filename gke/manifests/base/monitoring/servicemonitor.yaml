@@ -1,0 +1,76 @@
+# RustMQ ServiceMonitors for Prometheus metrics scraping
+# These enable GKE Managed Prometheus to discover and scrape metrics endpoints
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: controller
+    prometheus: rustmq
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: controller
+  namespaceSelector:
+    matchNames:
+    - rustmq
+  endpoints:
+  - port: admin
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: broker
+    prometheus: rustmq
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: broker
+  namespaceSelector:
+    matchNames:
+    - rustmq
+  endpoints:
+  - port: admin
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustmq-admin-server
+  namespace: rustmq
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: admin-server
+    prometheus: rustmq
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustmq
+      app.kubernetes.io/component: admin-server
+  namespaceSelector:
+    matchNames:
+    - rustmq
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 60s
+    scrapeTimeout: 15s
+    scheme: http

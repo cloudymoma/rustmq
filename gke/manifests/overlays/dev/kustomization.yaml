@@ -27,11 +27,14 @@ images:
   newName: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-admin-server
   newTag: latest
 
-configMapGenerator:
-- name: rustmq-broker-config
-  behavior: merge
-  literals:
-  - gcs_bucket=rustmq-dev-messages
+patches:
+- target:
+    kind: ConfigMap
+    name: rustmq-broker-config
+  patch: |-
+    - op: replace
+      path: /data/gcs_bucket
+      value: "rustmq-dev-messages"
 
 patchesStrategicMerge:
 - patches/controller-patch.yaml

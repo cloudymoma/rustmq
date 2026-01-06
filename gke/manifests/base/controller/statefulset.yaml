@@ -21,6 +21,7 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: rustmq-sa
+      priorityClassName: rustmq-critical
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532  # nonroot user from distroless

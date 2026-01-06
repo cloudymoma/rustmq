@@ -7,6 +7,8 @@ spec:
   replicas: 5  # Start with 5 brokers in production
   template:
     spec:
+      # Priority class for brokers (high priority)
+      priorityClassName: rustmq-high
       containers:
       - name: broker
         resources:
@@ -19,6 +21,21 @@ spec:
         env:
         - name: RUST_LOG
           value: "info,rustmq=debug"  # More verbose RustMQ logs
+      # TopologySpreadConstraints for even distribution
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: broker
+      - maxSkew: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: broker
+      # Pod anti-affinity for HA
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

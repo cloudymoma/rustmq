@@ -31,6 +31,7 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: rustmq-sa
+      priorityClassName: rustmq-normal
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

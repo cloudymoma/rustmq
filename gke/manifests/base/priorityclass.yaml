@@ -1,0 +1,40 @@
+# RustMQ PriorityClasses for workload scheduling priority
+# Higher values = higher priority when scheduling and during preemption
+
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rustmq-critical
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: scheduling
+description: "Critical RustMQ components (controllers) - highest priority for Raft consensus"
+value: 1000000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rustmq-high
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: scheduling
+description: "High priority RustMQ components (brokers) - message handling"
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rustmq-normal
+  labels:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/component: scheduling
+description: "Normal priority RustMQ components (admin-server, webui)"
+value: 1000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority

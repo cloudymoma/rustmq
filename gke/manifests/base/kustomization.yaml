@@ -12,7 +12,9 @@ resources:
 - namespace.yaml
 - serviceaccount.yaml
 - configmap.yaml
+- rbac.yaml
 - networkpolicy.yaml
+- priorityclass.yaml
 # Controller resources
 - controller/statefulset.yaml
 - controller/service.yaml
@@ -32,6 +34,9 @@ resources:
 - webui/configmap.yaml
 - webui/ingress.yaml
 - webui/pdb.yaml
+# Monitoring resources
+- monitoring/servicemonitor.yaml
+- monitoring/prometheusrule.yaml
 
 commonLabels:
   app.kubernetes.io/name: rustmq
