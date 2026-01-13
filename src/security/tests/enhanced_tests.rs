@@ -11,7 +11,7 @@ use crate::security::tls::{CertificateManager, CertificateInfo};
 use crate::security::metrics::SecurityMetrics;
 use crate::security::tests::SecurityTestConfig;
 use crate::error::RustMqError;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use std::sync::Arc;
 use tempfile::TempDir;
 

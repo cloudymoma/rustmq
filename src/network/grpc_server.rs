@@ -963,7 +963,8 @@ impl GrpcNetworkHandler {
 
     /// Create a new gRPC connection with proper configuration
     async fn create_connection(&self, endpoint: &str) -> Result<tonic::transport::Channel> {
-        let channel = tonic::transport::Channel::from_shared(endpoint.to_string())?
+        let channel = tonic::transport::Channel::from_shared(endpoint.to_string())
+            .map_err(|e| RustMqError::Config(format!("Invalid endpoint URI: {}", e)))?
             .timeout(std::time::Duration::from_millis(self.config.connection_timeout_ms))
             .connect_timeout(std::time::Duration::from_millis(self.config.connection_timeout_ms))
             .tcp_keepalive(Some(std::time::Duration::from_secs(30)))

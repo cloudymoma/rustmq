@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use quinn::{Endpoint, ServerConfig, Connection};
-use rustls::{Certificate, PrivateKey};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::time::{Duration, Instant};
 
 pub struct QuicServer {
@@ -248,10 +248,18 @@ impl QuicServer {
         let cert_der = cert.serialize_der()?;
         let priv_key = cert.serialize_private_key_der();
 
-        let mut server_config = ServerConfig::with_single_cert(
-            vec![rustls::Certificate(cert_der)],
-            rustls::PrivateKey(priv_key),
-        )?;
+        // Build rustls ServerConfig using new API
+        let rustls_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert_der)],
+                PrivateKeyDer::try_from(priv_key).map_err(|e| RustMqError::Config(format!("Invalid private key: {:?}", e)))?,
+            )?;
+
+        let mut server_config = ServerConfig::with_crypto(Arc::new(
+            quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config)
+                .map_err(|e| RustMqError::Config(format!("Failed to create QUIC config: {}", e)))?
+        ));
 
         let transport_config = Arc::get_mut(&mut server_config.transport)
             .ok_or_else(|| RustMqError::Config("Failed to get mutable transport config - Arc has multiple strong references".to_string()))?;
@@ -331,7 +339,7 @@ impl QuicServer {
                                         tracing::error!("Failed to send response: {}", e);
                                     }
 
-                                    if let Err(e) = send.finish().await {
+                                    if let Err(e) = send.finish() {
                                         tracing::error!("Failed to finish stream: {}", e);
                                     }
                                 }
@@ -342,7 +350,7 @@ impl QuicServer {
                                     error_with_type.extend_from_slice(error_response.as_bytes());
 
                                     let _ = send.write_all(&error_with_type).await;
-                                    let _ = send.finish().await;
+                                    let _ = send.finish();
                                 }
                             }
                         }
@@ -452,17 +460,8 @@ impl SecureQuicServer {
                 })
             });
 
-        // Build TLS configuration with client certificate requirement
+        // Build TLS configuration with client certificate requirement (rustls 0.23 API)
         let mut tls_config = rustls::ServerConfig::builder()
-            .with_cipher_suites(&[
-                // Use strong cipher suites only
-                rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
-                rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-                rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            ])
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|e| RustMqError::Tls(e))?
             .with_no_client_auth() // We'll handle client auth after connection establishment
             .with_single_cert(cert_chain, private_key)
             .map_err(|e| RustMqError::Tls(e))?;
@@ -470,7 +469,11 @@ impl SecureQuicServer {
         // Configure ALPN protocols
         tls_config.alpn_protocols = vec![b"rustmq".to_vec()];
 
-        let mut server_config = ServerConfig::with_crypto(Arc::new(tls_config));
+        // Create QUIC server config using quinn's rustls integration
+        let quic_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
+            .map_err(|e| RustMqError::Config(format!("Failed to create QUIC crypto config: {}", e)))?;
+
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_crypto));
 
         // Configure QUIC transport parameters
         let transport_config = Arc::get_mut(&mut server_config.transport)
@@ -495,7 +498,7 @@ impl SecureQuicServer {
     }
 
     /// Get broker certificate and private key from certificate manager
-    async fn get_broker_certificate(cert_manager: &CertificateManager) -> Result<(Vec<Certificate>, PrivateKey)> {
+    async fn get_broker_certificate(cert_manager: &CertificateManager) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         // List all certificates to find an active broker certificate
         let certificates = cert_manager.list_all_certificates().await?;
         
@@ -532,52 +535,65 @@ impl SecureQuicServer {
         Err(RustMqError::Config("No active broker certificate found in certificate manager".to_string()))
     }
     
-    /// Parse certificate PEM data to rustls Certificate format
-    fn parse_certificate_pem(cert_pem: &str) -> Result<Vec<Certificate>> {
+    /// Parse certificate PEM data to CertificateDer format
+    fn parse_certificate_pem(cert_pem: &str) -> Result<Vec<CertificateDer<'static>>> {
         let mut cert_reader = std::io::Cursor::new(cert_pem.as_bytes());
-        let cert_ders = rustls_pemfile::certs(&mut cert_reader)
-            .map_err(|e| RustMqError::Config(format!("Failed to parse certificate PEM: {}", e)))?;
-            
+        let cert_ders: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+            .filter_map(|r| r.ok())
+            .collect();
+
         if cert_ders.is_empty() {
             return Err(RustMqError::Config("No certificates found in PEM data".to_string()));
         }
-        
-        Ok(cert_ders.into_iter().map(Certificate).collect())
+
+        Ok(cert_ders)
     }
     
-    /// Parse private key PEM data to rustls PrivateKey format
-    fn parse_private_key_pem(key_pem: &str) -> Result<PrivateKey> {
+    /// Parse private key PEM data to PrivateKeyDer format
+    fn parse_private_key_pem(key_pem: &str) -> Result<PrivateKeyDer<'static>> {
         let mut key_reader = std::io::Cursor::new(key_pem.as_bytes());
-        
-        // Try parsing as different key types
-        if let Ok(mut keys) = rustls_pemfile::pkcs8_private_keys(&mut key_reader) {
-            if let Some(key) = keys.pop() {
-                return Ok(PrivateKey(key));
-            }
+
+        // Try parsing as PKCS#8 private key
+        let mut pkcs8_keys: Vec<_> = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
+            .filter_map(|r| r.ok())
+            .collect();
+        if let Some(key) = pkcs8_keys.pop() {
+            return Ok(PrivateKeyDer::from(key));
         }
-        
+
         // Reset reader and try RSA format
         key_reader.set_position(0);
-        if let Ok(mut keys) = rustls_pemfile::rsa_private_keys(&mut key_reader) {
-            if let Some(key) = keys.pop() {
-                return Ok(PrivateKey(key));
-            }
+        let mut rsa_keys: Vec<_> = rustls_pemfile::rsa_private_keys(&mut key_reader)
+            .filter_map(|r| r.ok())
+            .collect();
+        if let Some(key) = rsa_keys.pop() {
+            return Ok(PrivateKeyDer::from(key));
         }
-        
+
+        // Reset reader and try EC format
+        key_reader.set_position(0);
+        let mut ec_keys: Vec<_> = rustls_pemfile::ec_private_keys(&mut key_reader)
+            .filter_map(|r| r.ok())
+            .collect();
+        if let Some(key) = ec_keys.pop() {
+            return Ok(PrivateKeyDer::from(key));
+        }
+
         Err(RustMqError::Config("Failed to parse private key PEM - no valid key found".to_string()))
     }
     
     /// Create fallback self-signed certificate if certificate manager fails
-    fn create_fallback_certificate() -> Result<(Vec<Certificate>, PrivateKey)> {
+    fn create_fallback_certificate() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         tracing::warn!("Creating fallback self-signed certificate for broker - this should not be used in production");
-        
+
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
         let cert_der = cert.serialize_der()?;
         let priv_key = cert.serialize_private_key_der();
-        
-        let cert_chain = vec![Certificate(cert_der)];
-        let private_key = PrivateKey(priv_key);
-        
+
+        let cert_chain = vec![CertificateDer::from(cert_der)];
+        let private_key = PrivateKeyDer::try_from(priv_key)
+            .map_err(|e| RustMqError::Config(format!("Invalid private key: {:?}", e)))?;
+
         Ok((cert_chain, private_key))
     }
 
@@ -691,20 +707,20 @@ impl SecureQuicServer {
     async fn authenticate_connection(
         connection: &Connection,
         auth_manager: &AuthenticationManager,
-    ) -> Result<(crate::security::AuthContext, Vec<Certificate>, String)> {
+    ) -> Result<(crate::security::AuthContext, Vec<CertificateDer<'static>>, String)> {
         // Extract client certificates from the QUIC/TLS connection
         // Note: In a real implementation, we'd extract these from the TLS handshake
         // For now, we'll simulate the process since quinn/rustls certificate extraction
         // API may not be readily available in this version
-        
+
         let client_certificates = Self::extract_client_certificates(connection)?;
-        
+
         if client_certificates.is_empty() {
             return Err(RustMqError::AuthenticationFailed(
                 "No client certificate provided for mTLS authentication".to_string()
             ));
         }
-        
+
         // Use AuthenticationManager to validate certificate chain and extract principal
         let auth_context = auth_manager
             .authenticate_connection(connection)
@@ -714,18 +730,18 @@ impl SecureQuicServer {
                     format!("Certificate validation failed: {}", e)
                 )
             })?;
-        
+
         // Calculate server certificate fingerprint
         let server_cert_fingerprint = Self::calculate_server_cert_fingerprint(connection);
-        
+
         Ok((auth_context, client_certificates, server_cert_fingerprint))
     }
-    
+
     /// Extract client certificates from QUIC connection
     ///
     /// Uses quinn's peer_identity() API to retrieve the certificate chain from the TLS session.
-    /// The peer_identity returns a Box<dyn Any> which we downcast to Vec<Certificate>.
-    fn extract_client_certificates(connection: &Connection) -> Result<Vec<Certificate>> {
+    /// The peer_identity returns a Box<dyn Any> which we downcast to Vec<CertificateDer>.
+    fn extract_client_certificates(connection: &Connection) -> Result<Vec<CertificateDer<'static>>> {
         // Get the peer identity from the QUIC/TLS session
         // This returns Option<Box<dyn Any>> containing the peer's certificate chain
         let identity = connection
@@ -738,10 +754,10 @@ impl SecureQuicServer {
                 RustMqError::AuthenticationFailed("No peer identity".to_string())
             })?;
 
-        // Downcast the Any type to Vec<Certificate>
-        // Quinn/rustls stores the peer certificate chain as Vec<Certificate>
+        // Downcast the Any type to Vec<CertificateDer>
+        // Quinn 0.11/rustls 0.23 stores the peer certificate chain as Vec<CertificateDer>
         let certificates = identity
-            .downcast_ref::<Vec<Certificate>>()
+            .downcast_ref::<Vec<CertificateDer<'static>>>()
             .ok_or_else(|| {
                 tracing::error!(
                     remote_addr = %connection.remote_address(),
@@ -833,7 +849,7 @@ impl SecureQuicServer {
                                                 );
                                             }
 
-                                            let _ = send.finish().await;
+                                            let _ = send.finish();
                                         }
                                         Err(e) => {
                                             tracing::error!(
@@ -933,7 +949,7 @@ impl SecureQuicServer {
         error_with_type.extend_from_slice(error_response.as_bytes());
         
         let _ = send.write_all(&error_with_type).await;
-        let _ = send.finish().await;
+        let _ = send.finish();
     }
 
     /// Shutdown the secure server gracefully
@@ -1036,6 +1052,11 @@ impl MetadataHandler for MockMetadataHandler {
 mod tests {
     use super::*;
 
+    // Install rustls crypto provider for tests
+    fn ensure_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[tokio::test]
     async fn test_connection_pool() {
         let pool = ConnectionPool::new(2);
@@ -1086,8 +1107,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_secure_quic_server_creation() {
+        ensure_crypto_provider();
         use crate::security::{SecurityConfig, SecurityManager};
-        
+
         let config = crate::config::NetworkConfig {
             quic_listen: "127.0.0.1:0".to_string(),
             rpc_listen: "127.0.0.1:0".to_string(),
@@ -1122,8 +1144,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_secure_quic_server_stats() {
+        ensure_crypto_provider();
         use crate::security::{SecurityConfig, SecurityManager};
-        
+
         let config = crate::config::NetworkConfig {
             quic_listen: "127.0.0.1:0".to_string(),
             rpc_listen: "127.0.0.1:0".to_string(),
@@ -1160,8 +1183,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_secure_server_config_creation() {
+        ensure_crypto_provider();
         use crate::security::{SecurityConfig, SecurityManager};
-        
+
         let quic_config = crate::config::QuicConfig::default();
         let security_config = SecurityConfig {
             tls: Default::default(),

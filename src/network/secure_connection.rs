@@ -14,7 +14,7 @@ use crate::{
     Result,
 };
 use quinn::Connection;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use std::{
     collections::VecDeque,
     net::SocketAddr,
@@ -47,7 +47,7 @@ impl AuthenticatedConnection {
     pub async fn new(
         connection: Connection,
         auth_context: AuthContext,
-        client_certificates: Vec<Certificate>,
+        client_certificates: Vec<CertificateDer<'static>>,
         server_cert_fingerprint: String,
         authz_manager: Arc<AuthorizationManager>,
         metrics: Arc<SecurityMetrics>,
@@ -205,7 +205,7 @@ pub struct ConnectionSecurityMetadata {
     /// Cipher suite negotiated for the connection
     pub cipher_suite: String,
     /// Client certificate chain presented during handshake
-    pub client_certificate_chain: Vec<Certificate>,
+    pub client_certificate_chain: Vec<CertificateDer<'static>>,
     /// Fingerprint of the server certificate used
     pub server_certificate_fingerprint: String,
     /// Timestamp when the connection was established

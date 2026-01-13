@@ -15,7 +15,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tempfile::TempDir;
-    use rustls::Certificate;
+    use rustls_pki_types::CertificateDer;
     use tokio::sync::Mutex;
     
     // Global test mutex to prevent sensitive tests from running concurrently
@@ -106,7 +106,7 @@ mod tests {
         
         // Test certificate validation - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
-        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         let is_valid = auth_manager.validate_certificate(&der_data).await;
         assert!(is_valid.is_ok(), "Certificate validation should succeed: {:?}", is_valid);
     }
@@ -166,11 +166,10 @@ mod tests {
         // Extract principal from the certificate - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
-        let certificate = rustls::Certificate(der_data);
+        let certificate = der_data;
         let fingerprint = "test_fingerprint";
         let principal = auth_manager.extract_principal_from_certificate(&certificate, fingerprint);
         
@@ -286,7 +285,7 @@ mod tests {
         
         // First validation (should cache) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
-        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         let start = std::time::Instant::now();
         let result1 = auth_manager.validate_certificate(&der_data).await;
         let first_duration = start.elapsed();
@@ -352,12 +351,10 @@ mod tests {
         
         // Create authentication context from certificate - convert PEM to DER first
         let pem_data = broker_cert.certificate_pem.clone().unwrap();
-        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+        let certificate = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
-        let certificate = rustls::Certificate(der_data);
         let fingerprint = "test_fingerprint";
         let principal = auth_manager.extract_principal_from_certificate(&certificate, fingerprint).unwrap();
         
@@ -414,12 +411,10 @@ mod tests {
             
             // Calculate fingerprint - convert PEM to DER first
             let pem_data = client_cert.certificate_pem.clone().unwrap();
-            let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap()
-                .into_iter()
+            let certificate = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                .filter_map(|r| r.ok())
                 .next()
                 .unwrap();
-            let certificate = rustls::Certificate(der_data.clone());
             let fingerprint = auth_manager.calculate_certificate_fingerprint(&certificate);
             
             assert!(!fingerprint.is_empty(), "Fingerprint should not be empty");
@@ -478,7 +473,7 @@ mod tests {
         
         let client_cert = cert_manager.issue_certificate(cert_request).await.unwrap();
         let pem_data = client_cert.certificate_pem.clone().unwrap();
-        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         let _validation_result = auth_manager.validate_certificate(&der_data).await.unwrap();
         
         // Perform failed authentication
@@ -537,12 +532,12 @@ mod tests {
         
         // Validate the certificate (simplified - direct root CA validation)
         let client_pem = client_cert.certificate_pem.clone().unwrap();
-        let client_der = rustls_pemfile::certs(&mut client_pem.as_bytes()).unwrap().into_iter().next().unwrap();
-        let client_cert_obj = rustls::Certificate(client_der);
+        let client_der = rustls_pemfile::certs(&mut client_pem.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
+        let client_cert_obj = CertificateDer::from(client_der);
         
         let root_pem = root_ca.certificate_pem.clone().unwrap();
-        let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).unwrap().into_iter().next().unwrap();
-        let root_ca_obj = rustls::Certificate(root_der);
+        let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
+        let root_ca_obj = CertificateDer::from(root_der);
         
         // Simple chain: client cert signed by root CA directly
         let chain_validation = auth_manager.validate_certificate_chain(&[
@@ -604,16 +599,14 @@ mod tests {
                 
                 // Perform authentication operations
                 let pem_data = client_cert.certificate_pem.clone().unwrap();
-                let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+                let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
                 let validation_result = auth_manager.validate_certificate(&der_data).await;
                 let revocation_result = auth_manager.is_certificate_revoked(&client_cert.fingerprint).await;
                 let pem_data = client_cert.certificate_pem.clone().unwrap();
-                let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                    .unwrap()
-                    .into_iter()
+                let certificate = rustls_pemfile::certs(&mut pem_data.as_bytes())
+                    .filter_map(|r| r.ok())
                     .next()
                     .unwrap();
-                let certificate = rustls::Certificate(der_data);
                 let fingerprint = "test_fingerprint";
                 let principal_result = auth_manager.extract_principal_from_certificate(&certificate, fingerprint);
                 
@@ -686,7 +679,7 @@ mod tests {
         
         // Test validation with newly issued certificate (should succeed) - convert PEM to DER first
         let pem_data = client_cert.certificate_pem.clone().unwrap();
-        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         let validation_result = auth_manager.validate_certificate(&der_data).await;
         assert!(validation_result.is_ok(), "Validation of fresh certificate should succeed: {:?}", validation_result);
         
@@ -709,7 +702,7 @@ mod tests {
             let result = auth_manager.validate_certificate(cert_data).await;
             assert!(result.is_err(), "Should fail for {}", description);
             
-            let certificate = rustls::Certificate(cert_data.to_vec());
+            let certificate = CertificateDer::from(cert_data.to_vec());
             let fingerprint = "test_fingerprint";
             let principal_result = auth_manager.extract_principal_from_certificate(&certificate, fingerprint);
             assert!(principal_result.is_err(), "Principal extraction should fail for {}", description);
@@ -761,7 +754,7 @@ mod tests {
             assert!(result.is_err(), "Malicious certificate should be rejected");
             
             // Also test principal extraction
-            let certificate = rustls::Certificate(malicious_cert.to_vec());
+            let certificate = CertificateDer::from(malicious_cert.to_vec());
             let fingerprint = "malicious_fingerprint";
             let principal_result = auth_manager.extract_principal_from_certificate(&certificate, fingerprint);
             
@@ -802,7 +795,7 @@ mod tests {
         
         let valid_cert_result = cert_manager.issue_certificate(cert_request).await.unwrap();
         let pem_data = valid_cert_result.certificate_pem.clone().unwrap();
-        let valid_cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let valid_cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         
         // Create various invalid certificates
         let invalid_certificates = vec![
@@ -876,8 +869,8 @@ mod tests {
         
         // Convert PEM to DER for testing
         let root_pem = root_ca.certificate_pem.clone().unwrap();
-        let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).unwrap().into_iter().next().unwrap();
-        let root_cert = rustls::Certificate(root_der);
+        let root_der = rustls_pemfile::certs(&mut root_pem.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
+        let root_cert = CertificateDer::from(root_der);
         
         // Test simplified chain manipulation attacks (root CA only)
         let manipulation_attacks = vec![
@@ -889,13 +882,13 @@ mod tests {
             
             // Chain with malicious certificate
             vec![
-                rustls::Certificate(b"malicious certificate".to_vec())
+                CertificateDer::from(b"malicious certificate".to_vec())
             ],
             
             // Chain with both legitimate and malicious certificates
             vec![
                 root_cert.clone(),
-                rustls::Certificate(b"malicious certificate".to_vec())
+                CertificateDer::from(b"malicious certificate".to_vec())
             ],
         ];
         
@@ -957,7 +950,7 @@ mod tests {
             
             let cert_result = cert_manager.issue_certificate(cert_request).await.unwrap();
             let pem_data = cert_result.certificate_pem.clone().unwrap();
-            let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+            let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
             test_certificates.push(cert_der);
         }
         
@@ -991,12 +984,12 @@ mod tests {
                     auth_manager.validate_certificate(b"invalid certificate").await
                 } else {
                     // Corrupted certificate
-                    let mut corrupted = cert_data.clone();
+                    let mut corrupted = cert_data.as_ref().to_vec();
                     if !corrupted.is_empty() {
                         let mid_index = corrupted.len() / 2;
                         corrupted[mid_index] = 0xFF; // corrupt middle byte
                     }
-                    auth_manager.validate_certificate(&corrupted).await
+                    auth_manager.validate_certificate(&CertificateDer::from(corrupted)).await
                 }
             });
             
@@ -1066,7 +1059,7 @@ mod tests {
             assert!(result.is_err(), "Edge case {} should fail validation", i);
             
             // Should not panic or crash
-            let certificate = rustls::Certificate(edge_case_cert.clone());
+            let certificate = CertificateDer::from(edge_case_cert.clone());
             let fingerprint = format!("edge_case_{}", i);
             let principal_result = auth_manager.extract_principal_from_certificate(&certificate, &fingerprint);
             
@@ -1110,7 +1103,7 @@ mod tests {
         
         let cert_result = cert_manager.issue_certificate(cert_request).await.unwrap();
         let pem_data = cert_result.certificate_pem.clone().unwrap();
-        let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).unwrap().into_iter().next().unwrap();
+        let cert_der = rustls_pemfile::certs(&mut pem_data.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         
         // Refresh CA chain after issuing certificate
         auth_manager.refresh_ca_chain().await.unwrap();
@@ -1136,7 +1129,7 @@ mod tests {
         }
         
         // 2. Modified certificate (attempting to change serial number)
-        let mut modified_cert = cert_der.clone();
+        let mut modified_cert = cert_der.as_ref().to_vec();
         if modified_cert.len() > 10 {
             // Corrupt the certificate structure more aggressively to ensure it fails parsing
             let mid_index = modified_cert.len() / 2;
@@ -1153,8 +1146,8 @@ mod tests {
                 }
             }
         }
-        
-        let result2 = auth_manager.validate_certificate(&modified_cert).await;
+
+        let result2 = auth_manager.validate_certificate(&CertificateDer::from(modified_cert)).await;
         assert!(result2.is_err(), "Modified certificate should fail validation");
         
         // 3. Certificate with manipulated revocation status
@@ -1189,7 +1182,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
         let legitimate_pem = legitimate_cert.certificate_pem.clone().unwrap();
-        let legitimate_der = rustls_pemfile::certs(&mut legitimate_pem.as_bytes()).unwrap().into_iter().next().unwrap();
+        let legitimate_der = rustls_pemfile::certs(&mut legitimate_pem.as_bytes()).filter_map(|r| r.ok()).next().unwrap();
         let legitimate_result = auth_manager.validate_certificate(&legitimate_der).await;
         
         // System should still work for legitimate certificates
@@ -1245,7 +1238,7 @@ mod tests {
             // Create a certificate with malicious subject
             // Note: This is a simplified test - in practice, certificate creation
             // might sanitize the subject, but we test the principal extraction
-            let fake_certificate = rustls::Certificate(format!(
+            let fake_certificate = CertificateDer::from(format!(
                 "Subject: {}\nIssuer: Test CA\nSerial: {}",
                 malicious_subject, i
             ).into_bytes());

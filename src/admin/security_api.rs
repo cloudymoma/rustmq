@@ -1335,7 +1335,7 @@ async fn handle_get_certificate(
                     Ok(ca_chain) => {
                         let mut chain = vec![pem.clone()];
                         for ca_cert in ca_chain {
-                            if let Ok(pem_str) = String::from_utf8(ca_cert.0.clone()) {
+                            if let Ok(pem_str) = String::from_utf8(ca_cert.as_ref().to_vec()) {
                                 chain.push(pem_str);
                             }
                         }
@@ -1566,7 +1566,7 @@ async fn handle_get_certificate_chain(
             match security_manager.certificate_manager().get_ca_chain().await {
                 Ok(ca_chain) => {
                     for ca_cert in ca_chain {
-                        if let Ok(pem_str) = String::from_utf8(ca_cert.0.clone()) {
+                        if let Ok(pem_str) = String::from_utf8(ca_cert.as_ref().to_vec()) {
                             chain.push(pem_str);
                         }
                     }

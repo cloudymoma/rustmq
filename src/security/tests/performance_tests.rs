@@ -171,7 +171,7 @@ mod tests {
         for i in 0..iterations {
             let cert = &test_certificates[i % test_certificates.len()];
             let cert_bytes = cert.certificate_pem.as_ref().unwrap().as_bytes().to_vec();
-            let certificate = rustls::Certificate(cert_bytes);
+            let certificate = rustls_pki_types::CertificateDer::from(cert_bytes);
             let fingerprint = "test_fingerprint";
             let _principal = security_manager.authentication()
                 .extract_principal_from_certificate(&certificate, fingerprint);

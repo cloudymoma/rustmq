@@ -21,7 +21,7 @@ use std::time::Instant;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use x509_parser::prelude::*;  // Legacy parser support
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use quinn::Connection;
 use arc_swap::ArcSwap;
 
@@ -121,7 +121,7 @@ impl ValidationCacheEntry {
 pub struct AuthenticationManager {
     certificate_store: Arc<RwLock<HashMap<String, CertificateInfo>>>,
     revoked_certificates: Arc<DashMap<CertificateFingerprint, ()>>,  // Lock-free revocation check
-    ca_chain: Arc<ArcSwap<Vec<Certificate>>>,  // Lock-free CA chain access
+    ca_chain: Arc<ArcSwap<Vec<CertificateDer<'static>>>>,  // Lock-free CA chain access
     certificate_manager: Arc<CertificateManager>,
     metrics: Arc<SecurityMetrics>,
     config: TlsConfig,
@@ -228,20 +228,20 @@ impl AuthenticationManager {
     }
     
     /// Extract client certificates from QUIC connection
-    fn extract_client_certificates(&self, connection: &Connection) -> Result<Vec<Certificate>, RustMqError> {
+    fn extract_client_certificates(&self, connection: &Connection) -> Result<Vec<CertificateDer<'static>>, RustMqError> {
         let identity = connection
             .peer_identity()
             .ok_or_else(|| RustMqError::AuthenticationFailed("No peer identity".to_string()))?;
-        
+
         let certificates = identity
-            .downcast_ref::<Vec<Certificate>>()
+            .downcast_ref::<Vec<CertificateDer<'static>>>()
             .ok_or_else(|| RustMqError::AuthenticationFailed("Invalid certificate type".to_string()))?;
-        
+
         Ok(certificates.clone())
     }
     
     /// Validate the certificate chain against the CA (with WebPKI support)
-    pub async fn validate_certificate_chain(&self, certificates: &[Certificate]) -> Result<(), RustMqError> {
+    pub async fn validate_certificate_chain(&self, certificates: &[CertificateDer<'static>]) -> Result<(), RustMqError> {
         // Measure validation latency for metrics
         let start = std::time::Instant::now();
         
@@ -265,7 +265,7 @@ impl AuthenticationManager {
     
     /// Internal validation logic without metrics updates
     /// Optimized for performance with timing attack resistance
-    async fn validate_certificate_chain_internal(&self, certificates: &[Certificate]) -> Result<(), RustMqError> {
+    async fn validate_certificate_chain_internal(&self, certificates: &[CertificateDer<'static>]) -> Result<(), RustMqError> {
         let start_time = std::time::Instant::now();
         
         // Always perform the same basic amount of work regardless of input
@@ -285,7 +285,7 @@ impl AuthenticationManager {
     }
     
     /// Core validation logic
-    async fn perform_certificate_validation(&self, certificates: &[Certificate]) -> Result<(), RustMqError> {
+    async fn perform_certificate_validation(&self, certificates: &[CertificateDer<'static>]) -> Result<(), RustMqError> {
         // Check if we have certificates
         if certificates.is_empty() {
             // Simulate parsing work for timing consistency
@@ -297,7 +297,7 @@ impl AuthenticationManager {
         
         // Parse the first certificate - this will fail for corrupted certificates
         let cert = &certificates[0];
-        let parsed_cert = match self.parse_certificate(&cert.0) {
+        let parsed_cert = match self.parse_certificate(cert.as_ref()) {
             Ok(cert) => cert,
             Err(e) => {
                 // Simulate validation work even on parse failure for timing consistency
@@ -491,7 +491,7 @@ impl AuthenticationManager {
     }
     
     /// Validate certificate against root CA only (simplified)
-    fn validate_against_root_ca(&self, cert: &X509Certificate, trusted_ca_chain: &[Certificate]) -> Result<bool, RustMqError> {
+    fn validate_against_root_ca(&self, cert: &X509Certificate, trusted_ca_chain: &[CertificateDer<'static>]) -> Result<bool, RustMqError> {
         // Simple validation: certificate must be directly signed by root CA
         for ca_cert in trusted_ca_chain.iter() {
             if self.validate_certificate_signature(cert, ca_cert).is_ok() {
@@ -527,8 +527,8 @@ impl AuthenticationManager {
     }
     
     /// Enhanced principal extraction using certificate metadata
-    pub async fn extract_principal_enhanced(&self, certificate: &Certificate) -> Result<Arc<str>, RustMqError> {
-        let metadata = self.extract_certificate_metadata(&certificate.0).await?;
+    pub async fn extract_principal_enhanced(&self, certificate: &CertificateDer<'static>) -> Result<Arc<str>, RustMqError> {
+        let metadata = self.extract_certificate_metadata(certificate.as_ref()).await?;
         Ok(metadata.get_principal())
     }
     
@@ -708,16 +708,16 @@ impl AuthenticationManager {
     
     /// Validate certificate using WebPKI (replaces custom validation)
     fn validate_certificate_with_webpki(
-        &self, 
-        cert: &Certificate, 
-        ca_certs: &[Certificate]
+        &self,
+        cert: &CertificateDer<'static>,
+        ca_certs: &[CertificateDer<'static>]
     ) -> Result<(), RustMqError> {
         // Convert CA certificates to trust anchors with detailed error logging
         let mut trust_anchors: Vec<TrustAnchor> = Vec::new();
         let mut conversion_errors: Vec<String> = Vec::new();
         
         for (i, ca_cert) in ca_certs.iter().enumerate() {
-            match TrustAnchor::try_from_cert_der(&ca_cert.0) {
+            match TrustAnchor::try_from_cert_der(ca_cert.as_ref()) {
                 Ok(trust_anchor) => {
                     trust_anchors.push(trust_anchor);
                     tracing::debug!("Successfully converted CA certificate {} to trust anchor", i);
@@ -742,7 +742,7 @@ impl AuthenticationManager {
         tracing::debug!("Successfully converted {}/{} CA certificates to trust anchors", trust_anchors.len(), ca_certs.len());
 
         // Create end entity certificate for validation (fix API usage)
-        let end_entity = match EndEntityCert::try_from(cert.0.as_slice()) {
+        let end_entity = match EndEntityCert::try_from(cert.as_ref()) {
             Ok(entity) => entity,
             Err(e) => {
                 // If end entity certificate parsing fails, fall back to legacy validation
@@ -847,11 +847,11 @@ impl AuthenticationManager {
     /// Legacy certificate signature validation for fallback compatibility
     fn validate_certificate_signature_legacy(
         &self,
-        cert: &Certificate,
-        ca_certs: &[Certificate]
+        cert: &CertificateDer<'static>,
+        ca_certs: &[CertificateDer<'static>]
     ) -> Result<(), RustMqError> {
         // Parse the client certificate using the legacy parser
-        let parsed_cert = self.parse_certificate(&cert.0)?;
+        let parsed_cert = self.parse_certificate(cert.as_ref())?;
 
         // Debug: Log the number of CA certs
         tracing::debug!("Legacy validation: checking against {} CA certificates", ca_certs.len());
@@ -895,7 +895,7 @@ impl AuthenticationManager {
     }
 
     /// Enhanced certificate parsing using rustls
-    pub fn parse_certificate_rustls(&self, cert_der: &[u8]) -> Result<Certificate, RustMqError> {
+    pub fn parse_certificate_rustls(&self, cert_der: &[u8]) -> Result<CertificateDer<'static>, RustMqError> {
         // Validate DER structure
         if cert_der.len() < 100 {
             return Err(RustMqError::InvalidCertificate {
@@ -903,11 +903,11 @@ impl AuthenticationManager {
             });
         }
 
-        // Create rustls Certificate
-        let certificate = Certificate(cert_der.to_vec());
-        
-        // Validate certificate structure using webpki (fix API usage)
-        EndEntityCert::try_from(certificate.0.as_slice())
+        // Create rustls CertificateDer
+        let certificate = CertificateDer::from(cert_der.to_vec());
+
+        // Validate certificate structure using webpki
+        EndEntityCert::try_from(certificate.as_ref())
             .map_err(|e| RustMqError::InvalidCertificate {
                 reason: format!("Invalid certificate structure: {:?}", e),
             })?;
@@ -917,8 +917,8 @@ impl AuthenticationManager {
 
     /// Certificate chain validation with WebPKI and legacy fallback
     pub async fn validate_certificate_chain_with_webpki(
-        &self, 
-        certificates: &[Certificate]
+        &self,
+        certificates: &[CertificateDer<'static>]
     ) -> Result<(), RustMqError> {
         if certificates.is_empty() {
             return Err(RustMqError::CertificateValidation {
@@ -961,11 +961,11 @@ impl AuthenticationManager {
 
     /// Extract principal from certificate using WebPKI
     pub fn extract_principal_with_webpki(
-        &self, 
-        certificate: &Certificate, 
+        &self,
+        certificate: &CertificateDer<'static>,
         _fingerprint: &str
     ) -> Result<Arc<str>, RustMqError> {
-        let end_entity = EndEntityCert::try_from(certificate.0.as_slice())
+        let end_entity = EndEntityCert::try_from(certificate.as_ref())
             .map_err(|e| RustMqError::InvalidCertificate {
                 reason: format!("Failed to parse certificate: {:?}", e),
             })?;
@@ -973,10 +973,11 @@ impl AuthenticationManager {
         // Extract subject information using webpki
         // Note: webpki 0.22 doesn't expose direct subject access
         // We'll use a simplified approach by parsing the DER directly
-        
+
         // For now, use the legacy parser for principal extraction
         // This is a fallback since webpki doesn't expose subject details easily
-        match self.parse_certificate(&certificate.0) {
+        let _ = end_entity; // Silence unused warning
+        match self.parse_certificate(certificate.as_ref()) {
             Ok(cert) => {
                 let subject = &cert.subject();
                 
@@ -1041,7 +1042,7 @@ impl AuthenticationManager {
             Err(e) => {
                 // Check if certificate is obviously corrupted by attempting to parse it with webpki
                 // If webpki can't even parse the certificate structure, it's corrupted
-                let is_corrupted = match webpki::EndEntityCert::try_from(certificate.0.as_slice()) {
+                let is_corrupted = match webpki::EndEntityCert::try_from(certificate.as_ref()) {
                     Ok(_) => {
                         tracing::debug!("WebPKI can parse certificate structure - treating as compatibility issue");
                         false // WebPKI can parse structure, so it's a compatibility issue
@@ -1082,14 +1083,14 @@ impl AuthenticationManager {
     }
 
     /// Validate certificate signature with simplified root CA validation
-    fn validate_certificate_signature(&self, cert: &X509Certificate, ca_cert: &Certificate) -> Result<(), RustMqError> {
+    fn validate_certificate_signature(&self, cert: &X509Certificate, ca_cert: &CertificateDer<'static>) -> Result<(), RustMqError> {
         // CRITICAL SECURITY: Perform proper cryptographic signature verification
         // This validates that the certificate was actually signed by the claimed CA
 
         use ring::signature;
 
         // Parse the CA certificate to get its public key
-        let ca_parsed = self.parse_certificate_lenient(&ca_cert.0)?;
+        let ca_parsed = self.parse_certificate_lenient(ca_cert.as_ref())?;
 
         // Debug output for DN mismatch troubleshooting
         let issuer_str = cert.issuer().to_string();
@@ -1236,9 +1237,9 @@ impl AuthenticationManager {
     }
 
     /// Calculate certificate fingerprint using SHA256 (optimized zero-copy version)
-    pub fn calculate_certificate_fingerprint(&self, certificate: &Certificate) -> String {
+    pub fn calculate_certificate_fingerprint(&self, certificate: &CertificateDer<'static>) -> String {
         use ring::digest;
-        let hash = digest::digest(&digest::SHA256, &certificate.0);
+        let hash = digest::digest(&digest::SHA256, certificate.as_ref());
         hex::encode(hash.as_ref())
     }
 
@@ -1270,15 +1271,15 @@ impl AuthenticationManager {
     }
 
     /// Extract principal from certificate (with WebPKI support)
-    pub fn extract_principal_from_certificate(&self, certificate: &Certificate, fingerprint: &str) -> Result<Arc<str>, RustMqError> {
+    pub fn extract_principal_from_certificate(&self, certificate: &CertificateDer<'static>, fingerprint: &str) -> Result<Arc<str>, RustMqError> {
         // Try WebPKI-based extraction first
         match self.extract_principal_with_webpki(certificate, fingerprint) {
             Ok(principal) => Ok(principal),
             Err(_) => {
                 // Fallback to legacy extraction for compatibility during transition
                 tracing::debug!("WebPKI principal extraction failed, falling back to legacy method");
-                
-                match self.parse_certificate(&certificate.0) {
+
+                match self.parse_certificate(certificate.as_ref()) {
                     Ok(cert) => {
                         let subject = &cert.subject();
                         
@@ -1548,7 +1549,7 @@ impl AuthenticationManager {
         }
         
         // Check revocation status using certificate fingerprint
-        let certificate = Certificate(certificate_der.to_vec());
+        let certificate = CertificateDer::from(certificate_der.to_vec());
         let cert_fingerprint = self.calculate_certificate_fingerprint(&certificate);
         if self.is_certificate_revoked(&cert_fingerprint).await? {
             return Err(RustMqError::CertificateRevoked {

@@ -1,15 +1,18 @@
 use rustmq::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use hyper::{Body, Client, Method, Request, Response, StatusCode};
-use hyper::client::HttpConnector;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
+use http_body_util::{BodyExt, Empty, Full};
+use bytes::Bytes;
 use std::time::Duration;
 use tracing::{debug, error};
 use chrono::{DateTime, Utc};
 
 /// HTTP client for communicating with the Admin REST API
 pub struct AdminApiClient {
-    client: Client<HttpConnector>,
+    client: Client<HttpConnector, Full<Bytes>>,
     base_url: String,
     timeout: Duration,
 }
@@ -32,10 +35,10 @@ pub struct RateLimitError {
 
 impl AdminApiClient {
     pub fn new(base_url: &str) -> Result<Self> {
-        let client = Client::builder()
-            .pool_idle_timeout(Some(Duration::from_secs(30)))
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(30))
             .build_http();
-            
+
         Ok(Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -110,40 +113,40 @@ impl AdminApiClient {
         let url = format!("{}{}", self.base_url, path);
         debug!("Making {} request to: {}", method, url);
 
-        let mut request = Request::builder()
-            .method(method)
-            .uri(&url)
-            .header("Content-Type", "application/json")
-            .header("User-Agent", "RustMQ Admin CLI/0.9.1");
-
         let request_body = if let Some(body) = body {
             let json = serde_json::to_string(body)?;
             debug!("Request body: {}", json);
-            Body::from(json)
+            Full::new(Bytes::from(json))
         } else {
-            Body::empty()
+            Full::new(Bytes::new())
         };
 
-        let request = request.body(request_body)?;
+        let request = Request::builder()
+            .method(method)
+            .uri(&url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "RustMQ Admin CLI/0.9.1")
+            .body(request_body)?;
 
         let response = tokio::time::timeout(self.timeout, self.client.request(request))
             .await
-            .map_err(|_| rustmq::error::RustMqError::Timeout("Request timeout".to_string()))??;
+            .map_err(|_| rustmq::error::RustMqError::Timeout("Request timeout".to_string()))?
+            .map_err(|e| rustmq::error::RustMqError::Network(format!("HTTP client error: {}", e)))?;
 
         self.handle_response(response).await
     }
 
-    async fn handle_response<R>(&self, response: Response<Body>) -> Result<ApiResponse<R>>
+    async fn handle_response<R>(&self, response: Response<hyper::body::Incoming>) -> Result<ApiResponse<R>>
     where
         R: for<'de> Deserialize<'de>,
     {
         let status = response.status();
         let headers = response.headers().clone();
-        
+
         debug!("Response status: {}", status);
 
         // Collect response body
-        let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+        let body_bytes = response.into_body().collect().await?.to_bytes();
         let body_str = String::from_utf8_lossy(&body_bytes);
         
         debug!("Response body: {}", body_str);

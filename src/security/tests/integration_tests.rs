@@ -80,8 +80,8 @@ mod tests {
         // 3. Authenticate using the certificate
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
-        let certificate = rustls::Certificate(der_data);
+            .filter_map(|r| r.ok()).next().unwrap();
+        let certificate = rustls_pki_types::CertificateDer::from(der_data);
         let fingerprint = "test_fingerprint";
         let principal = security_manager.authentication()
             .extract_principal_from_certificate(&certificate, fingerprint).unwrap();
@@ -105,7 +105,7 @@ mod tests {
         
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         let validation_result = security_manager.authentication()
             .validate_certificate(&der_data).await;
         assert!(validation_result.is_ok(), "Certificate validation should succeed, error: {:?}", validation_result.err());
@@ -219,8 +219,8 @@ mod tests {
         // 3. Test certificate in authentication flow
         let pem_data = broker_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
-        let certificate = rustls::Certificate(der_data);
+            .filter_map(|r| r.ok()).next().unwrap();
+        let certificate = rustls_pki_types::CertificateDer::from(der_data);
         let fingerprint = "test_fingerprint";
         let auth_principal = security_manager.authentication()
             .extract_principal_from_certificate(&certificate, fingerprint).unwrap();
@@ -307,7 +307,7 @@ mod tests {
         // Successful authentication
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         let _auth_result = security_manager.authentication()
             .validate_certificate(&der_data).await;
         
@@ -389,11 +389,11 @@ mod tests {
         // 2. Perform authentication and authorization operations
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         let _auth_result = security_manager.authentication()
             .validate_certificate(&der_data).await;
         
-        let certificate = rustls::Certificate(der_data.clone());
+        let certificate = rustls_pki_types::CertificateDer::from(der_data.clone());
         let fingerprint = "test_fingerprint";
         let principal = security_manager.authentication()
             .extract_principal_from_certificate(&certificate, fingerprint).unwrap();
@@ -634,7 +634,7 @@ mod tests {
                 // Perform authentication
                 let pem_data = client_cert.certificate_pem.clone().unwrap();
                 let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                    .unwrap().into_iter().next().unwrap();
+                    .filter_map(|r| r.ok()).next().unwrap();
                 let _auth_result = security_manager.authentication()
                     .validate_certificate(&der_data).await;
                 
@@ -760,7 +760,7 @@ mod tests {
             // Test WebPKI validation
             let pem_data = cert_result.certificate_pem.clone().unwrap();
             let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap();
+                .filter_map(|r| r.ok()).next().unwrap();
             
             // Comprehensive WebPKI validation
             let validation_result = security_manager.authentication()
@@ -769,7 +769,7 @@ mod tests {
                    "WebPKI validation should succeed for {}: {:?}", name, validation_result);
             
             // Test WebPKI principal extraction
-            let certificate = rustls::Certificate(der_data.clone());
+            let certificate = rustls_pki_types::CertificateDer::from(der_data.clone());
             let principal = security_manager.authentication()
                 .extract_principal_with_webpki(&certificate, "webpki_test").unwrap();
             assert!(principal.contains(name), 
@@ -805,8 +805,8 @@ mod tests {
         for (i, cert) in certificates.iter().enumerate() {
             let pem_data = cert.certificate_pem.clone().unwrap();
             let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap();
-            let cert_obj = rustls::Certificate(der_data.clone());
+                .filter_map(|r| r.ok()).next().unwrap();
+            let cert_obj = rustls_pki_types::CertificateDer::from(der_data.clone());
             
             // Test WebPKI comprehensive validation first
             let comprehensive_validation = security_manager.authentication()
@@ -816,13 +816,13 @@ mod tests {
         }
         
         // 4. Test batch validation performance
-        let cert_ders: Vec<Vec<u8>> = certificates.iter().map(|cert| {
+        let cert_ders: Vec<_> = certificates.iter().map(|cert| {
             let pem_data = cert.certificate_pem.clone().unwrap();
             rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap()
+                .filter_map(|r| r.ok()).next().unwrap()
         }).collect();
-        
-        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_slice()).collect();
+
+        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_ref()).collect();
         
         let batch_results = security_manager.authentication()
             .validate_certificates_batch(&cert_der_refs).await;
@@ -862,7 +862,7 @@ mod tests {
         for cert in &test_certificates {
             let pem_data = cert.certificate_pem.clone().unwrap();
             let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap();
+                .filter_map(|r| r.ok()).next().unwrap();
             
             let _validation_result = security_manager.authentication()
                 .validate_certificate_comprehensive(&der_data).await.unwrap();
@@ -870,13 +870,13 @@ mod tests {
         let serial_duration = start.elapsed();
         
         // 4. Performance test: Batch validation
-        let cert_ders: Vec<Vec<u8>> = test_certificates.iter().map(|cert| {
+        let cert_ders: Vec<_> = test_certificates.iter().map(|cert| {
             let pem_data = cert.certificate_pem.clone().unwrap();
             rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap()
+                .filter_map(|r| r.ok()).next().unwrap()
         }).collect();
-        
-        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_slice()).collect();
+
+        let cert_der_refs: Vec<&[u8]> = cert_ders.iter().map(|der| der.as_ref()).collect();
         
         let start = std::time::Instant::now();
         let batch_results = security_manager.authentication()
@@ -897,7 +897,7 @@ mod tests {
         for cert in &test_certificates[..5] { // Test first 5 again (should be cached)
             let pem_data = cert.certificate_pem.clone().unwrap();
             let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap().into_iter().next().unwrap();
+                .filter_map(|r| r.ok()).next().unwrap();
             
             let _validation_result = security_manager.authentication()
                 .validate_certificate_comprehensive(&der_data).await.unwrap();
@@ -936,7 +936,7 @@ mod tests {
                    "WebPKI validation should fail for {}", scenario_name);
             
             // Test chain validation
-            let certificate = rustls::Certificate(cert_data.clone());
+            let certificate = rustls_pki_types::CertificateDer::from(cert_data.clone());
             let chain_validation = security_manager.authentication()
                 .validate_certificate_chain_with_webpki(&[certificate]).await;
             assert!(chain_validation.is_err(), 
@@ -964,7 +964,7 @@ mod tests {
         // This certificate is valid but signed by a CA not in our trust store
         let pem_data = wrong_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         
         let wrong_ca_validation = security_manager.authentication()
             .validate_certificate_comprehensive(&der_data).await;
@@ -1032,14 +1032,14 @@ mod tests {
         // Test certificate validation with WebPKI
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         
         // WebPKI comprehensive validation
         security_manager.authentication()
             .validate_certificate_comprehensive(&der_data).await?;
         
         // WebPKI principal extraction
-        let certificate = rustls::Certificate(der_data.clone());
+        let certificate = rustls_pki_types::CertificateDer::from(der_data.clone());
         let _principal = security_manager.authentication()
             .extract_principal_with_webpki(&certificate, "webpki_auth_test")?;
         
@@ -1057,8 +1057,8 @@ mod tests {
         // Extract principal from certificate
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
-        let certificate = rustls::Certificate(der_data);
+            .filter_map(|r| r.ok()).next().unwrap();
+        let certificate = rustls_pki_types::CertificateDer::from(der_data);
         let principal = security_manager.authentication()
             .extract_principal_from_certificate(&certificate, "auth_flow_test")?;
         
@@ -1081,7 +1081,7 @@ mod tests {
     ) -> Result<(), RustMqError> {
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap().into_iter().next().unwrap();
+            .filter_map(|r| r.ok()).next().unwrap();
         
         // Test WebPKI-specific certificate parsing
         let certificate = security_manager.authentication()

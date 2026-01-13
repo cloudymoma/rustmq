@@ -15,7 +15,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
-    use rustls::Certificate;
+    use rustls_pki_types::CertificateDer;
     use tokio::sync::Mutex;
     
     // Test isolation mutex for WebPKI tests
@@ -93,8 +93,7 @@ mod tests {
         // Test WebPKI comprehensive validation
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
         
@@ -151,11 +150,10 @@ mod tests {
         // Test WebPKI principal extraction
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
-        let certificate = Certificate(der_data);
+        let certificate = der_data;
         let fingerprint = "test_fingerprint";
         
         let principal = auth_manager.extract_principal_with_webpki(&certificate, fingerprint);
@@ -221,11 +219,10 @@ mod tests {
         // Test WebPKI certificate chain validation
         let client_pem = client_cert.certificate_pem.clone().unwrap();
         let client_der = rustls_pemfile::certs(&mut client_pem.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
-        let client_cert_obj = Certificate(client_der);
+        let client_cert_obj = CertificateDer::from(client_der);
         
         let chain_validation = auth_manager.validate_certificate_chain_with_webpki(&[client_cert_obj]).await;
         assert!(chain_validation.is_ok(), "WebPKI certificate chain validation should succeed: {:?}", chain_validation);
@@ -274,8 +271,7 @@ mod tests {
         // Test WebPKI certificate parsing
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
         
@@ -284,8 +280,8 @@ mod tests {
         
         // Verify the parsed certificate
         let certificate = parsed_cert.unwrap();
-        assert!(!certificate.0.is_empty(), "Parsed certificate should not be empty");
-        assert!(certificate.0.len() > 100, "Certificate should be reasonable size");
+        assert!(!certificate.as_ref().is_empty(), "Parsed certificate should not be empty");
+        assert!(certificate.as_ref().len() > 100, "Certificate should be reasonable size");
         
         println!("✅ WebPKI certificate parsing test passed");
     }
@@ -314,7 +310,7 @@ mod tests {
             assert!(parse_result.is_err(), "WebPKI parsing should fail for {}: {:?}", test_name, parse_result);
             
             // Test WebPKI principal extraction
-            let certificate = Certificate(cert_data.clone());
+            let certificate = CertificateDer::from(cert_data.clone());
             let principal_result = auth_manager.extract_principal_with_webpki(&certificate, "test");
             assert!(principal_result.is_err(), "WebPKI principal extraction should fail for {}: {:?}", test_name, principal_result);
         }
@@ -370,8 +366,7 @@ mod tests {
         // Test that existing API endpoints work with WebPKI backend
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
         
@@ -380,7 +375,7 @@ mod tests {
         assert!(validation_result.is_ok(), "Backward compatible validation should succeed: {:?}", validation_result);
         
         // Test certificate chain validation
-        let certificate = Certificate(der_data.clone());
+        let certificate = CertificateDer::from(der_data.clone());
         let chain_result = auth_manager.validate_certificate_chain(&[certificate.clone()]).await;
         assert!(chain_result.is_ok(), "Backward compatible chain validation should succeed: {:?}", chain_result);
         
@@ -439,8 +434,7 @@ mod tests {
         
         let pem_data = client_cert.certificate_pem.clone().unwrap();
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .unwrap()
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .unwrap();
         
@@ -521,8 +515,7 @@ mod tests {
             // Test WebPKI validation for each certificate
             let pem_data = cert_result.certificate_pem.clone().unwrap();
             let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-                .unwrap()
-                .into_iter()
+                .filter_map(|r| r.ok())
                 .next()
                 .unwrap();
             
@@ -534,7 +527,7 @@ mod tests {
             assert!(validation_result.is_ok(), "Comprehensive validation should succeed for {}: {:?}", name, validation_result);
             
             // Principal extraction
-            let certificate = Certificate(der_data);
+            let certificate = der_data;
             let principal = auth_manager.extract_principal_with_webpki(&certificate, "test").unwrap();
             assert!(principal.contains(name), "Principal should contain certificate name for {}", name);
             

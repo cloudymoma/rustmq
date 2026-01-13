@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, Duration};
 use tempfile::TempDir;
 use rcgen::{DistinguishedName, SanType, Certificate as RcgenCertificate, CertificateParams, KeyPair};
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use tokio::sync::Mutex;
 
 /// Test configuration factory for security components
@@ -113,26 +113,26 @@ pub struct MockCertificateGenerator;
 
 impl MockCertificateGenerator {
     /// Generate a test CA certificate
-    pub fn generate_test_ca() -> Result<Certificate, RustMqError> {
+    pub fn generate_test_ca() -> Result<CertificateDer<'static>, RustMqError> {
         let mut params = CertificateParams::new(vec!["testca.example.com".to_string()]);
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params.key_usages = vec![
             rcgen::KeyUsagePurpose::KeyCertSign,
             rcgen::KeyUsagePurpose::CrlSign,
         ];
-        
+
         let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)
             .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
+
         params.key_pair = Some(key_pair);
-        
+
         let cert = RcgenCertificate::from_params(params)
             .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
+
         let der = cert.serialize_der()
             .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
-        Ok(Certificate(der))
+
+        Ok(CertificateDer::from(der))
     }
 
     /// Generate a test client certificate signed by the given CA
@@ -140,7 +140,7 @@ impl MockCertificateGenerator {
         ca_cert: &RcgenCertificate,
         common_name: &str,
         role: CertificateRole,
-    ) -> Result<Certificate, RustMqError> {
+    ) -> Result<CertificateDer<'static>, RustMqError> {
         let mut params = CertificateParams::new(vec![common_name.to_string()]);
         params.is_ca = rcgen::IsCa::NoCa;
         
@@ -181,8 +181,8 @@ impl MockCertificateGenerator {
         
         let der = cert.serialize_der_with_signer(ca_cert)
             .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
-        Ok(Certificate(der))
+
+        Ok(CertificateDer::from(der))
     }
 }
 

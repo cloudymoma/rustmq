@@ -585,6 +585,11 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU16, Ordering};
 
+    // Install rustls crypto provider for tests
+    fn ensure_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     // Use atomic counter to generate unique ports for each test
     static PORT_COUNTER: AtomicU16 = AtomicU16::new(10000);
 
@@ -598,6 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broker_creation() {
+        ensure_crypto_provider();
         let config = get_test_config();
         let broker = Broker::from_config(config).await;
 
@@ -610,6 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broker_state_transitions() {
+        ensure_crypto_provider();
         let config = get_test_config();
         let mut broker = Broker::from_config(config).await.unwrap();
 
@@ -627,6 +634,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broker_health_check() {
+        ensure_crypto_provider();
         let config = get_test_config();
         let broker = Broker::from_config(config).await.unwrap();
 
@@ -637,6 +645,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broker_builder() {
+        ensure_crypto_provider();
         let config = get_test_config();
         let broker = BrokerBuilder::new(config).build().await;
 
@@ -647,6 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_state_transitions() {
+        ensure_crypto_provider();
         let config = get_test_config();
         let mut broker = Broker::from_config(config).await.unwrap();
 

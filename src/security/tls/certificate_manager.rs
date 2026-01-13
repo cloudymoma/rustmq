@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, Duration, UNIX_EPOCH, Instant};
 use std::path::PathBuf;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
 use rcgen::{Certificate as RcgenCertificate, CertificateParams, DistinguishedName, KeyPair, SanType};
 use x509_parser::prelude::*;
@@ -711,17 +711,17 @@ impl CertificateManager {
             rcgen::KeyUsagePurpose::CrlSign,
             rcgen::KeyUsagePurpose::DigitalSignature,
         ];
-        
+
         let validity_years = params.validity_years.unwrap_or(self.config.ca_settings.root_ca_validity_years);
         // Set certificate validity period
         cert_params.not_before = ::time::OffsetDateTime::now_utc();
         cert_params.not_after = cert_params.not_before + ::time::Duration::days(validity_years as i64 * 365);
-        
+
         cert_params.key_pair = Some(key_pair);
-        
+
         let certificate = RcgenCertificate::from_params(cert_params)
-            .map_err(|e| RustMqError::CertificateGeneration { 
-                reason: format!("Failed to generate root CA: {}", e) 
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: format!("Failed to generate root CA: {}", e)
             })?;
         
         let cert_info = self.store_certificate(certificate, CertificateRole::RootCa, None, "system").await?;
@@ -763,7 +763,7 @@ impl CertificateManager {
         let mut cert_params = CertificateParams::new(san_strings);
         cert_params.distinguished_name = request.subject;
         cert_params.is_ca = rcgen::IsCa::NoCa;
-        
+
         // Set key usage from template
         cert_params.key_usages = template.key_usage.iter().map(|ku| match ku {
             KeyUsage::DigitalSignature => rcgen::KeyUsagePurpose::DigitalSignature,
@@ -774,7 +774,7 @@ impl CertificateManager {
             KeyUsage::CrlSign => rcgen::KeyUsagePurpose::CrlSign,
             _ => rcgen::KeyUsagePurpose::DigitalSignature,
         }).collect();
-        
+
         // Set extended key usage from template
         cert_params.extended_key_usages = template.extended_key_usage.iter().map(|eku| match eku {
             ExtendedKeyUsage::ServerAuth => rcgen::ExtendedKeyUsagePurpose::ServerAuth,
@@ -784,20 +784,20 @@ impl CertificateManager {
             ExtendedKeyUsage::TimeStamping => rcgen::ExtendedKeyUsagePurpose::TimeStamping,
             ExtendedKeyUsage::OcspSigning => rcgen::ExtendedKeyUsagePurpose::OcspSigning,
         }).collect();
-        
+
         let validity_days = request.validity_days.unwrap_or(template.validity_days);
         // Set certificate validity period
         cert_params.not_before = ::time::OffsetDateTime::now_utc();
         cert_params.not_after = cert_params.not_before + ::time::Duration::days(validity_days as i64);
-        
+
         cert_params.key_pair = Some(key_pair);
-        
+
         // Create the certificate parameters first
         let certificate = RcgenCertificate::from_params(cert_params)
-            .map_err(|e| RustMqError::CertificateGeneration { 
-                reason: format!("Failed to create certificate params: {}", e) 
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: format!("Failed to create certificate params: {}", e)
             })?;
-        
+
         let cert_info = if let Some(ref issuer_id) = request.issuer_id {
             // This is a CA-signed certificate (end-entity only - no intermediate CAs)
             if request.role == CertificateRole::RootCa {
@@ -1016,7 +1016,7 @@ impl CertificateManager {
     }
     
     /// Validate a certificate chain
-    pub async fn validate_certificate_chain(&self, chain: &[Certificate]) -> Result<ValidationResult> {
+    pub async fn validate_certificate_chain(&self, chain: &[CertificateDer<'static>]) -> Result<ValidationResult> {
         if chain.is_empty() {
             return Ok(ValidationResult {
                 is_valid: false,
@@ -1033,7 +1033,7 @@ impl CertificateManager {
         
         // Parse the end-entity certificate
         let end_cert = &chain[0];
-        match X509Certificate::from_der(&end_cert.0) {
+        match X509Certificate::from_der(end_cert.as_ref()) {
             Ok((_, cert)) => {
                 // Check if certificate is expired
                 let now = SystemTime::now()
@@ -1094,28 +1094,27 @@ impl CertificateManager {
     }
     
     /// Get the CA certificate chain
-    pub async fn get_ca_chain(&self) -> Result<Vec<Certificate>> {
+    pub async fn get_ca_chain(&self) -> Result<Vec<CertificateDer<'static>>> {
         let certificates = self.certificates.read().map_err(|_| {
             RustMqError::Storage("Failed to acquire certificate lock for CA chain".to_string())
         })?;
-        
-        let mut ca_certs: Vec<Certificate> = Vec::new();
-        
+
+        let mut ca_certs: Vec<CertificateDer<'static>> = Vec::new();
+
         for cert_metadata in certificates.values()
             .filter(|cert_metadata| cert_metadata.info.is_ca && cert_metadata.info.status == CertificateStatus::Active) {
-            
-            // Parse PEM to Certificate
+
+            // Parse PEM to CertificateDer
             let pem_bytes = cert_metadata.pem_data.as_bytes();
-            let certs = rustls_pemfile::certs(&mut pem_bytes.clone())
-                .map_err(|e| RustMqError::InvalidCertificate {
-                    reason: format!("Failed to parse CA certificate: {}", e),
-                })?;
-            
-            for cert_der in certs {
-                ca_certs.push(Certificate(cert_der));
+            let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut pem_bytes.clone())
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for cert in certs {
+                ca_certs.push(cert);
             }
         }
-        
+
         Ok(ca_certs)
     }
     
@@ -1165,10 +1164,7 @@ impl CertificateManager {
         // Parse the certificate to extract parameters
         let cert_pem = &cert_metadata.pem_data;
         let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
-            .map_err(|e| RustMqError::InvalidCertificate {
-                reason: format!("Failed to parse certificate PEM: {}", e),
-            })?
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .ok_or_else(|| RustMqError::InvalidCertificate {
                 reason: "No certificate found in PEM data".to_string(),
@@ -1357,10 +1353,7 @@ impl CertificateManager {
         // Parse certificate to extract metadata
         // Use DER data from PEM for consistency with later fingerprint calculations
         let der_data = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .map_err(|e| RustMqError::CertificateGeneration {
-                reason: format!("Failed to parse PEM to DER: {}", e),
-            })?
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .ok_or_else(|| RustMqError::CertificateGeneration {
                 reason: "No certificates found in PEM data".to_string(),
@@ -1456,10 +1449,7 @@ impl CertificateManager {
         
         // Parse certificate to extract metadata
         let der_data = rustls_pemfile::certs(&mut certificate_pem.as_bytes())
-            .map_err(|e| RustMqError::CertificateGeneration {
-                reason: format!("Failed to parse signed certificate PEM: {}", e),
-            })?
-            .into_iter()
+            .filter_map(|r| r.ok())
             .next()
             .ok_or_else(|| RustMqError::CertificateGeneration {
                 reason: "No certificates found in signed PEM data".to_string(),

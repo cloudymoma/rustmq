@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use dashmap::DashMap;
 use x509_parser::prelude::*;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 
 /// Principal type - interned string for memory efficiency
 pub type Principal = Arc<str>;
@@ -39,7 +39,7 @@ impl PrincipalExtractor {
     /// Extract principal from client certificate with caching
     pub fn extract_from_certificate(
         &self,
-        cert: &Certificate,
+        cert: &CertificateDer<'static>,
         fingerprint: &str,
     ) -> Result<Principal> {
         // Check principal cache first
@@ -48,7 +48,7 @@ impl PrincipalExtractor {
         }
         
         // Parse certificate and extract CN
-        let parsed_cert = self.parse_certificate(&cert.0)?;
+        let parsed_cert = self.parse_certificate(cert.as_ref())?;
         let principal_str = self.extract_common_name(&parsed_cert)?;
         
         // Intern the string for memory efficiency
@@ -63,10 +63,10 @@ impl PrincipalExtractor {
     /// Extract principal from certificate with additional attributes
     pub fn extract_with_attributes(
         &self,
-        cert: &Certificate,
+        cert: &CertificateDer<'static>,
         fingerprint: &str,
     ) -> Result<PrincipalInfo> {
-        let parsed_cert = self.parse_certificate(&cert.0)?;
+        let parsed_cert = self.parse_certificate(cert.as_ref())?;
         
         // Extract principal (CN)
         let principal_str = self.extract_common_name(&parsed_cert)?;

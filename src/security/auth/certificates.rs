@@ -12,14 +12,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::collections::HashSet;
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use x509_parser::prelude::*;
 use ring::digest;
 
 /// Certificate store for managing trusted certificates and revocations
 pub struct CertificateStore {
     /// Trusted CA certificates
-    ca_certificates: Arc<RwLock<Vec<Certificate>>>,
+    ca_certificates: Arc<RwLock<Vec<CertificateDer<'static>>>>,
     
     /// Revoked certificate fingerprints
     revoked_certificates: Arc<RwLock<HashSet<String>>>,
@@ -68,9 +68,9 @@ impl CertificateStore {
     }
     
     /// Add a CA certificate to the trust store
-    pub fn add_ca_certificate(&self, cert: Certificate) -> Result<()> {
+    pub fn add_ca_certificate(&self, cert: CertificateDer<'static>) -> Result<()> {
         // Validate the certificate first
-        let parsed = self.parse_certificate(&cert.0)?;
+        let parsed = self.parse_certificate(cert.as_ref())?;
         
         // Ensure it's a CA certificate
         if !self.is_ca_certificate(&parsed)? {
@@ -87,23 +87,21 @@ impl CertificateStore {
     
     /// Load CA certificates from PEM data
     pub fn load_ca_certificates_from_pem(&self, pem_data: &str) -> Result<usize> {
-        let certs = rustls_pemfile::certs(&mut pem_data.as_bytes())
-            .map_err(|e| RustMqError::InvalidCertificate {
-                reason: format!("Failed to parse PEM certificates: {}", e),
-            })?;
-        
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut pem_data.as_bytes())
+            .filter_map(|r| r.ok())
+            .collect();
+
         let count = certs.len();
-        
-        for cert_der in certs {
-            let cert = Certificate(cert_der);
+
+        for cert in certs {
             self.add_ca_certificate(cert)?;
         }
-        
+
         Ok(count)
     }
     
     /// Validate a certificate chain
-    pub fn validate_certificate_chain(&self, chain: &[Certificate]) -> Result<ValidationDetails> {
+    pub fn validate_certificate_chain(&self, chain: &[CertificateDer<'static>]) -> Result<ValidationDetails> {
         if chain.is_empty() {
             return Err(RustMqError::InvalidCertificate {
                 reason: "Empty certificate chain".to_string(),
@@ -170,10 +168,10 @@ impl CertificateStore {
     /// Internal certificate validation logic
     fn validate_certificate_internal(
         &self,
-        client_cert: &Certificate,
-        chain: &[Certificate],
+        client_cert: &CertificateDer<'static>,
+        chain: &[CertificateDer<'static>],
     ) -> Result<ValidationDetails> {
-        let parsed_cert = self.parse_certificate(&client_cert.0)?;
+        let parsed_cert = self.parse_certificate(client_cert.as_ref())?;
         
         // Check certificate validity period
         let now = SystemTime::now();
@@ -229,7 +227,7 @@ impl CertificateStore {
         
         // Try to validate against each CA
         for ca_cert_der in ca_certs.iter() {
-            let ca_cert = self.parse_certificate(&ca_cert_der.0)?;
+            let ca_cert = self.parse_certificate(ca_cert_der.as_ref())?;
             
             // Check if issuer matches CA subject
             if cert.issuer() == ca_cert.subject() {
@@ -363,8 +361,8 @@ impl CertificateStore {
     }
     
     /// Calculate certificate fingerprint
-    fn calculate_fingerprint(&self, cert: &Certificate) -> String {
-        let digest = digest::digest(&digest::SHA256, &cert.0);
+    fn calculate_fingerprint(&self, cert: &CertificateDer<'static>) -> String {
+        let digest = digest::digest(&digest::SHA256, cert.as_ref());
         hex::encode(digest.as_ref())
     }
     
@@ -503,7 +501,7 @@ impl CachingClientCertVerifier {
     }
     
     /// Validate certificate chain using our certificate store
-    pub fn validate_certificate_chain(&self, chain: &[Certificate]) -> Result<ValidationDetails> {
+    pub fn validate_certificate_chain(&self, chain: &[CertificateDer<'static>]) -> Result<ValidationDetails> {
         self.certificate_store.validate_certificate_chain(chain)
     }
     

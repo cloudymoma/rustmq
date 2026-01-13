@@ -11,7 +11,7 @@ use crate::security::tls::{CertificateManager, CaGenerationParams, KeyType};
 use crate::security::metrics::SecurityMetrics;
 use crate::security::tests::SecurityTestConfig;
 use crate::error::RustMqError;
-use rustls::Certificate;
+use rustls_pki_types::CertificateDer;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -243,7 +243,7 @@ async fn test_enhanced_principal_extraction() {
     let (auth_manager, _temp_dir, _cert_manager) = create_test_authentication_manager().await;
     
     let cert_der = create_minimal_test_cert();
-    let certificate = Certificate(cert_der);
+    let certificate = CertificateDer::from(cert_der);
     
     // Test enhanced principal extraction
     let principal_result = auth_manager.extract_principal_enhanced(&certificate).await;

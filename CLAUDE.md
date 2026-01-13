@@ -57,6 +57,17 @@ kubectl kustomize gke/manifests/overlays/prod   # Validate K8s manifests
 
 SmallVec headers (90%↓ heap), Lock-free pools (547ns ACL), Buffer pooling (30-40%↓ alloc), Zero-copy API, FuturesUnordered replication, CPU-adaptive L2 cache, Moka TinyLFU cache
 
+## Dependency Updates (Jan 2026)
+
+| Package | Old | New | Notes |
+|---------|-----|-----|-------|
+| rustls | 0.21 | 0.23 | CVE-2024-32650 fix, Certificate→CertificateDer |
+| aws-sdk-s3 | 0.35 | 1.68 | Major API update |
+| quinn | 0.10 | 0.11 | finish() now sync |
+| tonic | 0.11 | 0.12 | prost 0.13 |
+| hyper | 0.14 | 1.5 | hyper-util, http-body-util |
+| rustls-pemfile | 1.x | 2.2 | Iterator<Result> API |
+
 ## Quick Reference
 
 ```bash
