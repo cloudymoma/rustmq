@@ -1,9 +1,9 @@
-use rustmq_client::{*, config::StartPosition};
 use futures::StreamExt;
+use rustmq_client::{config::StartPosition, *};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio;
 use tracing_subscriber;
-use std::sync::atomic::Ordering;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,18 +25,18 @@ async fn main() -> Result<()> {
     let consumer_config = ConsumerConfig {
         consumer_id: Some("advanced-consumer-1".to_string()),
         consumer_group: "advanced-processing-group".to_string(),
-        
+
         // Disable auto-commit for manual control
         enable_auto_commit: false,
         auto_commit_interval: Duration::from_secs(10),
-        
+
         // Optimize fetch settings
         fetch_size: 100,
         fetch_timeout: Duration::from_millis(500),
-        
+
         // Start from earliest to process all messages
         start_position: StartPosition::Earliest,
-        
+
         // Configure retry and DLQ
         max_retry_attempts: 3,
         dead_letter_queue: Some("failed-messages".to_string()),
@@ -57,24 +57,36 @@ async fn main() -> Result<()> {
     let metrics_consumer = consumer.clone();
     let metrics_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
-        
+
         loop {
             interval.tick().await;
-            
+
             let metrics = metrics_consumer.metrics().await;
             let lag = metrics_consumer.get_lag().await.unwrap_or_default();
-            
+
             println!("=== Consumer Metrics ===");
-            println!("Messages received: {}", metrics.messages_received.load(Ordering::Relaxed));
-            println!("Messages processed: {}", metrics.messages_processed.load(Ordering::Relaxed));
-            println!("Messages failed: {}", metrics.messages_failed.load(Ordering::Relaxed));
-            println!("Bytes received: {}", metrics.bytes_received.load(Ordering::Relaxed));
-            
+            println!(
+                "Messages received: {}",
+                metrics.messages_received.load(Ordering::Relaxed)
+            );
+            println!(
+                "Messages processed: {}",
+                metrics.messages_processed.load(Ordering::Relaxed)
+            );
+            println!(
+                "Messages failed: {}",
+                metrics.messages_failed.load(Ordering::Relaxed)
+            );
+            println!(
+                "Bytes received: {}",
+                metrics.bytes_received.load(Ordering::Relaxed)
+            );
+
             if let Some(last_receive) = *metrics.last_receive_time.read().await {
                 let age = last_receive.elapsed();
                 println!("Last message received: {:?} ago", age);
             }
-            
+
             println!("Consumer lag by partition: {:?}", lag);
             println!("========================");
         }
@@ -120,10 +132,15 @@ async fn consume_with_error_handling(consumer: &Consumer) -> Result<()> {
     while processed_count < max_messages {
         if let Some(consumer_message) = consumer.receive().await? {
             let message = &consumer_message.message;
-            
-            println!("Received message {} from partition {}", 
-                     message.id, message.partition);
-            println!("  Payload: {}", message.payload_as_string().unwrap_or_default());
+
+            println!(
+                "Received message {} from partition {}",
+                message.id, message.partition
+            );
+            println!(
+                "  Payload: {}",
+                message.payload_as_string().unwrap_or_default()
+            );
             println!("  Headers: {:?}", message.headers);
             println!("  Age: {}ms", message.age_ms());
 
@@ -138,7 +155,9 @@ async fn consume_with_error_handling(consumer: &Consumer) -> Result<()> {
                     consumer_message.nack().await?;
                 }
                 Err(ProcessingError::Fatal) => {
-                    println!("  ❌ Fatal processing error - acknowledging to prevent infinite retry");
+                    println!(
+                        "  ❌ Fatal processing error - acknowledging to prevent infinite retry"
+                    );
                     consumer_message.ack().await?;
                 }
             }
@@ -176,16 +195,28 @@ async fn demonstrate_seeking(consumer: &Consumer) -> Result<()> {
     let one_hour_ago = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() - 3600;
-    
-    println!("Seeking partition {} to timestamp: {} (1 hour ago)", first_partition, one_hour_ago);
-    consumer.seek_to_timestamp(first_partition, one_hour_ago).await?;
+        .as_secs()
+        - 3600;
+
+    println!(
+        "Seeking partition {} to timestamp: {} (1 hour ago)",
+        first_partition, one_hour_ago
+    );
+    consumer
+        .seek_to_timestamp(first_partition, one_hour_ago)
+        .await?;
 
     // Seek all partitions to timestamp
-    println!("Seeking all partitions to timestamp: {} (1 hour ago)", one_hour_ago);
+    println!(
+        "Seeking all partitions to timestamp: {} (1 hour ago)",
+        one_hour_ago
+    );
     match consumer.seek_all_to_timestamp(one_hour_ago).await {
         Ok(partition_offsets) => {
-            println!("Successfully seeked all partitions to timestamp with offsets: {:?}", partition_offsets);
+            println!(
+                "Successfully seeked all partitions to timestamp with offsets: {:?}",
+                partition_offsets
+            );
         }
         Err(e) => println!("Could not seek all partitions to timestamp: {}", e),
     }
@@ -193,8 +224,14 @@ async fn demonstrate_seeking(consumer: &Consumer) -> Result<()> {
     // Get committed offsets for each partition
     for &partition in &assigned_partitions {
         match consumer.committed_offset(partition).await {
-            Ok(offset) => println!("Current committed offset for partition {}: {}", partition, offset),
-            Err(e) => println!("Could not get committed offset for partition {}: {}", partition, e),
+            Ok(offset) => println!(
+                "Current committed offset for partition {}: {}",
+                partition, offset
+            ),
+            Err(e) => println!(
+                "Could not get committed offset for partition {}: {}",
+                partition, e
+            ),
         }
     }
 
@@ -217,9 +254,12 @@ async fn demonstrate_streaming(consumer: &Consumer) -> Result<()> {
         match result {
             Ok(consumer_message) => {
                 let message = &consumer_message.message;
-                println!("Stream received: {} ({})", 
-                         message.id, message.payload_as_string().unwrap_or_default());
-                
+                println!(
+                    "Stream received: {} ({})",
+                    message.id,
+                    message.payload_as_string().unwrap_or_default()
+                );
+
                 // Always ack in streaming mode for this example
                 consumer_message.ack().await?;
                 count += 1;
@@ -239,18 +279,21 @@ async fn demonstrate_manual_commits(consumer: &Consumer) -> Result<()> {
     let mut processed_count = 0;
     let commit_interval = 3; // Commit every 3 messages
 
-    println!("Processing with manual commits every {} messages", commit_interval);
+    println!(
+        "Processing with manual commits every {} messages",
+        commit_interval
+    );
 
     while processed_count < 10 {
         if let Some(consumer_message) = consumer.receive().await? {
             let message = &consumer_message.message;
-            
+
             println!("Manual processing message: {}", message.id);
-            
+
             // Simulate processing
             tokio::time::sleep(Duration::from_millis(50)).await;
             consumer_message.ack().await?;
-            
+
             processed_count += 1;
 
             // Manual commit at intervals
@@ -292,7 +335,9 @@ async fn demonstrate_partition_management(consumer: &Consumer) -> Result<()> {
     if assigned_partitions.len() > 1 {
         let partitions_to_pause = vec![assigned_partitions[0]];
         println!("Pausing partitions: {:?}", partitions_to_pause);
-        consumer.pause_partitions(partitions_to_pause.clone()).await?;
+        consumer
+            .pause_partitions(partitions_to_pause.clone())
+            .await?;
 
         let paused = consumer.paused_partitions().await;
         println!("Currently paused partitions: {:?}", paused);
@@ -322,13 +367,15 @@ async fn demonstrate_partition_management(consumer: &Consumer) -> Result<()> {
 }
 
 /// Simulate message processing with different outcomes
-async fn simulate_message_processing(message: &Message) -> std::result::Result<(), ProcessingError> {
+async fn simulate_message_processing(
+    message: &Message,
+) -> std::result::Result<(), ProcessingError> {
     // Simulate processing time
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Simulate different outcomes based on message content
     let payload = message.payload_as_string().unwrap_or_default();
-    
+
     if payload.contains("error") {
         Err(ProcessingError::Fatal)
     } else if payload.contains("retry") {

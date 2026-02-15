@@ -1,5 +1,5 @@
 //! ETL (Extract, Transform, Load) processing module
-//! 
+//!
 //! This module provides a high-performance, priority-based ETL pipeline system
 //! for real-time message transformation using WebAssembly modules.
 //!
@@ -21,37 +21,32 @@
 //! - Comprehensive error handling strategies
 //! - Real-time configuration updates
 
-pub mod processor;
-pub mod orchestrator;
 pub mod filter;
 pub mod instance_pool;
+pub mod orchestrator;
+pub mod processor;
 
 #[cfg(test)]
 mod tests;
 
 pub use processor::{
-    EtlProcessor, EtlPipeline, MockEtlProcessor,
-    EtlModule, ModuleConfig, DataFormat,
-    EtlRequest, EtlResponse, ProcessingContext,
-    ProcessedRecord, ProcessingMetadata,
-    ModuleInfo, ModuleStats, MemoryUsageStats,
-    EtlMetrics
+    DataFormat, EtlMetrics, EtlModule, EtlPipeline, EtlProcessor, EtlRequest, EtlResponse,
+    MemoryUsageStats, MockEtlProcessor, ModuleConfig, ModuleInfo, ModuleStats, ProcessedRecord,
+    ProcessingContext, ProcessingMetadata,
 };
 
 pub use orchestrator::{
-    EtlPipelineOrchestrator, PipelineExecutionContext, PipelineExecutionResult,
-    ExecutionMetadata, StageExecutionInfo, ModuleExecutionInfo,
-    OrchestratorStats, PipelineStats, ModuleExecutionStats
+    EtlPipelineOrchestrator, ExecutionMetadata, ModuleExecutionInfo, ModuleExecutionStats,
+    OrchestratorStats, PipelineExecutionContext, PipelineExecutionResult, PipelineStats,
+    StageExecutionInfo,
 };
 
 pub use filter::{
-    TopicFilterEngine, ConditionalRuleEngine, FilterResult,
-    CompiledGlobFilter, CompiledRegexFilter, StringFilter,
-    CompiledConditionalRule, FilterEngineStats
+    CompiledConditionalRule, CompiledGlobFilter, CompiledRegexFilter, ConditionalRuleEngine,
+    FilterEngineStats, FilterResult, StringFilter, TopicFilterEngine,
 };
 
 pub use instance_pool::{
-    WasmInstancePool, PooledInstance, WasmContext,
-    InstanceCheckout, InstanceReturnHandle,
-    InstancePoolStats, ModulePoolStats
+    InstanceCheckout, InstancePoolStats, InstanceReturnHandle, ModulePoolStats, PooledInstance,
+    WasmContext, WasmInstancePool,
 };

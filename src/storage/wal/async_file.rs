@@ -27,7 +27,7 @@ impl PlatformCapabilities {
                 };
             }
         }
-        
+
         // Fallback for non-Linux or when io-uring is not available
         Self {
             io_uring_available: false,
@@ -48,12 +48,14 @@ impl PlatformCapabilities {
     #[cfg(all(target_os = "linux", feature = "io-uring"))]
     fn get_kernel_version() -> Option<(u32, u32)> {
         use std::process::Command;
-        
+
         if let Ok(output) = Command::new("uname").arg("-r").output() {
             if let Ok(version_str) = String::from_utf8(output.stdout) {
                 let parts: Vec<&str> = version_str.split('.').collect();
                 if parts.len() >= 2 {
-                    if let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                    if let (Ok(major), Ok(minor)) =
+                        (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                    {
                         return Some((major, minor));
                     }
                 }
@@ -76,16 +78,16 @@ pub trait AsyncWalFile: Send + Sync {
     /// Write data at a specific offset in the file
     /// Returns the buffer back to allow for buffer reuse
     async fn write_at(&self, data: Vec<u8>, offset: u64) -> Result<Vec<u8>>;
-    
+
     /// Read data from a specific offset in the file
     async fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>>;
-    
+
     /// Sync all data to disk
     async fn sync_all(&self) -> Result<()>;
-    
+
     /// Get current file size
     async fn file_size(&self) -> Result<u64>;
-    
+
     /// Get the backend type for metrics/debugging
     fn backend_type(&self) -> &'static str;
 }
@@ -115,35 +117,35 @@ impl AsyncWalFileFactory {
                 return Ok(Box::new(IoUringWalFile::new(path).await?));
             }
         }
-        
+
         tracing::info!("Using tokio::fs backend for WAL file operations");
         Ok(Box::new(TokioWalFile::new(path).await?))
     }
-    
+
     #[cfg(all(target_os = "linux", feature = "io-uring"))]
     fn is_in_io_uring_context() -> bool {
         // Never use io_uring in test contexts or when not explicitly enabled
-        
+
         // Check if we're in a test environment
         if cfg!(test) {
             return false;
         }
-        
+
         // Check if we're in a cargo test context
         if std::env::var("CARGO_PKG_NAME").is_ok() {
             return false;
         }
-        
+
         // Check if we're explicitly running tests
         if std::env::var("RUST_TEST_THREADS").is_ok() {
             return false;
         }
-        
+
         // Check if io_uring is explicitly disabled
         if std::env::var("RUSTMQ_DISABLE_IO_URING").is_ok() {
             return false;
         }
-        
+
         // Only enable io_uring in production when explicitly requested
         // This prevents runtime errors from incompatible contexts
         std::env::var("RUSTMQ_ENABLE_IO_URING").is_ok()
@@ -178,7 +180,10 @@ impl TokioWalFile {
         Ok(Self { file, buffer_pool })
     }
 
-    pub async fn new_with_pool<P: AsRef<Path>>(path: P, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
+    pub async fn new_with_pool<P: AsRef<Path>>(
+        path: P,
+        buffer_pool: Arc<AlignedBufferPool>,
+    ) -> Result<Self> {
         let file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -193,21 +198,21 @@ impl TokioWalFile {
 #[async_trait]
 impl AsyncWalFile for TokioWalFile {
     async fn write_at(&self, data: Vec<u8>, offset: u64) -> Result<Vec<u8>> {
-        use tokio::io::{AsyncWriteExt, AsyncSeekExt, SeekFrom};
-        
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt, SeekFrom};
+
         // Note: This requires a mutable reference to the file, which is challenging
         // with the current API design. In practice, we'll need to use interior mutability
         // or adjust the abstraction. For now, we'll implement it as a demonstration.
-        
+
         // Create a clone of the file handle for this operation
         let mut file = self.file.try_clone().await?;
         file.seek(SeekFrom::Start(offset)).await?;
         file.write_all(&data).await?;
-        
+
         // Return the data buffer for reuse
         Ok(data)
     }
-    
+
     async fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
@@ -233,20 +238,20 @@ impl AsyncWalFile for TokioWalFile {
             }
         }
     }
-    
+
     async fn sync_all(&self) -> Result<()> {
         use tokio::io::AsyncWriteExt;
-        
+
         let mut file = self.file.try_clone().await?;
         file.sync_data().await?;
         Ok(())
     }
-    
+
     async fn file_size(&self) -> Result<u64> {
         let metadata = self.file.metadata().await?;
         Ok(metadata.len())
     }
-    
+
     fn backend_type(&self) -> &'static str {
         "tokio-fs"
     }
@@ -308,26 +313,38 @@ impl IoUringWalFile {
                 Ok(file) => file,
                 Err(_) => return, // Failed to open file
             };
-            
+
             let path = path_clone;
-            
+
             while let Some(cmd) = rx.recv().await {
                 match cmd {
-                    IoUringCommand::WriteAt { data, offset, response } => {
+                    IoUringCommand::WriteAt {
+                        data,
+                        offset,
+                        response,
+                    } => {
                         let result: std::result::Result<Vec<u8>, std::io::Error> = async {
                             let (result, returned_buf) = file.write_at(data, offset).await;
                             result?;
                             Ok(returned_buf)
-                        }.await;
+                        }
+                        .await;
                         let _ = response.send(result.map_err(Into::into));
-                    },
-                    IoUringCommand::ReadAt { offset, len, response } => {
+                    }
+                    IoUringCommand::ReadAt {
+                        offset,
+                        len,
+                        response,
+                    } => {
                         let result: std::result::Result<Vec<u8>, std::io::Error> = async {
                             // Get buffer from pool instead of allocating
                             let buffer = match buffer_pool_clone.get_aligned_buffer(len) {
                                 Ok(buf) => buf,
                                 Err(e) => {
-                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        e.to_string(),
+                                    ));
                                 }
                             };
 
@@ -345,19 +362,20 @@ impl IoUringWalFile {
                                     Err(e)
                                 }
                             }
-                        }.await;
+                        }
+                        .await;
                         let _ = response.send(result.map_err(Into::into));
-                    },
+                    }
                     IoUringCommand::SyncAll { response } => {
                         let result = file.sync_all().await.map_err(Into::into);
                         let _ = response.send(result);
-                    },
+                    }
                     IoUringCommand::FileSize { response } => {
                         let result = std::fs::metadata(&path)
                             .map(|metadata| metadata.len())
                             .map_err(Into::into);
                         let _ = response.send(result);
-                    },
+                    }
                     IoUringCommand::Shutdown => break,
                 }
             }
@@ -366,7 +384,10 @@ impl IoUringWalFile {
         Ok(Self { tx, buffer_pool })
     }
 
-    pub async fn new_with_pool<P: AsRef<Path>>(path: P, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
+    pub async fn new_with_pool<P: AsRef<Path>>(
+        path: P,
+        buffer_pool: Arc<AlignedBufferPool>,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -390,21 +411,33 @@ impl IoUringWalFile {
 
             while let Some(cmd) = rx.recv().await {
                 match cmd {
-                    IoUringCommand::WriteAt { data, offset, response } => {
+                    IoUringCommand::WriteAt {
+                        data,
+                        offset,
+                        response,
+                    } => {
                         let result: std::result::Result<Vec<u8>, std::io::Error> = async {
                             let (result, returned_buf) = file.write_at(data, offset).await;
                             result?;
                             Ok(returned_buf)
-                        }.await;
+                        }
+                        .await;
                         let _ = response.send(result.map_err(Into::into));
-                    },
-                    IoUringCommand::ReadAt { offset, len, response } => {
+                    }
+                    IoUringCommand::ReadAt {
+                        offset,
+                        len,
+                        response,
+                    } => {
                         let result: std::result::Result<Vec<u8>, std::io::Error> = async {
                             // Get buffer from pool instead of allocating
                             let buffer = match buffer_pool_clone.get_aligned_buffer(len) {
                                 Ok(buf) => buf,
                                 Err(e) => {
-                                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        e.to_string(),
+                                    ));
                                 }
                             };
 
@@ -422,19 +455,20 @@ impl IoUringWalFile {
                                     Err(e)
                                 }
                             }
-                        }.await;
+                        }
+                        .await;
                         let _ = response.send(result.map_err(Into::into));
-                    },
+                    }
                     IoUringCommand::SyncAll { response } => {
                         let result = file.sync_all().await.map_err(Into::into);
                         let _ = response.send(result);
-                    },
+                    }
                     IoUringCommand::FileSize { response } => {
                         let result = std::fs::metadata(&path)
                             .map(|metadata| metadata.len())
                             .map_err(Into::into);
                         let _ = response.send(result);
-                    },
+                    }
                     IoUringCommand::Shutdown => break,
                 }
             }
@@ -449,52 +483,64 @@ impl IoUringWalFile {
 impl AsyncWalFile for IoUringWalFile {
     async fn write_at(&self, data: Vec<u8>, offset: u64) -> Result<Vec<u8>> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
-        self.tx.send(IoUringCommand::WriteAt {
-            data,
-            offset,
-            response: response_tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
-        
-        response_rx.await
+
+        self.tx
+            .send(IoUringCommand::WriteAt {
+                data,
+                offset,
+                response: response_tx,
+            })
+            .map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
+
+        response_rx
+            .await
             .map_err(|_| crate::error::RustMqError::Wal("io_uring response failed".to_string()))?
     }
-    
+
     async fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
-        self.tx.send(IoUringCommand::ReadAt {
-            offset,
-            len,
-            response: response_tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
-        
-        response_rx.await
+
+        self.tx
+            .send(IoUringCommand::ReadAt {
+                offset,
+                len,
+                response: response_tx,
+            })
+            .map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
+
+        response_rx
+            .await
             .map_err(|_| crate::error::RustMqError::Wal("io_uring response failed".to_string()))?
     }
-    
+
     async fn sync_all(&self) -> Result<()> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
-        self.tx.send(IoUringCommand::SyncAll {
-            response: response_tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
-        
-        response_rx.await
+
+        self.tx
+            .send(IoUringCommand::SyncAll {
+                response: response_tx,
+            })
+            .map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
+
+        response_rx
+            .await
             .map_err(|_| crate::error::RustMqError::Wal("io_uring response failed".to_string()))?
     }
-    
+
     async fn file_size(&self) -> Result<u64> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
-        self.tx.send(IoUringCommand::FileSize {
-            response: response_tx,
-        }).map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
-        
-        response_rx.await
+
+        self.tx
+            .send(IoUringCommand::FileSize {
+                response: response_tx,
+            })
+            .map_err(|_| crate::error::RustMqError::Wal("io_uring task unavailable".to_string()))?;
+
+        response_rx
+            .await
             .map_err(|_| crate::error::RustMqError::Wal("io_uring response failed".to_string()))?
     }
-    
+
     fn backend_type(&self) -> &'static str {
         "io-uring"
     }
@@ -508,17 +554,17 @@ mod tests {
     #[tokio::test]
     async fn test_platform_capabilities_detection() {
         let capabilities = PlatformCapabilities::detect();
-        
+
         // Should always have some valid detection result
         println!("Platform capabilities: {:#?}", capabilities);
-        
+
         // On Linux with io-uring feature, check if detection works
         #[cfg(all(target_os = "linux", feature = "io-uring"))]
         {
             // Detection should complete without panicking
             assert!(capabilities.kernel_version.is_some() || !capabilities.io_uring_available);
         }
-        
+
         #[cfg(not(all(target_os = "linux", feature = "io-uring")))]
         {
             assert!(!capabilities.io_uring_available);
@@ -529,20 +575,20 @@ mod tests {
     async fn test_factory_creates_appropriate_backend() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.wal");
-        
+
         // Use tokio runtime for this test - io-uring factory will use tokio backend as fallback
         let factory = AsyncWalFileFactory::new();
         let file = factory.create_file(&file_path).await.unwrap();
-        
+
         // Should create some valid backend
         let backend_type = file.backend_type();
         assert!(backend_type == "tokio-fs" || backend_type.starts_with("io-uring"));
-        
+
         // Test basic operation to ensure it works
         let test_data = b"test".to_vec();
         let returned_buffer = file.write_at(test_data.clone(), 0).await.unwrap();
         assert_eq!(returned_buffer, test_data);
-        
+
         println!("Created file with backend: {}", backend_type);
     }
 
@@ -551,43 +597,46 @@ mod tests {
         // Test with tokio backend which should always work
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_tokio.wal");
-        
+
         let file = TokioWalFile::new(&file_path).await.unwrap();
-        
+
         // Test write operation
         let test_data = b"Hello, WAL!".to_vec();
         let returned_buffer = file.write_at(test_data.clone(), 0).await.unwrap();
         assert_eq!(returned_buffer, test_data);
-        
+
         // Test sync
         file.sync_all().await.unwrap();
-        
+
         // Test read operation
         let read_data = file.read_at(0, test_data.len()).await.unwrap();
         assert_eq!(read_data, test_data);
-        
+
         // Test file size
         let size = file.file_size().await.unwrap();
         assert_eq!(size as usize, test_data.len());
-        
-        println!("Basic file operations test passed with backend: {}", file.backend_type());
+
+        println!(
+            "Basic file operations test passed with backend: {}",
+            file.backend_type()
+        );
     }
 
     #[tokio::test]
     async fn test_tokio_backend_directly() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("tokio_test.wal");
-        
+
         let file = TokioWalFile::new(&file_path).await.unwrap();
         assert_eq!(file.backend_type(), "tokio-fs");
-        
+
         // Test basic operations
         let test_data = b"Tokio backend test".to_vec();
         let returned_buffer = file.write_at(test_data.clone(), 0).await.unwrap();
         assert_eq!(returned_buffer, test_data);
-        
+
         file.sync_all().await.unwrap();
-        
+
         let read_data = file.read_at(0, test_data.len()).await.unwrap();
         assert_eq!(read_data, test_data);
     }
@@ -600,33 +649,33 @@ mod tests {
             println!("Skipping io_uring test in CI environment");
             return;
         }
-        
+
         // Only test if io_uring is actually available
         if !PlatformCapabilities::detect().io_uring_available {
             println!("Skipping io_uring test - not available on this system");
             return;
         }
-        
+
         // Try to run within tokio_uring context, but don't fail if unavailable
         match std::panic::catch_unwind(|| {
             tokio_uring::start(async {
                 let temp_dir = TempDir::new().unwrap();
                 let file_path = temp_dir.path().join("uring_test.wal");
-                
+
                 match IoUringWalFile::new(&file_path).await {
                     Ok(file) => {
                         assert!(file.backend_type().starts_with("io-uring"));
-                        
+
                         // Test basic operations
                         let test_data = b"io_uring backend test".to_vec();
                         let returned_buffer = file.write_at(test_data.clone(), 0).await.unwrap();
                         assert_eq!(returned_buffer, test_data);
-                        
+
                         file.sync_all().await.unwrap();
-                        
+
                         let read_data = file.read_at(0, test_data.len()).await.unwrap();
                         assert_eq!(read_data, test_data);
-                        
+
                         println!("io_uring backend test passed");
                         true
                     }
@@ -649,32 +698,35 @@ mod tests {
         // Use tokio backend for consistent testing
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("multi_test.wal");
-        
+
         let file = TokioWalFile::new(&file_path).await.unwrap();
-        
+
         // Write multiple chunks at different offsets
         let chunks = vec![
             (0, b"chunk1".to_vec()),
             (6, b"chunk2".to_vec()),
             (12, b"chunk3".to_vec()),
         ];
-        
+
         for (offset, data) in &chunks {
             file.write_at(data.clone(), *offset).await.unwrap();
         }
-        
+
         file.sync_all().await.unwrap();
-        
+
         // Read back each chunk
         for (offset, expected_data) in &chunks {
             let read_data = file.read_at(*offset, expected_data.len()).await.unwrap();
             assert_eq!(&read_data, expected_data);
         }
-        
+
         // Verify total file size
         let total_size = file.file_size().await.unwrap();
         assert_eq!(total_size, 18); // 12 + 6 bytes for "chunk3"
-        
-        println!("Multiple writes and reads test passed with backend: {}", file.backend_type());
+
+        println!(
+            "Multiple writes and reads test passed with backend: {}",
+            file.backend_type()
+        );
     }
 }

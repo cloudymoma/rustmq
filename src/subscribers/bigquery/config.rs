@@ -5,31 +5,31 @@ use std::collections::HashMap;
 pub struct BigQuerySubscriberConfig {
     /// Google Cloud Project ID
     pub project_id: String,
-    
+
     /// BigQuery dataset name
     pub dataset: String,
-    
+
     /// BigQuery table name
     pub table: String,
-    
+
     /// BigQuery write method
     pub write_method: WriteMethod,
-    
+
     /// RustMQ subscription configuration
     pub subscription: SubscriptionConfig,
-    
+
     /// Authentication configuration
     pub auth: AuthConfig,
-    
+
     /// Batching configuration
     pub batching: BatchingConfig,
-    
+
     /// Schema configuration
     pub schema: SchemaConfig,
-    
+
     /// Error handling configuration
     pub error_handling: ErrorHandlingConfig,
-    
+
     /// Monitoring configuration
     pub monitoring: MonitoringConfig,
 }
@@ -70,25 +70,25 @@ pub enum StorageWriteStreamType {
 pub struct SubscriptionConfig {
     /// RustMQ broker endpoints
     pub broker_endpoints: Vec<String>,
-    
+
     /// Topic to subscribe to
     pub topic: String,
-    
+
     /// Consumer group ID
     pub consumer_group: String,
-    
+
     /// Partition IDs to consume (None means all partitions)
     pub partitions: Option<Vec<u32>>,
-    
+
     /// Start from offset (latest, earliest, or specific offset)
     pub start_offset: StartOffset,
-    
+
     /// Maximum number of messages to fetch per request
     pub max_messages_per_fetch: usize,
-    
+
     /// Fetch timeout in milliseconds
     pub fetch_timeout_ms: u64,
-    
+
     /// Consumer session timeout in milliseconds
     pub session_timeout_ms: u64,
 }
@@ -107,10 +107,10 @@ pub enum StartOffset {
 pub struct AuthConfig {
     /// Authentication method
     pub method: AuthMethod,
-    
+
     /// Service account key file path (for service account auth)
     pub service_account_key_file: Option<String>,
-    
+
     /// Scopes for authentication
     pub scopes: Vec<String>,
 }
@@ -129,13 +129,13 @@ pub enum AuthMethod {
 pub struct BatchingConfig {
     /// Maximum number of rows per batch
     pub max_rows_per_batch: usize,
-    
+
     /// Maximum batch size in bytes
     pub max_batch_size_bytes: usize,
-    
+
     /// Maximum time to wait before sending a partial batch (milliseconds)
     pub max_batch_latency_ms: u64,
-    
+
     /// Maximum number of concurrent batches being processed
     pub max_concurrent_batches: usize,
 }
@@ -144,16 +144,16 @@ pub struct BatchingConfig {
 pub struct SchemaConfig {
     /// Schema mapping strategy
     pub mapping: SchemaMappingStrategy,
-    
+
     /// Column mappings for custom mapping
     pub column_mappings: HashMap<String, String>,
-    
+
     /// Default values for missing fields
     pub default_values: HashMap<String, serde_json::Value>,
-    
+
     /// Whether to auto-create table if it doesn't exist
     pub auto_create_table: bool,
-    
+
     /// Table schema for auto-creation
     pub table_schema: Option<Vec<BigQueryFieldSchema>>,
 }
@@ -184,13 +184,13 @@ pub struct BigQueryFieldSchema {
 pub struct ErrorHandlingConfig {
     /// Maximum number of retries for failed inserts
     pub max_retries: usize,
-    
+
     /// Retry backoff strategy
     pub retry_backoff: RetryBackoffStrategy,
-    
+
     /// What to do with messages that fail after all retries
     pub dead_letter_action: DeadLetterAction,
-    
+
     /// Dead letter queue configuration
     pub dead_letter_config: Option<DeadLetterConfig>,
 }
@@ -229,19 +229,19 @@ pub struct DeadLetterConfig {
 pub struct MonitoringConfig {
     /// Enable metrics collection
     pub enable_metrics: bool,
-    
+
     /// Metrics prefix
     pub metrics_prefix: String,
-    
+
     /// Enable health check endpoint
     pub enable_health_check: bool,
-    
+
     /// Health check bind address
     pub health_check_addr: String,
-    
+
     /// Enable logging of successful inserts
     pub log_successful_inserts: bool,
-    
+
     /// Log level for BigQuery operations
     pub log_level: String,
 }

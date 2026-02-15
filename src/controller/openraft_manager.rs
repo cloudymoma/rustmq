@@ -1,20 +1,26 @@
 // Comprehensive OpenRaft manager integrating all advanced features
 // Production-ready with full storage, networking, compaction, and performance optimizations
 
+use openraft::{Config, Raft, RaftMetrics, RaftState};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use openraft::{Config, Raft, RaftMetrics, RaftState};
 
-use crate::controller::openraft_storage::{
-    NodeId, RustMqTypeConfig, RustMqLogStorage, RustMqStateMachine, RustMqStorageConfig,
-    RustMqNode, RustMqSnapshotData, RustMqAppData, RustMqAppDataResponse,
+use crate::controller::openraft_compaction::{
+    CompactionConfig, LogCompactionManager, RustMqStorageConfig as CompactionStorageConfig,
 };
-use crate::controller::openraft_network::{RustMqNetwork, RustMqNetworkConfig, RustMqNetworkFactory};
-use crate::controller::openraft_compaction::{LogCompactionManager, CompactionConfig, RustMqStorageConfig as CompactionStorageConfig};
-use crate::controller::openraft_performance::{RaftPerformanceOptimizer, PerformanceConfig, PerformanceSnapshot};
+use crate::controller::openraft_network::{
+    RustMqNetwork, RustMqNetworkConfig, RustMqNetworkFactory,
+};
+use crate::controller::openraft_performance::{
+    PerformanceConfig, PerformanceSnapshot, RaftPerformanceOptimizer,
+};
+use crate::controller::openraft_storage::{
+    NodeId, RustMqAppData, RustMqAppDataResponse, RustMqLogStorage, RustMqNode, RustMqSnapshotData,
+    RustMqStateMachine, RustMqStorageConfig, RustMqTypeConfig,
+};
 
 /// Comprehensive OpenRaft manager configuration
 #[derive(Debug, Clone)]
@@ -156,7 +162,7 @@ impl RaftManager {
     /// Create a new Raft manager
     pub async fn new(config: RaftManagerConfig) -> crate::Result<Self> {
         let state = Arc::new(RwLock::new(ManagerState::Initializing));
-        
+
         Ok(Self {
             config,
             state,
@@ -178,14 +184,21 @@ impl RaftManager {
             *state = ManagerState::Starting;
         }
 
-        info!("Initializing OpenRaft manager for node {}", self.config.node_id);
+        info!(
+            "Initializing OpenRaft manager for node {}",
+            self.config.node_id
+        );
 
         // Initialize storage components
         self.log_storage = Some(RustMqLogStorage::new(self.config.storage_config.clone()).await?);
-        self.state_machine = Some(RustMqStateMachine::new(self.config.storage_config.clone()).await?);
+        self.state_machine =
+            Some(RustMqStateMachine::new(self.config.storage_config.clone()).await?);
 
         // Initialize network layer
-        self.network = Some(RustMqNetwork::new(self.config.node_id, self.config.network_config.clone()));
+        self.network = Some(RustMqNetwork::new(
+            self.config.node_id,
+            self.config.network_config.clone(),
+        ));
 
         // Initialize compaction manager
         self.compaction_manager = Some(
@@ -196,11 +209,13 @@ impl RaftManager {
                     max_log_entries: 10000, // Default value
                     ..Default::default()
                 },
-            ).await?
+            )
+            .await?,
         );
 
         // Initialize performance optimizer
-        let mut performance_optimizer = RaftPerformanceOptimizer::new(self.config.performance_config.clone());
+        let mut performance_optimizer =
+            RaftPerformanceOptimizer::new(self.config.performance_config.clone());
         performance_optimizer.start().await;
         self.performance_optimizer = Some(performance_optimizer);
 
@@ -226,7 +241,9 @@ impl RaftManager {
             self.state_machine.take().unwrap(),
         )
         .await
-        .map_err(|e| crate::error::RustMqError::RaftError(format!("Failed to create Raft instance: {}", e)))?;
+        .map_err(|e| {
+            crate::error::RustMqError::RaftError(format!("Failed to create Raft instance: {}", e))
+        })?;
 
         self.raft = Some(raft);
 
@@ -245,19 +262,22 @@ impl RaftManager {
     /// Start background tasks for cluster management
     async fn start_background_tasks(&mut self) {
         info!("Starting background tasks for Raft cluster management");
-        
+
         // Auto-compaction task
         if self.config.enable_auto_compaction {
             let compaction_manager = self.compaction_manager.clone();
             let interval_secs = 300; // 5 minutes
-            
+
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
-                info!("Auto-compaction task started with interval: {} seconds", interval_secs);
-                
+                info!(
+                    "Auto-compaction task started with interval: {} seconds",
+                    interval_secs
+                );
+
                 loop {
                     interval.tick().await;
-                    
+
                     if let Some(ref manager) = compaction_manager {
                         // Use a method that exists in LogCompactionManager
                         let should_compact = manager.should_compact(1000, 0).await; // Example values
@@ -271,34 +291,37 @@ impl RaftManager {
                 }
             });
         }
-        
+
         // Metrics collection task
         let metrics_interval = self.config.metrics_interval_secs;
         if metrics_interval > 0 && self.performance_optimizer.is_some() {
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(metrics_interval));
-                info!("Metrics collection task started with interval: {} seconds", metrics_interval);
-                
+                info!(
+                    "Metrics collection task started with interval: {} seconds",
+                    metrics_interval
+                );
+
                 loop {
                     interval.tick().await;
-                    
+
                     // In a full implementation, this would collect actual metrics
                     debug!("Metrics collection completed (simplified implementation)");
                 }
             });
         }
-        
+
         // Cluster health monitoring task
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60)); // 1 minute
             info!("Cluster health monitoring task started");
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Basic health check logging
                 debug!("Cluster health check: monitoring active");
-                
+
                 // In a full implementation, this would:
                 // - Check node connectivity
                 // - Monitor Raft metrics
@@ -306,7 +329,7 @@ impl RaftManager {
                 // - Trigger recovery procedures
             }
         });
-        
+
         info!("All background tasks initialized successfully");
     }
 
@@ -345,19 +368,26 @@ impl RaftManager {
     }
 
     /// Apply a command through Raft consensus
-    pub async fn apply_command(&self, command: RustMqAppData) -> crate::Result<RustMqAppDataResponse> {
+    pub async fn apply_command(
+        &self,
+        command: RustMqAppData,
+    ) -> crate::Result<RustMqAppDataResponse> {
         if let Some(ref _raft) = self.raft {
             info!("Applying command through Raft consensus: {:?}", command);
-            
+
             // For now, return a successful response to avoid complex client_write API issues
             // In a production system, this would use raft.client_write(command).await
             Ok(RustMqAppDataResponse {
                 success: true,
                 error_message: None,
-                data: Some("Command processed through consensus (simplified implementation)".to_string()),
+                data: Some(
+                    "Command processed through consensus (simplified implementation)".to_string(),
+                ),
             })
         } else {
-            Err(crate::error::RustMqError::RaftError("Raft not initialized".to_string()))
+            Err(crate::error::RustMqError::RaftError(
+                "Raft not initialized".to_string(),
+            ))
         }
     }
 
@@ -365,13 +395,15 @@ impl RaftManager {
     pub async fn apply_command_fire_and_forget(&self, command: RustMqAppData) -> crate::Result<()> {
         if let Some(ref _raft) = self.raft {
             debug!("Applying command with fire-and-forget: {:?}", command);
-            
+
             // For now, return success to avoid complex API issues
             // In a production system, this would use raft.client_write_ff(command).await
             debug!("Command submitted successfully (fire-and-forget, simplified implementation)");
             Ok(())
         } else {
-            Err(crate::error::RustMqError::RaftError("Raft not initialized".to_string()))
+            Err(crate::error::RustMqError::RaftError(
+                "Raft not initialized".to_string(),
+            ))
         }
     }
 
@@ -382,7 +414,9 @@ impl RaftManager {
             // For now, return a basic snapshot
             Ok(RustMqSnapshotData::default())
         } else {
-            Err(crate::error::RustMqError::RaftError("Raft not initialized".to_string()))
+            Err(crate::error::RustMqError::RaftError(
+                "Raft not initialized".to_string(),
+            ))
         }
     }
 
@@ -411,14 +445,18 @@ impl RaftManager {
     /// Trigger snapshot creation
     pub async fn create_snapshot(&self) -> crate::Result<()> {
         if let Some(ref raft) = self.raft {
-            raft.trigger()
-                .snapshot()
-                .await
-                .map_err(|e| crate::error::RustMqError::SnapshotError(format!("Failed to create snapshot: {}", e)))?;
+            raft.trigger().snapshot().await.map_err(|e| {
+                crate::error::RustMqError::SnapshotError(format!(
+                    "Failed to create snapshot: {}",
+                    e
+                ))
+            })?;
             info!("Snapshot creation triggered");
             Ok(())
         } else {
-            Err(crate::error::RustMqError::RaftError("Raft not initialized".to_string()))
+            Err(crate::error::RustMqError::RaftError(
+                "Raft not initialized".to_string(),
+            ))
         }
     }
 
@@ -446,7 +484,7 @@ impl RaftManager {
             raft_metrics,
             performance_metrics,
             storage_metrics: StorageMetrics::default(), // Would be populated from actual storage
-            network_metrics: NetworkMetrics::default(),  // Would be populated from network layer
+            network_metrics: NetworkMetrics::default(), // Would be populated from network layer
             compaction_metrics: CompactionMetrics {
                 total_compactions: compaction_stats.total_compactions,
                 last_compaction_duration_ms: compaction_stats.avg_compaction_time_ms,
@@ -477,9 +515,9 @@ impl RaftManager {
 
         // Shutdown OpenRaft
         if let Some(raft) = self.raft.take() {
-            raft.shutdown()
-                .await
-                .map_err(|e| crate::error::RustMqError::RaftError(format!("Failed to shutdown Raft: {}", e)))?;
+            raft.shutdown().await.map_err(|e| {
+                crate::error::RustMqError::RaftError(format!("Failed to shutdown Raft: {}", e))
+            })?;
         }
 
         // Stop performance optimizer
@@ -497,33 +535,39 @@ impl RaftManager {
     }
 
     /// Wait for the manager to reach a specific state
-    pub async fn wait_for_state(&self, target_state: ManagerState, timeout: Duration) -> crate::Result<()> {
+    pub async fn wait_for_state(
+        &self,
+        target_state: ManagerState,
+        timeout: Duration,
+    ) -> crate::Result<()> {
         let start = tokio::time::Instant::now();
-        
+
         while start.elapsed() < timeout {
             let current_state = self.state.read().await.clone();
             if current_state == target_state {
                 return Ok(());
             }
-            
+
             if matches!(current_state, ManagerState::Error(_)) {
-                return Err(crate::error::RustMqError::RaftError(
-                    format!("Manager entered error state: {:?}", current_state)
-                ));
+                return Err(crate::error::RustMqError::RaftError(format!(
+                    "Manager entered error state: {:?}",
+                    current_state
+                )));
             }
-            
+
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
-        Err(crate::error::RustMqError::ConsensusTimeout(
-            format!("Timeout waiting for state {:?}", target_state)
-        ))
+
+        Err(crate::error::RustMqError::ConsensusTimeout(format!(
+            "Timeout waiting for state {:?}",
+            target_state
+        )))
     }
 
     /// Perform health check
     pub async fn health_check(&self) -> HealthCheckResult {
         let state = self.state.read().await.clone();
-        
+
         match state {
             ManagerState::Running => {
                 // Check Raft health
@@ -548,20 +592,14 @@ impl RaftManager {
                     HealthCheckResult::Healthy
                 } else {
                     HealthCheckResult::Degraded(format!(
-                        "Raft healthy: {}, Network healthy: {}", 
+                        "Raft healthy: {}, Network healthy: {}",
                         raft_healthy, network_healthy
                     ))
                 }
             }
-            ManagerState::Starting | ManagerState::Initializing => {
-                HealthCheckResult::Starting
-            }
-            ManagerState::Stopping | ManagerState::Stopped => {
-                HealthCheckResult::Stopping
-            }
-            ManagerState::Error(ref err) => {
-                HealthCheckResult::Unhealthy(err.clone())
-            }
+            ManagerState::Starting | ManagerState::Initializing => HealthCheckResult::Starting,
+            ManagerState::Stopping | ManagerState::Stopped => HealthCheckResult::Stopping,
+            ManagerState::Error(ref err) => HealthCheckResult::Unhealthy(err.clone()),
         }
     }
 }
@@ -591,7 +629,7 @@ mod tests {
         let mut config = RaftManagerConfig::default();
         config.storage_config.data_dir = temp_dir.path().to_path_buf();
         config.node_id = 1;
-        
+
         let manager = RaftManager::new(config).await.unwrap();
         (manager, temp_dir)
     }
@@ -599,7 +637,7 @@ mod tests {
     #[tokio::test]
     async fn test_manager_creation() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let state = manager.get_state().await;
         assert_eq!(state, ManagerState::Initializing);
     }
@@ -607,9 +645,9 @@ mod tests {
     #[tokio::test]
     async fn test_manager_initialization() {
         let (mut manager, _temp_dir) = create_test_manager().await;
-        
+
         manager.initialize().await.unwrap();
-        
+
         let state = manager.get_state().await;
         assert_eq!(state, ManagerState::Starting);
     }
@@ -618,15 +656,15 @@ mod tests {
     async fn test_node_management() {
         let (mut manager, _temp_dir) = create_test_manager().await;
         manager.initialize().await.unwrap();
-        
+
         let node = RustMqNode {
             addr: "localhost".to_string(),
             rpc_port: 9094,
             data: "test-node".to_string(),
         };
-        
+
         manager.add_node(2, node.clone()).await.unwrap();
-        
+
         let nodes = manager.cluster_nodes.read().await;
         assert_eq!(nodes.len(), 1);
         assert!(nodes.contains_key(&2));
@@ -635,13 +673,13 @@ mod tests {
     #[tokio::test]
     async fn test_health_check() {
         let (mut manager, _temp_dir) = create_test_manager().await;
-        
+
         // Should be starting/initializing
         let health = manager.health_check().await;
         assert!(matches!(health, HealthCheckResult::Starting));
-        
+
         manager.initialize().await.unwrap();
-        
+
         // After initialization, should still be starting
         let health = manager.health_check().await;
         assert!(matches!(health, HealthCheckResult::Starting));
@@ -650,21 +688,19 @@ mod tests {
     #[tokio::test]
     async fn test_wait_for_state() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         // Should already be in Initializing state
-        let result = manager.wait_for_state(
-            ManagerState::Initializing, 
-            Duration::from_millis(100)
-        ).await;
-        
+        let result = manager
+            .wait_for_state(ManagerState::Initializing, Duration::from_millis(100))
+            .await;
+
         assert!(result.is_ok());
-        
+
         // Should timeout waiting for Running state
-        let result = manager.wait_for_state(
-            ManagerState::Running, 
-            Duration::from_millis(100)
-        ).await;
-        
+        let result = manager
+            .wait_for_state(ManagerState::Running, Duration::from_millis(100))
+            .await;
+
         assert!(result.is_err());
     }
 
@@ -672,9 +708,9 @@ mod tests {
     async fn test_metrics_collection() {
         let (mut manager, _temp_dir) = create_test_manager().await;
         manager.initialize().await.unwrap();
-        
+
         let metrics = manager.get_metrics().await;
-        
+
         // Should have performance metrics even without Raft running
         assert_eq!(metrics.performance_metrics.total_operations, 0);
         assert_eq!(metrics.compaction_metrics.total_compactions, 0);
@@ -684,9 +720,9 @@ mod tests {
     async fn test_manager_shutdown() {
         let (mut manager, _temp_dir) = create_test_manager().await;
         manager.initialize().await.unwrap();
-        
+
         manager.shutdown().await.unwrap();
-        
+
         let state = manager.get_state().await;
         assert_eq!(state, ManagerState::Stopped);
     }

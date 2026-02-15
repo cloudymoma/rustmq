@@ -1,17 +1,18 @@
+use async_trait::async_trait;
 use rustmq_client::{
     client::RustMqClient,
     config::{ClientConfig, ConsumerConfig, ProducerConfig},
     error::{ClientError, Result},
     message::{Message, MessageBuilder},
-    stream::{
-        MessageStream, StreamConfig, StreamMode, ErrorStrategy, MessageProcessor
-    },
+    stream::{ErrorStrategy, MessageProcessor, MessageStream, StreamConfig, StreamMode},
 };
-use async_trait::async_trait;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 /// Test message processor that counts processed messages
 struct TestProcessor {
@@ -49,31 +50,36 @@ impl MessageProcessor for TestProcessor {
         }
 
         self.processed_count.fetch_add(1, Ordering::Relaxed);
-        
+
         // Transform the message by adding a prefix
         let mut processed_message = message.clone();
-        processed_message.payload = format!("processed_{}", 
-            String::from_utf8_lossy(&message.payload)).into();
-        
+        processed_message.payload =
+            format!("processed_{}", String::from_utf8_lossy(&message.payload)).into();
+
         Ok(Some(processed_message))
     }
 
     async fn process_batch(&self, messages: &[Message]) -> Result<Vec<Option<Message>>> {
         if *self.should_fail.lock().await {
-            return Err(ClientError::Stream("Test batch processing failure".to_string()));
+            return Err(ClientError::Stream(
+                "Test batch processing failure".to_string(),
+            ));
         }
 
         let mut results = Vec::with_capacity(messages.len());
         for message in messages {
             self.processed_count.fetch_add(1, Ordering::Relaxed);
-            
+
             let mut processed_message = message.clone();
-            processed_message.payload = format!("batch_processed_{}", 
-                String::from_utf8_lossy(&message.payload)).into();
-            
+            processed_message.payload = format!(
+                "batch_processed_{}",
+                String::from_utf8_lossy(&message.payload)
+            )
+            .into();
+
             results.push(Some(processed_message));
         }
-        
+
         Ok(results)
     }
 }
@@ -96,7 +102,10 @@ impl MockClient {
 
     async fn add_messages_for_topic(&self, topic: &str, messages: Vec<Message>) {
         let mut consumers = self.consumers.lock().await;
-        consumers.entry(topic.to_string()).or_insert_with(Vec::new).extend(messages);
+        consumers
+            .entry(topic.to_string())
+            .or_insert_with(Vec::new)
+            .extend(messages);
     }
 
     async fn get_produced_messages(&self, topic: &str) -> Vec<Message> {
@@ -119,12 +128,14 @@ async fn test_stream_individual_processing() {
             .id("msg1")
             .topic("test_input")
             .payload(b"hello".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
         MessageBuilder::new()
             .id("msg2")
             .topic("test_input")
             .payload(b"world".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
     ];
 
     let processor = TestProcessor::new();
@@ -135,7 +146,7 @@ async fn test_stream_individual_processing() {
     assert_eq!(initial_count, 0);
     assert!(config.input_topics.contains(&"test_input".to_string()));
     assert_eq!(config.output_topic, Some("test_output".to_string()));
-    
+
     // Test processor directly
     let result = processor.process(&test_messages[0]).await;
     assert!(result.is_ok());
@@ -145,29 +156,32 @@ async fn test_stream_individual_processing() {
 #[tokio::test]
 async fn test_stream_batch_processing() {
     let mut config = StreamConfig::default();
-    config.mode = StreamMode::Batch { 
-        batch_size: 3, 
-        batch_timeout: Duration::from_millis(1000) 
+    config.mode = StreamMode::Batch {
+        batch_size: 3,
+        batch_timeout: Duration::from_millis(1000),
     };
 
     let processor = TestProcessor::new();
-    
+
     let test_messages = vec![
         MessageBuilder::new()
             .id("msg1")
             .topic("test_input")
             .payload(b"hello".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
         MessageBuilder::new()
             .id("msg2")
             .topic("test_input")
             .payload(b"world".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
         MessageBuilder::new()
             .id("msg3")
             .topic("test_input")
             .payload(b"test".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
     ];
 
     let result = processor.process_batch(&test_messages).await;
@@ -176,7 +190,7 @@ async fn test_stream_batch_processing() {
 
     let processed_messages = result.unwrap();
     assert_eq!(processed_messages.len(), 3);
-    
+
     for (i, msg_opt) in processed_messages.iter().enumerate() {
         assert!(msg_opt.is_some());
         let msg = msg_opt.as_ref().unwrap();
@@ -187,13 +201,17 @@ async fn test_stream_batch_processing() {
 #[tokio::test]
 async fn test_stream_windowed_processing() {
     let mut config = StreamConfig::default();
-    config.mode = StreamMode::Windowed { 
+    config.mode = StreamMode::Windowed {
         window_size: Duration::from_millis(100),
-        slide_interval: Duration::from_millis(50)
+        slide_interval: Duration::from_millis(50),
     };
 
     // Test configuration
-    if let StreamMode::Windowed { window_size, slide_interval } = &config.mode {
+    if let StreamMode::Windowed {
+        window_size,
+        slide_interval,
+    } = &config.mode
+    {
         assert_eq!(*window_size, Duration::from_millis(100));
         assert_eq!(*slide_interval, Duration::from_millis(50));
     } else {
@@ -209,13 +227,14 @@ async fn test_error_strategy_skip() {
     };
 
     let processor = TestProcessor::new().with_failure_mode(true).await;
-    
+
     // Test that the processor would fail
     let test_message = MessageBuilder::new()
         .id("fail_msg")
         .topic("test_input")
         .payload(b"test".to_vec())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let result = processor.process(&test_message).await;
     assert!(result.is_err());
@@ -225,14 +244,18 @@ async fn test_error_strategy_skip() {
 #[tokio::test]
 async fn test_error_strategy_retry() {
     let config = StreamConfig {
-        error_strategy: ErrorStrategy::Retry { 
-            max_attempts: 3, 
-            backoff_ms: 100 
+        error_strategy: ErrorStrategy::Retry {
+            max_attempts: 3,
+            backoff_ms: 100,
         },
         ..Default::default()
     };
 
-    if let ErrorStrategy::Retry { max_attempts, backoff_ms } = &config.error_strategy {
+    if let ErrorStrategy::Retry {
+        max_attempts,
+        backoff_ms,
+    } = &config.error_strategy
+    {
         assert_eq!(*max_attempts, 3);
         assert_eq!(*backoff_ms, 100);
     } else {
@@ -243,8 +266,8 @@ async fn test_error_strategy_retry() {
 #[tokio::test]
 async fn test_error_strategy_dead_letter() {
     let config = StreamConfig {
-        error_strategy: ErrorStrategy::DeadLetter { 
-            topic: "dead_letter_queue".to_string() 
+        error_strategy: ErrorStrategy::DeadLetter {
+            topic: "dead_letter_queue".to_string(),
         },
         ..Default::default()
     };
@@ -269,7 +292,7 @@ async fn test_error_strategy_stop() {
 #[tokio::test]
 async fn test_stream_config_default() {
     let config = StreamConfig::default();
-    
+
     assert_eq!(config.input_topics, vec!["input".to_string()]);
     assert_eq!(config.output_topic, Some("output".to_string()));
     assert_eq!(config.consumer_group, "stream-processor");
@@ -284,15 +307,15 @@ async fn test_stream_config_default() {
 #[tokio::test]
 async fn test_processor_state_management() {
     let processor = TestProcessor::new();
-    
+
     // Test initial state
     assert_eq!(processor.processed_count(), 0);
     assert!(!*processor.should_fail.lock().await);
-    
+
     // Test state changes
     processor.set_failure_mode(true).await;
     assert!(*processor.should_fail.lock().await);
-    
+
     processor.set_failure_mode(false).await;
     assert!(!*processor.should_fail.lock().await);
 }
@@ -300,16 +323,17 @@ async fn test_processor_state_management() {
 #[tokio::test]
 async fn test_message_transformation() {
     let processor = TestProcessor::new();
-    
+
     let original_message = MessageBuilder::new()
         .id("transform_test")
         .topic("test_input")
         .payload(b"original_data".to_vec())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let result = processor.process(&original_message).await;
     assert!(result.is_ok());
-    
+
     let processed_message = result.unwrap().unwrap();
     let processed_payload = String::from_utf8_lossy(&processed_message.payload);
     assert_eq!(processed_payload, "processed_original_data");
@@ -319,43 +343,45 @@ async fn test_message_transformation() {
 #[tokio::test]
 async fn test_batch_vs_individual_processing() {
     let processor = TestProcessor::new();
-    
+
     let test_messages = vec![
         MessageBuilder::new()
             .id("msg1")
             .topic("test_input")
             .payload(b"test1".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
         MessageBuilder::new()
             .id("msg2")
             .topic("test_input")
             .payload(b"test2".to_vec())
-            .build().unwrap(),
+            .build()
+            .unwrap(),
     ];
 
     // Test individual processing
     let individual_result1 = processor.process(&test_messages[0]).await;
     let individual_result2 = processor.process(&test_messages[1]).await;
-    
+
     assert!(individual_result1.is_ok());
     assert!(individual_result2.is_ok());
-    
+
     let processed1 = individual_result1.unwrap().unwrap();
     let processed2 = individual_result2.unwrap().unwrap();
-    
+
     assert!(String::from_utf8_lossy(&processed1.payload).starts_with("processed_"));
     assert!(String::from_utf8_lossy(&processed2.payload).starts_with("processed_"));
-    
+
     // Reset processor for batch test
     let batch_processor = TestProcessor::new();
-    
+
     // Test batch processing
     let batch_result = batch_processor.process_batch(&test_messages).await;
     assert!(batch_result.is_ok());
-    
+
     let batch_processed = batch_result.unwrap();
     assert_eq!(batch_processed.len(), 2);
-    
+
     for msg_opt in batch_processed {
         assert!(msg_opt.is_some());
         let msg = msg_opt.unwrap();
@@ -376,7 +402,8 @@ async fn test_concurrent_processing() {
                 .id(format!("concurrent_msg_{}", i))
                 .topic("test_input")
                 .payload(format!("data_{}", i).as_bytes().to_vec())
-                .build().unwrap();
+                .build()
+                .unwrap();
             processor_clone.process(&message).await
         });
         handles.push(handle);
@@ -398,40 +425,43 @@ async fn test_concurrent_processing() {
 #[tokio::test]
 async fn test_error_handling_resilience() {
     let processor = TestProcessor::new();
-    
+
     // Test successful processing
     let success_message = MessageBuilder::new()
         .id("success")
         .topic("test_input")
         .payload(b"good_data".to_vec())
-        .build().unwrap();
-    
+        .build()
+        .unwrap();
+
     let result = processor.process(&success_message).await;
     assert!(result.is_ok());
     assert_eq!(processor.processed_count(), 1);
-    
+
     // Test failure mode
     processor.set_failure_mode(true).await;
-    
+
     let fail_message = MessageBuilder::new()
         .id("failure")
         .topic("test_input")
         .payload(b"bad_data".to_vec())
-        .build().unwrap();
-    
+        .build()
+        .unwrap();
+
     let result = processor.process(&fail_message).await;
     assert!(result.is_err());
     assert_eq!(processor.processed_count(), 1); // Should not increment on failure
-    
+
     // Test recovery
     processor.set_failure_mode(false).await;
-    
+
     let recovery_message = MessageBuilder::new()
         .id("recovery")
         .topic("test_input")
         .payload(b"recovery_data".to_vec())
-        .build().unwrap();
-    
+        .build()
+        .unwrap();
+
     let result = processor.process(&recovery_message).await;
     assert!(result.is_ok());
     assert_eq!(processor.processed_count(), 2); // Should increment again

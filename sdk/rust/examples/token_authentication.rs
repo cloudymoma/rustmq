@@ -4,9 +4,8 @@
 //! with the RustMQ Rust SDK.
 
 use rustmq_client::{
-    ClientConfig, TlsConfig, AuthConfig, ProducerConfig, 
-    RustMqClient, Message, MessageBuilder,
-    Result,
+    AuthConfig, ClientConfig, Message, MessageBuilder, ProducerConfig, Result, RustMqClient,
+    TlsConfig,
 };
 use std::time::Duration;
 use tokio;
@@ -19,11 +18,9 @@ async fn main() -> Result<()> {
     let tls_config = TlsConfig::secure_config(
         // CA certificate (replace with your CA certificate)
         include_str!("../../../certs/ca.pem").to_string(),
-        
         // No client certificate for token auth
         None,
         None,
-        
         // Server name for SNI
         "localhost".to_string(),
     );
@@ -46,18 +43,21 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating RustMQ client with JWT token authentication...");
-    
+
     // Create client
     let client = RustMqClient::new(client_config).await?;
-    
+
     // Verify authentication
     if let Some(connection) = client.get_connection().await {
         if connection.is_security_enabled() {
             println!("✓ Security is enabled");
-            
+
             if let Some(security_context) = connection.get_security_context().await {
-                println!("✓ Authenticated as principal: {}", security_context.principal);
-                
+                println!(
+                    "✓ Authenticated as principal: {}",
+                    security_context.principal
+                );
+
                 // Show token-based permissions
                 let permissions = &security_context.permissions;
                 if !permissions.read_topics.is_empty() {
@@ -67,7 +67,10 @@ async fn main() -> Result<()> {
                     println!("✓ Write access to topics: {:?}", permissions.write_topics);
                 }
                 if !permissions.admin_operations.is_empty() {
-                    println!("✓ Admin access to operations: {:?}", permissions.admin_operations);
+                    println!(
+                        "✓ Admin access to operations: {:?}",
+                        permissions.admin_operations
+                    );
                 }
             }
         } else {
@@ -84,12 +87,12 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating producer with token authentication...");
-    
+
     // Create producer
     let producer = client.create_producer("token-topic").await?;
 
     println!("Sending messages with token authentication...");
-    
+
     // Send messages
     for i in 0..5 {
         let message = MessageBuilder::new()
@@ -102,12 +105,14 @@ async fn main() -> Result<()> {
 
         match producer.send(message).await {
             Ok(metadata) => {
-                println!("✓ Message {} sent successfully - Partition: {}, Offset: {}", 
-                    i, metadata.partition, metadata.offset);
+                println!(
+                    "✓ Message {} sent successfully - Partition: {}, Offset: {}",
+                    i, metadata.partition, metadata.offset
+                );
             }
             Err(e) => {
                 eprintln!("✗ Failed to send message {}: {}", i, e);
-                
+
                 // Check for token-related errors
                 match &e {
                     rustmq_client::ClientError::AuthorizationDenied(msg) => {
@@ -128,7 +133,7 @@ async fn main() -> Result<()> {
 
     // Flush any remaining messages
     producer.flush().await?;
-    
+
     println!("All messages sent successfully with token authentication!");
 
     // Demonstrate token refresh (if supported by the server)
@@ -142,4 +147,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

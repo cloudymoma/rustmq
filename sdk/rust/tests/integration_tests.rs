@@ -1,4 +1,4 @@
-use rustmq_client::{*, message::MessageBatch};
+use rustmq_client::{message::MessageBatch, *};
 use std::time::Duration;
 
 // Note: These integration tests focus on configuration validation
@@ -17,7 +17,7 @@ async fn test_client_creation_and_connection() {
     assert_eq!(config.brokers.len(), 1);
     assert_eq!(config.brokers[0], "localhost:9092");
     assert_eq!(config.client_id.as_ref().unwrap(), "test-client");
-    
+
     // Note: Actual client creation requires a running broker
     // This test validates configuration structure and defaults
 }
@@ -26,17 +26,17 @@ async fn test_client_creation_and_connection() {
 async fn test_producer_creation() {
     // Test producer configuration validation without network connections
     let config = ClientConfig::default();
-    
+
     // Verify default configuration properties
     assert!(!config.brokers.is_empty());
     assert!(config.client_id.is_none());
     assert!(!config.enable_tls);
-    
+
     // Test topic validation for producer creation
     let topic = "test-topic";
     assert!(!topic.is_empty());
     assert!(!topic.contains(' '));
-    
+
     // Note: Actual producer creation requires a running broker and client instance
     // This test validates configuration and topic validation logic
 }
@@ -45,11 +45,11 @@ async fn test_producer_creation() {
 async fn test_consumer_creation() {
     // Test consumer configuration validation without network connections
     let config = ClientConfig::default();
-    
+
     // Verify default configuration properties
     assert!(!config.brokers.is_empty());
     assert!(config.client_id.is_none());
-    
+
     // Test topic and group validation for consumer creation
     let topic = "test-topic";
     let group = "test-group";
@@ -57,7 +57,7 @@ async fn test_consumer_creation() {
     assert!(!group.is_empty());
     assert!(!topic.contains(' '));
     assert!(!group.contains(' '));
-    
+
     // Note: Actual consumer creation requires a running broker and client instance
     // This test validates configuration and parameter validation logic
 }
@@ -83,11 +83,13 @@ async fn test_message_batch_creation() {
         Message::builder()
             .topic("test-topic")
             .payload("Message 1")
-            .build().unwrap(),
+            .build()
+            .unwrap(),
         Message::builder()
             .topic("test-topic")
             .payload("Message 2")
-            .build().unwrap(),
+            .build()
+            .unwrap(),
     ];
 
     let batch = MessageBatch::new(messages);
@@ -140,7 +142,7 @@ async fn test_topic_partition_equality() {
 async fn test_consumer_configuration() {
     use rustmq_client::config::{ConsumerConfig, StartPosition};
     use std::time::Duration;
-    
+
     let config = ConsumerConfig {
         consumer_id: Some("integration-test-consumer".to_string()),
         consumer_group: "integration-test-group".to_string(),
@@ -152,8 +154,11 @@ async fn test_consumer_configuration() {
         max_retry_attempts: 2,
         dead_letter_queue: Some("test-dlq".to_string()),
     };
-    
-    assert_eq!(config.consumer_id.as_ref().unwrap(), "integration-test-consumer");
+
+    assert_eq!(
+        config.consumer_id.as_ref().unwrap(),
+        "integration-test-consumer"
+    );
     assert_eq!(config.consumer_group, "integration-test-group");
     assert_eq!(config.fetch_size, 50);
     assert!(matches!(config.start_position, StartPosition::Earliest));
@@ -162,10 +167,10 @@ async fn test_consumer_configuration() {
 #[tokio::test]
 async fn test_consumer_with_custom_config() {
     use rustmq_client::config::{ConsumerConfig, StartPosition};
-    
+
     // Test consumer configuration validation without network connections
     let config = ClientConfig::default();
-    
+
     // Test custom consumer configuration
     let consumer_config = ConsumerConfig {
         consumer_id: Some("test-consumer-123".to_string()),
@@ -176,20 +181,26 @@ async fn test_consumer_with_custom_config() {
         dead_letter_queue: Some("test-failures".to_string()),
         ..Default::default()
     };
-    
+
     // Verify configuration properties
-    assert_eq!(consumer_config.consumer_id.as_ref().unwrap(), "test-consumer-123");
+    assert_eq!(
+        consumer_config.consumer_id.as_ref().unwrap(),
+        "test-consumer-123"
+    );
     assert_eq!(consumer_config.fetch_size, 25);
     assert!(!consumer_config.enable_auto_commit);
     assert_eq!(consumer_config.max_retry_attempts, 5);
-    assert_eq!(consumer_config.dead_letter_queue.as_ref().unwrap(), "test-failures");
-    
+    assert_eq!(
+        consumer_config.dead_letter_queue.as_ref().unwrap(),
+        "test-failures"
+    );
+
     // Test topic and group validation
     let topic = "integration-test-topic";
     let group = "integration-test-group";
     assert!(!topic.is_empty());
     assert!(!group.is_empty());
-    
+
     // Note: Actual consumer creation requires a running broker and client instance
     // This test validates consumer configuration and builder pattern setup
 }
@@ -198,7 +209,7 @@ async fn test_consumer_with_custom_config() {
 async fn test_consumer_stream_interface() {
     // Test stream interface configuration validation without network connections
     let config = ClientConfig::default();
-    
+
     // Test topic and group validation for streaming
     let topic = "stream-test-topic";
     let group = "stream-test-group";
@@ -206,11 +217,11 @@ async fn test_consumer_stream_interface() {
     assert!(!group.is_empty());
     assert!(!topic.contains(' '));
     assert!(!group.contains(' '));
-    
+
     // Verify client configuration for streaming
     assert!(!config.brokers.is_empty());
     assert!(config.client_id.is_none());
-    
+
     // Note: Actual stream interface requires a running broker and consumer instance
     // This test validates configuration for streaming scenarios
 }
@@ -219,7 +230,7 @@ async fn test_consumer_stream_interface() {
 async fn test_consumer_metrics_integration() {
     // Test metrics configuration validation without network connections
     let config = ClientConfig::default();
-    
+
     // Test topic and group validation for metrics scenarios
     let topic = "metrics-test-topic";
     let group = "metrics-test-group";
@@ -227,11 +238,11 @@ async fn test_consumer_metrics_integration() {
     assert!(!group.is_empty());
     assert!(!topic.contains(' '));
     assert!(!group.contains(' '));
-    
+
     // Verify configuration properties for metrics tracking
     assert!(!config.brokers.is_empty());
     assert!(config.client_id.is_none());
-    
+
     // Note: Actual metrics require a running broker and consumer instance
     // This test validates configuration for metrics scenarios
 }

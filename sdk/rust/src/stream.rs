@@ -1,15 +1,15 @@
 use crate::{
     client::RustMqClient,
+    consumer::{Consumer, ConsumerMessage},
     error::{ClientError, Result},
     message::Message,
-    consumer::{Consumer, ConsumerMessage},
     producer::Producer,
 };
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info};
-use async_trait::async_trait;
 
 /// High-level streaming interface for real-time message processing
 pub struct MessageStream {
@@ -28,28 +28,28 @@ pub struct MessageStream {
 pub struct StreamConfig {
     /// Input topics to consume from
     pub input_topics: Vec<String>,
-    
+
     /// Output topic for processed messages
     pub output_topic: Option<String>,
-    
+
     /// Consumer group for stream processing
     pub consumer_group: String,
-    
+
     /// Processing parallelism level
     pub parallelism: usize,
-    
+
     /// Processing timeout per message
     pub processing_timeout: std::time::Duration,
-    
+
     /// Enable exactly-once processing
     pub exactly_once: bool,
-    
+
     /// Maximum messages in flight
     pub max_in_flight: usize,
-    
+
     /// Error handling strategy
     pub error_strategy: ErrorStrategy,
-    
+
     /// Stream processing mode
     pub mode: StreamMode,
 }
@@ -59,12 +59,18 @@ pub struct StreamConfig {
 pub enum StreamMode {
     /// Process each message individually
     Individual,
-    
+
     /// Process messages in batches
-    Batch { batch_size: usize, batch_timeout: std::time::Duration },
-    
+    Batch {
+        batch_size: usize,
+        batch_timeout: std::time::Duration,
+    },
+
     /// Process with windowing
-    Windowed { window_size: std::time::Duration, slide_interval: std::time::Duration },
+    Windowed {
+        window_size: std::time::Duration,
+        slide_interval: std::time::Duration,
+    },
 }
 
 /// Error handling strategies
@@ -72,13 +78,16 @@ pub enum StreamMode {
 pub enum ErrorStrategy {
     /// Skip failed messages
     Skip,
-    
+
     /// Retry failed messages
-    Retry { max_attempts: usize, backoff_ms: u64 },
-    
+    Retry {
+        max_attempts: usize,
+        backoff_ms: u64,
+    },
+
     /// Send failed messages to dead letter queue
     DeadLetter { topic: String },
-    
+
     /// Stop processing on error
     Stop,
 }
@@ -88,7 +97,7 @@ pub enum ErrorStrategy {
 pub trait MessageProcessor {
     /// Process a single message
     async fn process(&self, message: &Message) -> Result<Option<Message>>;
-    
+
     /// Process a batch of messages
     async fn process_batch(&self, messages: &[Message]) -> Result<Vec<Option<Message>>> {
         let mut results = Vec::with_capacity(messages.len());
@@ -97,17 +106,17 @@ pub trait MessageProcessor {
         }
         Ok(results)
     }
-    
+
     /// Called when stream starts
     async fn on_start(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Called when stream stops
     async fn on_stop(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Called on processing error
     async fn on_error(&self, message: &Message, error: &ClientError) -> Result<()> {
         error!("Processing error for message {}: {}", message.id, error);
@@ -144,17 +153,15 @@ struct Window {
     messages: Vec<(Message, ConsumerMessage)>,
 }
 
-
 impl MessageStream {
     /// Create a new message stream
-    pub async fn new(
-        client: RustMqClient,
-        config: StreamConfig,
-    ) -> Result<Self> {
+    pub async fn new(client: RustMqClient, config: StreamConfig) -> Result<Self> {
         // Create consumers for input topics
         let mut consumers = Vec::new();
         for topic in &config.input_topics {
-            let consumer = client.create_consumer(topic, &config.consumer_group).await?;
+            let consumer = client
+                .create_consumer(topic, &config.consumer_group)
+                .await?;
             consumers.push(consumer);
         }
 
@@ -177,7 +184,10 @@ impl MessageStream {
     }
 
     /// Set custom message processor
-    pub fn with_processor<P: MessageProcessor + Send + Sync + 'static>(mut self, processor: P) -> Self {
+    pub fn with_processor<P: MessageProcessor + Send + Sync + 'static>(
+        mut self,
+        processor: P,
+    ) -> Self {
         self.processor = Arc::new(processor);
         self
     }
@@ -187,7 +197,9 @@ impl MessageStream {
         {
             let mut is_running = self.is_running.write().await;
             if *is_running {
-                return Err(ClientError::InvalidOperation("Stream is already running".to_string()));
+                return Err(ClientError::InvalidOperation(
+                    "Stream is already running".to_string(),
+                ));
             }
             *is_running = true;
         }
@@ -199,15 +211,26 @@ impl MessageStream {
             StreamMode::Individual => {
                 self.start_individual_processing().await?;
             }
-            StreamMode::Batch { batch_size, batch_timeout } => {
-                self.start_batch_processing(*batch_size, *batch_timeout).await?;
+            StreamMode::Batch {
+                batch_size,
+                batch_timeout,
+            } => {
+                self.start_batch_processing(*batch_size, *batch_timeout)
+                    .await?;
             }
-            StreamMode::Windowed { window_size, slide_interval } => {
-                self.start_windowed_processing(*window_size, *slide_interval).await?;
+            StreamMode::Windowed {
+                window_size,
+                slide_interval,
+            } => {
+                self.start_windowed_processing(*window_size, *slide_interval)
+                    .await?;
             }
         }
 
-        info!("Message stream started with {} consumers", self.consumers.len());
+        info!(
+            "Message stream started with {} consumers",
+            self.consumers.len()
+        );
         Ok(())
     }
 
@@ -240,7 +263,7 @@ impl MessageStream {
     /// Start individual message processing
     async fn start_individual_processing(&self) -> Result<()> {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_in_flight));
-        
+
         for consumer in &self.consumers {
             let consumer = consumer.clone();
             let processor = self.processor.clone();
@@ -255,7 +278,7 @@ impl MessageStream {
                     match consumer.receive().await {
                         Ok(Some(consumer_message)) => {
                             let _permit = semaphore.acquire().await.unwrap();
-                            
+
                             let processor = processor.clone();
                             let producer = producer.clone();
                             let config = config.clone();
@@ -264,13 +287,12 @@ impl MessageStream {
 
                             tokio::spawn(async move {
                                 let start_time = std::time::Instant::now();
-                                
+
                                 match Self::process_single_message(
-                                    &processor,
-                                    &producer,
-                                    &config,
-                                    message,
-                                ).await {
+                                    &processor, &producer, &config, message,
+                                )
+                                .await
+                                {
                                     Ok(_) => {
                                         consumer_message.ack().await.ok();
                                         Self::update_success_metrics(&metrics, start_time).await;
@@ -281,7 +303,8 @@ impl MessageStream {
                                             &config,
                                             &metrics,
                                             e,
-                                        ).await;
+                                        )
+                                        .await;
                                     }
                                 }
                             });
@@ -319,13 +342,16 @@ impl MessageStream {
                 let _pending_messages: Vec<Message> = Vec::new();
 
                 while *is_running.read().await {
-                    let should_process_batch = batch.len() >= batch_size ||
-                        (last_batch_time.elapsed() >= batch_timeout && !batch.is_empty());
+                    let should_process_batch = batch.len() >= batch_size
+                        || (last_batch_time.elapsed() >= batch_timeout && !batch.is_empty());
 
                     if should_process_batch {
                         let batch_start_time = std::time::Instant::now();
-                        
-                        let messages: Vec<Message> = batch.iter().map(|(msg, _): &(Message, ConsumerMessage)| msg.clone()).collect();
+
+                        let messages: Vec<Message> = batch
+                            .iter()
+                            .map(|(msg, _): &(Message, ConsumerMessage)| msg.clone())
+                            .collect();
                         match processor.process_batch(&messages).await {
                             Ok(results) => {
                                 // Send results to output topic if specified
@@ -344,7 +370,12 @@ impl MessageStream {
                                     consumer_message.ack().await.ok();
                                 }
 
-                                Self::update_batch_success_metrics(&metrics, batch.len(), batch_start_time).await;
+                                Self::update_batch_success_metrics(
+                                    &metrics,
+                                    batch.len(),
+                                    batch_start_time,
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 // Handle batch processing error
@@ -354,7 +385,8 @@ impl MessageStream {
                                         &config,
                                         &metrics,
                                         e.clone(),
-                                    ).await;
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -366,8 +398,10 @@ impl MessageStream {
                     // Try to receive new message with timeout
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(100),
-                        consumer.receive()
-                    ).await {
+                        consumer.receive(),
+                    )
+                    .await
+                    {
                         Ok(Ok(Some(consumer_message))) => {
                             batch.push((consumer_message.message.clone(), consumer_message));
                         }
@@ -419,12 +453,13 @@ impl MessageStream {
             let is_running = self.is_running.clone();
 
             tokio::spawn(async move {
-                let mut windows: std::collections::VecDeque<Window> = std::collections::VecDeque::new();
+                let mut windows: std::collections::VecDeque<Window> =
+                    std::collections::VecDeque::new();
                 let mut last_slide = std::time::Instant::now();
 
                 while *is_running.read().await {
                     let now = std::time::Instant::now();
-                    
+
                     // Create new window if it's time to slide
                     if last_slide.elapsed() >= slide_interval {
                         let window_start = now;
@@ -443,17 +478,25 @@ impl MessageStream {
                             let completed_window = windows.pop_front().unwrap();
                             if !completed_window.messages.is_empty() {
                                 let window_start_time = std::time::Instant::now();
-                                let messages: Vec<Message> = completed_window.messages.iter()
-                                    .map(|(msg, _): &(Message, ConsumerMessage)| msg.clone()).collect();
-                                
+                                let messages: Vec<Message> = completed_window
+                                    .messages
+                                    .iter()
+                                    .map(|(msg, _): &(Message, ConsumerMessage)| msg.clone())
+                                    .collect();
+
                                 match processor.process_batch(&messages).await {
                                     Ok(results) => {
                                         // Send results to output topic if specified
                                         if let Some(producer) = &producer {
                                             for result in results {
                                                 if let Some(output_message) = result {
-                                                    if let Err(e) = producer.send(output_message).await {
-                                                        error!("Failed to send windowed result: {}", e);
+                                                    if let Err(e) =
+                                                        producer.send(output_message).await
+                                                    {
+                                                        error!(
+                                                            "Failed to send windowed result: {}",
+                                                            e
+                                                        );
                                                     }
                                                 }
                                             }
@@ -464,17 +507,25 @@ impl MessageStream {
                                             consumer_message.ack().await.ok();
                                         }
 
-                                        Self::update_batch_success_metrics(&metrics, completed_window.messages.len(), window_start_time).await;
+                                        Self::update_batch_success_metrics(
+                                            &metrics,
+                                            completed_window.messages.len(),
+                                            window_start_time,
+                                        )
+                                        .await;
                                     }
                                     Err(e) => {
                                         // Handle window processing error
-                                        for (_message, consumer_message) in &completed_window.messages {
+                                        for (_message, consumer_message) in
+                                            &completed_window.messages
+                                        {
                                             Self::handle_processing_error(
                                                 consumer_message,
                                                 &config,
                                                 &metrics,
                                                 e.clone(),
-                                            ).await;
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
@@ -487,15 +538,22 @@ impl MessageStream {
                     // Try to receive new message with timeout
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(100),
-                        consumer.receive()
-                    ).await {
+                        consumer.receive(),
+                    )
+                    .await
+                    {
                         Ok(Ok(Some(consumer_message))) => {
                             let message_time = std::time::Instant::now();
-                            
+
                             // Add message to all active windows that should contain it
                             for window in &mut windows {
-                                if message_time >= window.start_time && message_time < window.end_time {
-                                    window.messages.push((consumer_message.message.clone(), consumer_message.clone()));
+                                if message_time >= window.start_time
+                                    && message_time < window.end_time
+                                {
+                                    window.messages.push((
+                                        consumer_message.message.clone(),
+                                        consumer_message.clone(),
+                                    ));
                                 }
                             }
                         }
@@ -513,8 +571,11 @@ impl MessageStream {
                 // Process any remaining windows before shutting down
                 for window in windows {
                     if !window.messages.is_empty() {
-                        let messages: Vec<Message> = window.messages.iter()
-                            .map(|(msg, _): &(Message, ConsumerMessage)| msg.clone()).collect();
+                        let messages: Vec<Message> = window
+                            .messages
+                            .iter()
+                            .map(|(msg, _): &(Message, ConsumerMessage)| msg.clone())
+                            .collect();
                         if let Ok(results) = processor.process_batch(&messages).await {
                             if let Some(producer) = &producer {
                                 for result in results {
@@ -542,10 +603,8 @@ impl MessageStream {
         config: &StreamConfig,
         message: Message,
     ) -> Result<()> {
-        let result = tokio::time::timeout(
-            config.processing_timeout,
-            processor.process(&message),
-        ).await??;
+        let result =
+            tokio::time::timeout(config.processing_timeout, processor.process(&message)).await??;
 
         // Send result to output topic if specified
         if let (Some(output_message), Some(producer)) = (result, producer) {
@@ -563,7 +622,7 @@ impl MessageStream {
         error: ClientError,
     ) {
         use std::sync::atomic::Ordering;
-        
+
         metrics.messages_failed.fetch_add(1, Ordering::Relaxed);
 
         match &config.error_strategy {
@@ -572,7 +631,10 @@ impl MessageStream {
                 consumer_message.ack().await.ok();
                 metrics.messages_skipped.fetch_add(1, Ordering::Relaxed);
             }
-            ErrorStrategy::Retry { max_attempts: _, backoff_ms: _ } => {
+            ErrorStrategy::Retry {
+                max_attempts: _,
+                backoff_ms: _,
+            } => {
                 // For now, just nack and let the consumer handle retry
                 // In a full implementation, we'd track retry counts per message
                 error!("Message processing failed, will retry: {}", error);
@@ -604,30 +666,53 @@ impl MessageStream {
                 error!("Skipping failed message {}: {}", message.id, error);
                 consumer_message.ack().await.ok();
             }
-            ErrorStrategy::Retry { max_attempts: _, backoff_ms: _ } => {
+            ErrorStrategy::Retry {
+                max_attempts: _,
+                backoff_ms: _,
+            } => {
                 // Simplified retry - just nack and let the consumer handle it
-                error!("Message {} failed, nacking for retry: {}", message.id, error);
+                error!(
+                    "Message {} failed, nacking for retry: {}",
+                    message.id, error
+                );
                 consumer_message.nack().await.ok();
             }
             ErrorStrategy::DeadLetter { topic } => {
-                error!("Sending message {} to dead letter queue {}: {}", message.id, topic, error);
-                
+                error!(
+                    "Sending message {} to dead letter queue {}: {}",
+                    message.id, topic, error
+                );
+
                 // Create dead letter message
                 if let Some(producer) = producer {
                     let mut dead_letter_message = message.clone();
-                    dead_letter_message.headers.insert("original_topic".to_string(), 
-                        consumer_message.message.headers.get("topic").cloned().unwrap_or_default());
-                    dead_letter_message.headers.insert("error".to_string(), error.to_string());
-                    dead_letter_message.headers.insert("failed_at".to_string(), 
-                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default().as_secs().to_string());
-                    
+                    dead_letter_message.headers.insert(
+                        "original_topic".to_string(),
+                        consumer_message
+                            .message
+                            .headers
+                            .get("topic")
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                    dead_letter_message
+                        .headers
+                        .insert("error".to_string(), error.to_string());
+                    dead_letter_message.headers.insert(
+                        "failed_at".to_string(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                            .to_string(),
+                    );
+
                     // Try to send to dead letter topic
                     if let Err(e) = producer.send(dead_letter_message).await {
                         error!("Failed to send message to dead letter queue: {}", e);
                     }
                 }
-                
+
                 consumer_message.ack().await.ok();
             }
             ErrorStrategy::Stop => {
@@ -639,21 +724,18 @@ impl MessageStream {
     }
 
     /// Update success metrics
-    async fn update_success_metrics(
-        metrics: &StreamMetrics,
-        start_time: std::time::Instant,
-    ) {
+    async fn update_success_metrics(metrics: &StreamMetrics, start_time: std::time::Instant) {
         use std::sync::atomic::Ordering;
-        
+
         metrics.messages_processed.fetch_add(1, Ordering::Relaxed);
-        
+
         let processing_time = start_time.elapsed().as_millis() as f64;
         {
             let mut avg_time = metrics.average_processing_time.write().await;
             let count = metrics.messages_processed.load(Ordering::Relaxed) as f64;
             *avg_time = (*avg_time * (count - 1.0) + processing_time) / count;
         }
-        
+
         {
             let mut last_processed = metrics.last_processed_time.write().await;
             *last_processed = Some(std::time::Instant::now());
@@ -667,16 +749,18 @@ impl MessageStream {
         start_time: std::time::Instant,
     ) {
         use std::sync::atomic::Ordering;
-        
-        metrics.messages_processed.fetch_add(batch_size as u64, Ordering::Relaxed);
-        
+
+        metrics
+            .messages_processed
+            .fetch_add(batch_size as u64, Ordering::Relaxed);
+
         let processing_time = start_time.elapsed().as_millis() as f64;
         {
             let mut avg_time = metrics.average_processing_time.write().await;
             let count = metrics.messages_processed.load(Ordering::Relaxed) as f64;
             *avg_time = (*avg_time * (count - batch_size as f64) + processing_time) / count;
         }
-        
+
         {
             let mut last_processed = metrics.last_processed_time.write().await;
             *last_processed = Some(std::time::Instant::now());

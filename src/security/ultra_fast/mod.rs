@@ -17,41 +17,41 @@
 //! - Throughput: >10M operations/second/core
 //! - Memory usage: 50% reduction vs baseline
 
-pub mod lockfree_cache;
-pub mod thread_local_cache;
-pub mod simd_evaluator;
 pub mod compact_encoding;
+pub mod lockfree_cache;
 pub mod metrics;
+pub mod simd_evaluator;
+pub mod thread_local_cache;
 
 #[cfg(test)]
 pub mod tests;
 
 use crate::error::{Result, RustMqError};
-use crate::security::{SecurityMetrics, AclConfig};
-use crate::security::auth::{AclKey, Permission, AuthContext};
+use crate::security::auth::{AclKey, AuthContext, Permission};
+use crate::security::{AclConfig, SecurityMetrics};
 
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use lockfree_cache::LockFreeAuthCache;
-pub use thread_local_cache::ThreadLocalAuthCache;
-pub use simd_evaluator::VectorizedPermissionEvaluator;
 pub use compact_encoding::{CompactAuthEntry, CompactPermissionSet};
+pub use lockfree_cache::LockFreeAuthCache;
+pub use simd_evaluator::VectorizedPermissionEvaluator;
+pub use thread_local_cache::ThreadLocalAuthCache;
 
 /// Ultra-fast authorization system targeting sub-100ns latency
 pub struct UltraFastAuthSystem {
     /// Lock-free L2 cache with RCU semantics
     l2_cache: LockFreeAuthCache,
-    
+
     /// Thread-local L1 cache factory
     l1_factory: ThreadLocalCacheFactory,
-    
+
     /// SIMD-optimized permission evaluator
     evaluator: VectorizedPermissionEvaluator,
-    
+
     /// Performance metrics integration
     metrics: Arc<SecurityMetrics>,
-    
+
     /// Configuration
     config: UltraFastConfig,
 }
@@ -61,22 +61,22 @@ pub struct UltraFastAuthSystem {
 pub struct UltraFastConfig {
     /// Enable ultra-fast optimizations
     pub enabled: bool,
-    
+
     /// L1 cache size per thread
     pub l1_cache_size: usize,
-    
+
     /// L2 cache size in MB
     pub l2_cache_size_mb: usize,
-    
+
     /// Enable SIMD optimizations
     pub simd_enabled: bool,
-    
+
     /// Enable cache prefetching
     pub prefetch_enabled: bool,
-    
+
     /// SIMD batch size
     pub batch_size: usize,
-    
+
     /// Performance targets for validation
     pub performance_targets: PerformanceTargets,
 }
@@ -100,13 +100,13 @@ impl Default for UltraFastConfig {
 pub struct PerformanceTargets {
     /// Maximum L1 cache latency in nanoseconds
     pub max_l1_latency_ns: u64,
-    
+
     /// Maximum L2 cache latency in nanoseconds
     pub max_l2_latency_ns: u64,
-    
+
     /// Maximum total authorization latency in nanoseconds
     pub max_total_latency_ns: u64,
-    
+
     /// Minimum throughput in operations per second
     pub min_throughput_ops_per_sec: u64,
 }
@@ -135,7 +135,7 @@ impl ThreadLocalCacheFactory {
             metrics,
         }
     }
-    
+
     /// Get or create thread-local L1 cache
     ///
     /// Returns an Arc to the thread-local cache. Arc auto-derefs for method calls,
@@ -150,19 +150,19 @@ impl ThreadLocalCacheFactory {
 pub struct UltraFastAuthResult {
     /// Whether authorization was granted
     pub allowed: bool,
-    
+
     /// Total latency in nanoseconds
     pub latency_ns: u64,
-    
+
     /// Whether L1 cache was hit
     pub l1_hit: bool,
-    
+
     /// Whether L2 cache was hit
     pub l2_hit: bool,
-    
+
     /// Whether bloom filter was consulted
     pub bloom_checked: bool,
-    
+
     /// Batch size used (for SIMD operations)
     pub batch_size: usize,
 }
@@ -178,17 +178,11 @@ impl UltraFastAuthSystem {
             config.l2_cache_size_mb * 1024 * 1024, // Convert MB to bytes
             metrics.clone(),
         )?;
-        
-        let l1_factory = ThreadLocalCacheFactory::new(
-            config.l1_cache_size,
-            metrics.clone(),
-        );
-        
-        let evaluator = VectorizedPermissionEvaluator::new(
-            config.simd_enabled,
-            config.batch_size,
-        )?;
-        
+
+        let l1_factory = ThreadLocalCacheFactory::new(config.l1_cache_size, metrics.clone());
+
+        let evaluator = VectorizedPermissionEvaluator::new(config.simd_enabled, config.batch_size)?;
+
         Ok(Self {
             l2_cache,
             l1_factory,
@@ -197,18 +191,18 @@ impl UltraFastAuthSystem {
             config,
         })
     }
-    
+
     /// Ultra-fast authorization check (target: <100ns)
     #[inline(always)]
     pub fn authorize_fast(&self, key: &AclKey) -> UltraFastAuthResult {
         let start = Instant::now();
-        
+
         // L1: Check thread-local L1 cache (~5ns target)
         let l1_cache = self.l1_factory.get_cache();
         if let Some(allowed) = l1_cache.get_fast(key) {
             let latency = start.elapsed().as_nanos() as u64;
             self.metrics.record_l1_cache_hit();
-            
+
             return UltraFastAuthResult {
                 allowed,
                 latency_ns: latency,
@@ -218,16 +212,16 @@ impl UltraFastAuthSystem {
                 batch_size: 1,
             };
         }
-        
+
         // L2: Check lock-free L2 cache (~25ns target)
         if let Some(allowed) = self.l2_cache.get_fast(key) {
             let latency = start.elapsed().as_nanos() as u64;
-            
+
             // Update L1 cache for future hits
             l1_cache.insert_fast(key.clone(), allowed);
-            
+
             self.metrics.record_l2_cache_hit();
-            
+
             return UltraFastAuthResult {
                 allowed,
                 latency_ns: latency,
@@ -237,18 +231,18 @@ impl UltraFastAuthSystem {
                 batch_size: 1,
             };
         }
-        
+
         // L3: Fallback to full authorization
         // This would integrate with the existing authorization system
         let allowed = self.authorize_full_fallback(key);
         let latency = start.elapsed().as_nanos() as u64;
-        
+
         // Cache the result in both L1 and L2
         l1_cache.insert_fast(key.clone(), allowed);
         self.l2_cache.insert_fast(key.clone(), allowed);
-        
+
         self.metrics.record_cache_miss();
-        
+
         UltraFastAuthResult {
             allowed,
             latency_ns: latency,
@@ -258,7 +252,7 @@ impl UltraFastAuthSystem {
             batch_size: 1,
         }
     }
-    
+
     /// Batch authorization for SIMD optimization
     pub fn authorize_batch(&self, keys: &[AclKey]) -> Vec<UltraFastAuthResult> {
         if self.config.simd_enabled && keys.len() >= self.config.batch_size {
@@ -268,20 +262,20 @@ impl UltraFastAuthSystem {
             keys.iter().map(|key| self.authorize_fast(key)).collect()
         }
     }
-    
+
     /// SIMD-optimized batch authorization
     fn authorize_batch_simd(&self, keys: &[AclKey]) -> Vec<UltraFastAuthResult> {
         let batch_size = self.config.batch_size;
         let mut results = Vec::with_capacity(keys.len());
-        
+
         for chunk in keys.chunks(batch_size) {
             let batch_results = self.evaluator.evaluate_batch(chunk);
             results.extend(batch_results);
         }
-        
+
         results
     }
-    
+
     /// Fallback to existing authorization system
     fn authorize_full_fallback(&self, key: &AclKey) -> bool {
         // This would integrate with the existing SecurityManager
@@ -289,47 +283,45 @@ impl UltraFastAuthSystem {
         // TODO: Integrate with existing AuthorizationManager
         false
     }
-    
+
     /// Get performance statistics
     pub fn get_performance_stats(&self) -> UltraFastPerformanceStats {
         UltraFastPerformanceStats {
             l1_hit_rate: self.l1_factory.get_cache().hit_rate(),
             l2_hit_rate: self.l2_cache.hit_rate(),
-            average_latency_ns: 0, // TODO: Implement in SecurityMetrics
+            average_latency_ns: 0,     // TODO: Implement in SecurityMetrics
             throughput_ops_per_sec: 0, // TODO: Implement in SecurityMetrics
             memory_usage_bytes: self.l2_cache.memory_usage_bytes(),
         }
     }
-    
+
     /// Validate performance against targets
     pub fn validate_performance(&self) -> Result<()> {
         let stats = self.get_performance_stats();
         let targets = &self.config.performance_targets;
-        
+
         if stats.average_latency_ns > targets.max_total_latency_ns {
             return Err(RustMqError::Performance(format!(
                 "Average latency {}ns exceeds target {}ns",
-                stats.average_latency_ns,
-                targets.max_total_latency_ns
+                stats.average_latency_ns, targets.max_total_latency_ns
             )));
         }
-        
+
         if stats.throughput_ops_per_sec < targets.min_throughput_ops_per_sec {
             return Err(RustMqError::Performance(format!(
                 "Throughput {} ops/sec below target {} ops/sec",
-                stats.throughput_ops_per_sec,
-                targets.min_throughput_ops_per_sec
+                stats.throughput_ops_per_sec, targets.min_throughput_ops_per_sec
             )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Enable or disable ultra-fast optimizations at runtime
     pub fn set_enabled(&mut self, enabled: bool) {
         self.config.enabled = enabled;
     }
-    
+
     /// Check if ultra-fast optimizations are enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
@@ -341,16 +333,16 @@ impl UltraFastAuthSystem {
 pub struct UltraFastPerformanceStats {
     /// L1 cache hit rate (0.0 to 1.0)
     pub l1_hit_rate: f64,
-    
+
     /// L2 cache hit rate (0.0 to 1.0)
     pub l2_hit_rate: f64,
-    
+
     /// Average authorization latency in nanoseconds
     pub average_latency_ns: u64,
-    
+
     /// Throughput in operations per second
     pub throughput_ops_per_sec: u64,
-    
+
     /// Total memory usage in bytes
     pub memory_usage_bytes: usize,
 }

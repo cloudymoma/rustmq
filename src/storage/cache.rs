@@ -1,13 +1,13 @@
-use crate::{Result, storage::traits::Cache, config::CacheConfig};
+use crate::{Result, config::CacheConfig, storage::traits::Cache};
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::sync::Arc;
 use parking_lot::RwLock;
-use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::any::Any;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(feature = "moka-cache")]
 use moka::future::Cache as MokaCache;
@@ -66,11 +66,11 @@ impl LruCache {
     pub fn new(max_size_bytes: u64) -> Self {
         const SHARD_COUNT: usize = 16; // Power of 2 for efficient modulo
         let size_per_shard = max_size_bytes / SHARD_COUNT as u64;
-        
+
         let shards = (0..SHARD_COUNT)
             .map(|_| Arc::new(LruCacheShard::new(size_per_shard)))
             .collect();
-        
+
         Self {
             shards,
             shard_count: SHARD_COUNT,
@@ -170,7 +170,7 @@ impl Cache for LruCache {
         }
         Ok(total_size)
     }
-    
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
@@ -198,7 +198,7 @@ impl MokaCacheAdapter {
                 tracing::debug!("Cache eviction: key={}, cause={:?}", key, cause);
             })
             .build();
-        
+
         Self { inner: cache }
     }
 }
@@ -209,26 +209,26 @@ impl Cache for MokaCacheAdapter {
     async fn get(&self, key: &str) -> Result<Option<Bytes>> {
         Ok(self.inner.get(key).await)
     }
-    
+
     async fn put(&self, key: &str, value: Bytes) -> Result<()> {
         self.inner.insert(key.to_string(), value).await;
         Ok(())
     }
-    
+
     async fn remove(&self, key: &str) -> Result<()> {
         self.inner.invalidate(key);
         Ok(())
     }
-    
+
     async fn clear(&self) -> Result<()> {
         self.inner.invalidate_all();
         Ok(())
     }
-    
+
     async fn size(&self) -> Result<usize> {
         Ok(self.inner.entry_count() as usize)
     }
-    
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
@@ -245,39 +245,42 @@ impl CacheManager {
     pub fn new(config: &CacheConfig) -> Self {
         Self::new_with_maintenance(config, true)
     }
-    
+
     pub fn new_without_maintenance(config: &CacheConfig) -> Self {
         Self::new_with_maintenance(config, false)
     }
-    
+
     fn new_with_maintenance(config: &CacheConfig, start_maintenance: bool) -> Self {
         // Determine cache implementation based on config and available features
         #[cfg(feature = "moka-cache")]
-        let use_moka = matches!(config.eviction_policy, crate::config::EvictionPolicy::Moka | crate::config::EvictionPolicy::Lru);
-        
+        let use_moka = matches!(
+            config.eviction_policy,
+            crate::config::EvictionPolicy::Moka | crate::config::EvictionPolicy::Lru
+        );
+
         #[cfg(not(feature = "moka-cache"))]
         let use_moka = false;
-        
+
         if use_moka {
             #[cfg(feature = "moka-cache")]
             {
                 let write_cache = Arc::new(MokaCacheAdapter::new(config.write_cache_size_bytes));
                 let read_cache = Arc::new(MokaCacheAdapter::new(config.read_cache_size_bytes));
-                
+
                 let manager = Self {
                     write_cache,
                     read_cache,
                     maintenance_handle: parking_lot::Mutex::new(None),
                 };
-                
+
                 if start_maintenance {
                     manager.start_maintenance();
                 }
-                
+
                 return manager;
             }
         }
-        
+
         // Fallback to LRU cache
         Self {
             write_cache: Arc::new(LruCache::new(config.write_cache_size_bytes)),
@@ -286,22 +289,26 @@ impl CacheManager {
             maintenance_handle: parking_lot::Mutex::new(None),
         }
     }
-    
+
     #[cfg(feature = "moka-cache")]
     pub fn start_maintenance(&self) {
         let mut handle_guard = self.maintenance_handle.lock();
         if handle_guard.is_some() {
             return; // Already started
         }
-        
+
         // Only start maintenance if we have moka caches
         if let (Some(write_moka), Some(read_moka)) = (
-            self.write_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()),
-            self.read_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>())
+            self.write_cache
+                .as_any()
+                .and_then(|any| any.downcast_ref::<MokaCacheAdapter>()),
+            self.read_cache
+                .as_any()
+                .and_then(|any| any.downcast_ref::<MokaCacheAdapter>()),
         ) {
             let write_cache_clone = write_moka.inner.clone();
             let read_cache_clone = read_moka.inner.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 loop {
@@ -310,27 +317,35 @@ impl CacheManager {
                     read_cache_clone.run_pending_tasks().await;
                 }
             });
-            
+
             *handle_guard = Some(handle);
         }
     }
-    
+
     #[cfg(feature = "moka-cache")]
     pub async fn run_maintenance(&self) {
         // Manually trigger maintenance tasks if using moka cache
-        if let Some(write_moka) = self.write_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()) {
+        if let Some(write_moka) = self
+            .write_cache
+            .as_any()
+            .and_then(|any| any.downcast_ref::<MokaCacheAdapter>())
+        {
             write_moka.inner.run_pending_tasks().await;
         }
-        if let Some(read_moka) = self.read_cache.as_any().and_then(|any| any.downcast_ref::<MokaCacheAdapter>()) {
+        if let Some(read_moka) = self
+            .read_cache
+            .as_any()
+            .and_then(|any| any.downcast_ref::<MokaCacheAdapter>())
+        {
             read_moka.inner.run_pending_tasks().await;
         }
     }
-    
+
     #[cfg(not(feature = "moka-cache"))]
     pub fn start_maintenance(&self) {
         // No-op for LRU cache
     }
-    
+
     #[cfg(not(feature = "moka-cache"))]
     pub async fn run_maintenance(&self) {
         // No-op for LRU cache
@@ -368,8 +383,14 @@ mod tests {
         cache.put("key1", Bytes::from("value1")).await.unwrap();
         cache.put("key2", Bytes::from("value2")).await.unwrap();
 
-        assert_eq!(cache.get("key1").await.unwrap().unwrap(), Bytes::from("value1"));
-        assert_eq!(cache.get("key2").await.unwrap().unwrap(), Bytes::from("value2"));
+        assert_eq!(
+            cache.get("key1").await.unwrap().unwrap(),
+            Bytes::from("value1")
+        );
+        assert_eq!(
+            cache.get("key2").await.unwrap().unwrap(),
+            Bytes::from("value2")
+        );
         assert!(cache.get("key3").await.unwrap().is_none());
 
         cache.remove("key1").await.unwrap();
@@ -401,8 +422,14 @@ mod tests {
 
         let manager = CacheManager::new(&config);
 
-        manager.cache_write("write_key", Bytes::from("write_value")).await.unwrap();
-        manager.cache_read("read_key", Bytes::from("read_value")).await.unwrap();
+        manager
+            .cache_write("write_key", Bytes::from("write_value"))
+            .await
+            .unwrap();
+        manager
+            .cache_read("read_key", Bytes::from("read_value"))
+            .await
+            .unwrap();
 
         assert_eq!(
             manager.serve_read("write_key").await.unwrap().unwrap(),
@@ -419,9 +446,14 @@ mod tests {
         let cache = LruCache::new(1024);
 
         // Add entries that should be distributed across shards
-        let keys = vec!["key1", "key2", "key3", "key4", "key5", "key6", "key7", "key8"];
+        let keys = vec![
+            "key1", "key2", "key3", "key4", "key5", "key6", "key7", "key8",
+        ];
         for key in &keys {
-            cache.put(key, Bytes::from(format!("value_{}", key))).await.unwrap();
+            cache
+                .put(key, Bytes::from(format!("value_{}", key)))
+                .await
+                .unwrap();
         }
 
         // Verify all entries can be retrieved
@@ -444,10 +476,13 @@ mod tests {
                     let key = format!("concurrent_key_{}_{}", i, j);
                     let value = format!("concurrent_value_{}_{}", i, j);
                     cache_clone.put(&key, Bytes::from(value)).await.unwrap();
-                    
+
                     // Immediate read to test read-write concurrency
                     let retrieved = cache_clone.get(&key).await.unwrap().unwrap();
-                    assert_eq!(retrieved, Bytes::from(format!("concurrent_value_{}_{}", i, j)));
+                    assert_eq!(
+                        retrieved,
+                        Bytes::from(format!("concurrent_value_{}_{}", i, j))
+                    );
                 }
             });
             handles.push(handle);
@@ -468,20 +503,29 @@ mod tests {
         let cache = LruCache::new(160); // Small cache to trigger evictions, 10 bytes per shard
 
         // Fill one shard with data
-        cache.put("shard1_key1", Bytes::from("shard1_val1")).await.unwrap();
-        cache.put("shard1_key2", Bytes::from("shard1_val2")).await.unwrap();
-        
+        cache
+            .put("shard1_key1", Bytes::from("shard1_val1"))
+            .await
+            .unwrap();
+        cache
+            .put("shard1_key2", Bytes::from("shard1_val2"))
+            .await
+            .unwrap();
+
         // Add to different shard (different hash)
-        cache.put("different_key", Bytes::from("different_val")).await.unwrap();
-        
+        cache
+            .put("different_key", Bytes::from("different_val"))
+            .await
+            .unwrap();
+
         // Verify both shards have data
         assert!(cache.get("shard1_key1").await.unwrap().is_some());
         assert!(cache.get("different_key").await.unwrap().is_some());
-        
+
         // Clear cache
         cache.clear().await.unwrap();
         assert_eq!(cache.size().await.unwrap(), 0);
-        
+
         // Verify all shards are cleared
         assert!(cache.get("shard1_key1").await.unwrap().is_none());
         assert!(cache.get("different_key").await.unwrap().is_none());

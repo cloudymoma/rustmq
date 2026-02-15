@@ -1,14 +1,13 @@
-use crate::security::{
-    CertificateManager, CertificateInfo, CertificateRequest, CertificateStatus, 
-    RevocationReason, CaGenerationParams, ValidationResult, KeyType, KeyUsage,
-    ExtendedKeyUsage, CertificateRole,
-};
 use crate::Result;
+use crate::security::{
+    CaGenerationParams, CertificateInfo, CertificateManager, CertificateRequest, CertificateRole,
+    CertificateStatus, ExtendedKeyUsage, KeyType, KeyUsage, RevocationReason, ValidationResult,
+};
+use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use tracing::{info, warn, debug};
-use chrono::{DateTime, Utc, TimeZone};
+use tracing::{debug, info, warn};
 
 /// Certificate management handlers for the Security API
 pub struct CertificateHandlers {
@@ -103,18 +102,26 @@ impl CertificateHandlers {
         key_usage: Option<Vec<String>>,
         extended_key_usage: Option<Vec<String>>,
     ) -> Result<CertificateCreationResponse> {
-        info!("Issuing certificate for: {} using CA: {}", common_name, ca_id);
+        info!(
+            "Issuing certificate for: {} using CA: {}",
+            common_name, ca_id
+        );
 
         // Verify CA exists and is active
-        let ca_status = self.certificate_manager.get_certificate_status(&ca_id).await?;
+        let ca_status = self
+            .certificate_manager
+            .get_certificate_status(&ca_id)
+            .await?;
         if ca_status != CertificateStatus::Active {
-            return Err(crate::error::RustMqError::CaNotAvailable(
-                format!("CA '{}' is not active", ca_id)
-            ));
+            return Err(crate::error::RustMqError::CaNotAvailable(format!(
+                "CA '{}' is not active",
+                ca_id
+            )));
         }
 
         // Parse role to determine certificate template
-        let cert_role = role.as_ref()
+        let cert_role = role
+            .as_ref()
             .and_then(|r| match r.as_str() {
                 "broker" => Some(CertificateRole::Broker),
                 "client" => Some(CertificateRole::Client),
@@ -129,9 +136,10 @@ impl CertificateHandlers {
         if let Some(org) = organization {
             subject.push(rcgen::DnType::OrganizationName, org);
         }
-        
+
         // Convert subject_alt_names to SanType vector
-        let san_entries: Vec<rcgen::SanType> = subject_alt_names.unwrap_or_default()
+        let san_entries: Vec<rcgen::SanType> = subject_alt_names
+            .unwrap_or_default()
             .into_iter()
             .map(|san| rcgen::SanType::DnsName(san))
             .collect();
@@ -148,8 +156,10 @@ impl CertificateHandlers {
         };
 
         // Issue the certificate
-        let cert_info = self.certificate_manager
-            .issue_certificate(cert_request).await?;
+        let cert_info = self
+            .certificate_manager
+            .issue_certificate(cert_request)
+            .await?;
 
         let response = CertificateCreationResponse {
             certificate_id: cert_info.id.clone(),
@@ -168,20 +178,20 @@ impl CertificateHandlers {
     }
 
     /// Renew an existing certificate
-    pub async fn renew_certificate(
-        &self,
-        cert_id: String,
-    ) -> Result<CertificateOperationResult> {
+    pub async fn renew_certificate(&self, cert_id: String) -> Result<CertificateOperationResult> {
         info!("Renewing certificate: {}", cert_id);
 
         // Get existing certificate info
-        let cert_info = self.certificate_manager.get_certificate_by_id(&cert_id).await?
-            .ok_or_else(|| crate::error::RustMqError::CertificateNotFound { 
-                identifier: cert_id.clone() 
+        let cert_info = self
+            .certificate_manager
+            .get_certificate_by_id(&cert_id)
+            .await?
+            .ok_or_else(|| crate::error::RustMqError::CertificateNotFound {
+                identifier: cert_id.clone(),
             })?;
         if cert_info.status == CertificateStatus::Revoked {
             return Err(crate::error::RustMqError::CertificateRevoked {
-                subject: cert_id.clone()
+                subject: cert_id.clone(),
             });
         }
 
@@ -192,8 +202,10 @@ impl CertificateHandlers {
             certificate_id: renewed_cert.id,
             operation: "renew".to_string(),
             status: "success".to_string(),
-            message: format!("Certificate renewed successfully. New expiry: {:?}", 
-                           renewed_cert.not_after),
+            message: format!(
+                "Certificate renewed successfully. New expiry: {:?}",
+                renewed_cert.not_after
+            ),
             timestamp: Utc::now(),
         };
 
@@ -202,32 +214,37 @@ impl CertificateHandlers {
     }
 
     /// Rotate a certificate (new key pair)
-    pub async fn rotate_certificate(
-        &self,
-        cert_id: String,
-    ) -> Result<CertificateOperationResult> {
+    pub async fn rotate_certificate(&self, cert_id: String) -> Result<CertificateOperationResult> {
         info!("Rotating certificate: {}", cert_id);
 
         // Get existing certificate info
-        let cert_info = self.certificate_manager.get_certificate_by_id(&cert_id).await?
-            .ok_or_else(|| crate::error::RustMqError::CertificateNotFound { 
-                identifier: cert_id.clone() 
+        let cert_info = self
+            .certificate_manager
+            .get_certificate_by_id(&cert_id)
+            .await?
+            .ok_or_else(|| crate::error::RustMqError::CertificateNotFound {
+                identifier: cert_id.clone(),
             })?;
         if cert_info.status == CertificateStatus::Revoked {
             return Err(crate::error::RustMqError::CertificateRevoked {
-                subject: cert_id.clone()
+                subject: cert_id.clone(),
             });
         }
 
         // Perform rotation (this creates a new certificate with new key pair)
-        let rotated_cert = self.certificate_manager.rotate_certificate(&cert_id).await?;
+        let rotated_cert = self
+            .certificate_manager
+            .rotate_certificate(&cert_id)
+            .await?;
 
         let result = CertificateOperationResult {
             certificate_id: rotated_cert.id.clone(),
             operation: "rotate".to_string(),
             status: "success".to_string(),
-            message: format!("Certificate rotated successfully. New certificate ID: {}", 
-                           rotated_cert.id),
+            message: format!(
+                "Certificate rotated successfully. New certificate ID: {}",
+                rotated_cert.id
+            ),
             timestamp: Utc::now(),
         };
 
@@ -260,7 +277,8 @@ impl CertificateHandlers {
 
         // Revoke the certificate
         self.certificate_manager
-            .revoke_certificate(&cert_id, revocation_reason).await?;
+            .revoke_certificate(&cert_id, revocation_reason)
+            .await?;
 
         let result = CertificateOperationResult {
             certificate_id: cert_id.clone(),
@@ -282,7 +300,8 @@ impl CertificateHandlers {
         debug!("Listing certificates with filters: {:?}", filters);
 
         // Parse filter parameters
-        let status_filter = filters.get("status")
+        let status_filter = filters
+            .get("status")
             .and_then(|s| match s.to_lowercase().as_str() {
                 "active" => Some(CertificateStatus::Active),
                 "expired" => Some(CertificateStatus::Expired),
@@ -290,19 +309,20 @@ impl CertificateHandlers {
                 _ => None,
             });
 
-        let role_filter = filters.get("role")
-            .and_then(|r| match r.as_str() {
-                "broker" => Some(CertificateRole::Broker),
-                "client" => Some(CertificateRole::Client),
-                "admin" => Some(CertificateRole::Admin),
-                _ => None,
-            });
+        let role_filter = filters.get("role").and_then(|r| match r.as_str() {
+            "broker" => Some(CertificateRole::Broker),
+            "client" => Some(CertificateRole::Client),
+            "admin" => Some(CertificateRole::Admin),
+            _ => None,
+        });
 
-        let limit = filters.get("limit")
+        let limit = filters
+            .get("limit")
             .and_then(|l| l.parse::<usize>().ok())
             .unwrap_or(100);
 
-        let offset = filters.get("offset")
+        let offset = filters
+            .get("offset")
             .and_then(|o| o.parse::<usize>().ok())
             .unwrap_or(0);
 
@@ -324,8 +344,12 @@ impl CertificateHandlers {
         let end = (offset + limit).min(total);
         certificates = certificates[start..end].to_vec();
 
-        debug!("Found {} certificates (showing {} from offset {})", 
-               total, certificates.len(), offset);
+        debug!(
+            "Found {} certificates (showing {} from offset {})",
+            total,
+            certificates.len(),
+            offset
+        );
         Ok(certificates)
     }
 
@@ -334,16 +358,20 @@ impl CertificateHandlers {
         &self,
         threshold_days: i64,
     ) -> Result<Vec<CertificateInfo>> {
-        debug!("Getting certificates expiring within {} days", threshold_days);
+        debug!(
+            "Getting certificates expiring within {} days",
+            threshold_days
+        );
 
         let expiry_threshold = Utc::now() + chrono::Duration::days(threshold_days);
-        
+
         // Get all certificates from the certificate manager
-        let certificates = self.certificate_manager
+        let certificates = self
+            .certificate_manager
             .list_all_certificates()
             .await
-            .map_err(|e| crate::error::RustMqError::CertificateGeneration { 
-                reason: format!("Failed to list certificates: {}", e) 
+            .map_err(|e| crate::error::RustMqError::CertificateGeneration {
+                reason: format!("Failed to list certificates: {}", e),
             })?;
 
         let expiring_certs: Vec<CertificateInfo> = certificates
@@ -360,8 +388,11 @@ impl CertificateHandlers {
             })
             .collect();
 
-        info!("Found {} certificates expiring within {} days", 
-              expiring_certs.len(), threshold_days);
+        info!(
+            "Found {} certificates expiring within {} days",
+            expiring_certs.len(),
+            threshold_days
+        );
         Ok(expiring_certs)
     }
 
@@ -388,10 +419,7 @@ impl CertificateHandlers {
     }
 
     /// Get certificate chain (simplified: certificate + root CA only)
-    pub async fn get_certificate_chain(
-        &self,
-        cert_id: String,
-    ) -> Result<Vec<String>> {
+    pub async fn get_certificate_chain(&self, cert_id: String) -> Result<Vec<String>> {
         debug!("Getting certificate chain for: {}", cert_id);
 
         // TODO: Implement get_certificate_chain method in CertificateManager
@@ -402,7 +430,8 @@ impl CertificateHandlers {
     // Helper methods
 
     fn parse_key_usage(&self, key_usage: Option<Vec<String>>) -> Vec<KeyUsage> {
-        key_usage.unwrap_or_default()
+        key_usage
+            .unwrap_or_default()
             .into_iter()
             .filter_map(|usage| match usage.to_lowercase().as_str() {
                 "digital_signature" => Some(KeyUsage::DigitalSignature),
@@ -419,8 +448,12 @@ impl CertificateHandlers {
             .collect()
     }
 
-    fn parse_extended_key_usage(&self, extended_key_usage: Option<Vec<String>>) -> Vec<ExtendedKeyUsage> {
-        extended_key_usage.unwrap_or_default()
+    fn parse_extended_key_usage(
+        &self,
+        extended_key_usage: Option<Vec<String>>,
+    ) -> Vec<ExtendedKeyUsage> {
+        extended_key_usage
+            .unwrap_or_default()
             .into_iter()
             .filter_map(|usage| match usage.to_lowercase().as_str() {
                 "server_auth" => Some(ExtendedKeyUsage::ServerAuth),
@@ -438,7 +471,7 @@ impl CertificateHandlers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::{EnhancedCertificateManagementConfig};
+    use crate::security::EnhancedCertificateManagementConfig;
     use tempfile::TempDir;
 
     async fn create_test_handlers() -> (CertificateHandlers, TempDir) {
@@ -447,8 +480,10 @@ mod tests {
             storage_path: temp_dir.path().to_string_lossy().to_string(),
             ..Default::default()
         };
-        
-        let cert_manager = CertificateManager::new_with_enhanced_config(config).await.unwrap();
+
+        let cert_manager = CertificateManager::new_with_enhanced_config(config)
+            .await
+            .unwrap();
         let handlers = CertificateHandlers::new(Arc::new(cert_manager));
         (handlers, temp_dir)
     }
@@ -457,13 +492,15 @@ mod tests {
     async fn test_generate_ca() {
         let (handlers, _temp_dir) = create_test_handlers().await;
 
-        let result = handlers.generate_ca(
-            "Test Root CA".to_string(),
-            Some("Test Corp".to_string()),
-            Some("US".to_string()),
-            Some(365),
-            Some(256),
-        ).await;
+        let result = handlers
+            .generate_ca(
+                "Test Root CA".to_string(),
+                Some("Test Corp".to_string()),
+                Some("US".to_string()),
+                Some(365),
+                Some(256),
+            )
+            .await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -478,25 +515,36 @@ mod tests {
         let (handlers, _temp_dir) = create_test_handlers().await;
 
         // First generate a CA
-        let ca_response = handlers.generate_ca(
-            "Test Root CA".to_string(),
-            Some("Test Corp".to_string()),
-            None,
-            Some(365),
-            None,
-        ).await.unwrap();
+        let ca_response = handlers
+            .generate_ca(
+                "Test Root CA".to_string(),
+                Some("Test Corp".to_string()),
+                None,
+                Some(365),
+                None,
+            )
+            .await
+            .unwrap();
 
         // Then issue a certificate
-        let result = handlers.issue_certificate(
-            ca_response.certificate_id,
-            "test.example.com".to_string(),
-            Some(vec!["test.example.com".to_string(), "192.168.1.100".to_string()]),
-            Some("Test Corp".to_string()),
-            Some("broker".to_string()),
-            Some(90),
-            Some(vec!["digital_signature".to_string(), "key_encipherment".to_string()]),
-            Some(vec!["server_auth".to_string(), "client_auth".to_string()]),
-        ).await;
+        let result = handlers
+            .issue_certificate(
+                ca_response.certificate_id,
+                "test.example.com".to_string(),
+                Some(vec![
+                    "test.example.com".to_string(),
+                    "192.168.1.100".to_string(),
+                ]),
+                Some("Test Corp".to_string()),
+                Some("broker".to_string()),
+                Some(90),
+                Some(vec![
+                    "digital_signature".to_string(),
+                    "key_encipherment".to_string(),
+                ]),
+                Some(vec!["server_auth".to_string(), "client_auth".to_string()]),
+            )
+            .await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -509,35 +557,38 @@ mod tests {
         let (handlers, _temp_dir) = create_test_handlers().await;
 
         // Generate a CA and issue some certificates first
-        let ca_response = handlers.generate_ca(
-            "Test Root CA".to_string(),
-            None,
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let ca_response = handlers
+            .generate_ca("Test Root CA".to_string(), None, None, None, None)
+            .await
+            .unwrap();
 
-        let _cert1 = handlers.issue_certificate(
-            ca_response.certificate_id.clone(),
-            "broker1.example.com".to_string(),
-            None,
-            None,
-            Some("broker".to_string()),
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let _cert1 = handlers
+            .issue_certificate(
+                ca_response.certificate_id.clone(),
+                "broker1.example.com".to_string(),
+                None,
+                None,
+                Some("broker".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
-        let _cert2 = handlers.issue_certificate(
-            ca_response.certificate_id,
-            "client1.example.com".to_string(),
-            None,
-            None,
-            Some("client".to_string()),
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let _cert2 = handlers
+            .issue_certificate(
+                ca_response.certificate_id,
+                "client1.example.com".to_string(),
+                None,
+                None,
+                Some("client".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         // Test listing with filters
         let mut filters = HashMap::new();
@@ -546,7 +597,7 @@ mod tests {
 
         let result = handlers.list_certificates(filters).await;
         assert!(result.is_ok());
-        
+
         let certificates = result.unwrap();
         assert!(!certificates.is_empty());
         assert!(certificates.len() <= 10);
@@ -557,26 +608,26 @@ mod tests {
         let (handlers, _temp_dir) = create_test_handlers().await;
 
         // Generate a CA
-        let ca_response = handlers.generate_ca(
-            "Test Root CA".to_string(),
-            None,
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let ca_response = handlers
+            .generate_ca("Test Root CA".to_string(), None, None, None, None)
+            .await
+            .unwrap();
 
         // Issue a certificate with short validity
-        let cert = handlers.issue_certificate(
-            ca_response.certificate_id.clone(),
-            "expiring.example.com".to_string(),
-            None,
-            None,
-            None,
-            Some(1), // 1 day validity
-            None,
-            None,
-        ).await.unwrap();
-        
+        let cert = handlers
+            .issue_certificate(
+                ca_response.certificate_id.clone(),
+                "expiring.example.com".to_string(),
+                None,
+                None,
+                None,
+                Some(1), // 1 day validity
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
         // Verify the certificate was created
         println!("Created certificate with ID: {}", cert.certificate_id);
         println!("Certificate expires at: {:?}", cert.not_after);
@@ -584,15 +635,21 @@ mod tests {
         // Check for expiring certificates
         let result = handlers.get_expiring_certificates(7).await; // Within 7 days
         assert!(result.is_ok());
-        
+
         let expiring_certs = result.unwrap();
         println!("Found {} expiring certificates", expiring_certs.len());
         for cert in &expiring_certs {
-            println!("  - Certificate {}: expires at {:?}", cert.id, cert.not_after);
+            println!(
+                "  - Certificate {}: expires at {:?}",
+                cert.id, cert.not_after
+            );
         }
-        
+
         // We should have at least one expiring certificate (the one we just created)
-        assert!(!expiring_certs.is_empty(), "Expected at least one expiring certificate but found none");
+        assert!(
+            !expiring_certs.is_empty(),
+            "Expected at least one expiring certificate but found none"
+        );
     }
 
     #[tokio::test]
@@ -600,31 +657,33 @@ mod tests {
         let (handlers, _temp_dir) = create_test_handlers().await;
 
         // Generate a CA and issue a certificate
-        let ca_response = handlers.generate_ca(
-            "Test Root CA".to_string(),
-            None,
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let ca_response = handlers
+            .generate_ca("Test Root CA".to_string(), None, None, None, None)
+            .await
+            .unwrap();
 
-        let cert_response = handlers.issue_certificate(
-            ca_response.certificate_id,
-            "revoke-test.example.com".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ).await.unwrap();
+        let cert_response = handlers
+            .issue_certificate(
+                ca_response.certificate_id,
+                "revoke-test.example.com".to_string(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         // Revoke the certificate
-        let result = handlers.revoke_certificate(
-            cert_response.certificate_id,
-            "key_compromise".to_string(),
-            Some(1),
-        ).await;
+        let result = handlers
+            .revoke_certificate(
+                cert_response.certificate_id,
+                "key_compromise".to_string(),
+                Some(1),
+            )
+            .await;
 
         assert!(result.is_ok());
         let operation_result = result.unwrap();

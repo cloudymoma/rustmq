@@ -467,28 +467,41 @@ impl VolumeRecoveryManager {
     }
 
     /// Check if a pod's volumes are properly attached and accessible
-    pub async fn validate_volume_attachment(&self, pod_name: &str, namespace: &str) -> Result<bool> {
+    pub async fn validate_volume_attachment(
+        &self,
+        pod_name: &str,
+        namespace: &str,
+    ) -> Result<bool> {
         // In a real implementation, this would use the Kubernetes API to check:
         // 1. PVC is bound
         // 2. Volume is attached to the node
         // 3. Volume is mounted in the pod
         // 4. WAL directory is accessible and writable
-        
-        tracing::info!("Validating volume attachment for pod {} in namespace {}", pod_name, namespace);
-        
+
+        tracing::info!(
+            "Validating volume attachment for pod {} in namespace {}",
+            pod_name,
+            namespace
+        );
+
         // For testing, assume validation passes
         Ok(true)
     }
 
     /// Recover a failed broker pod with volume reattachment
     pub async fn recover_broker_with_volume(&self, broker_id: &str, namespace: &str) -> Result<()> {
-        tracing::info!("Starting volume recovery for broker {} in namespace {}", broker_id, namespace);
+        tracing::info!(
+            "Starting volume recovery for broker {} in namespace {}",
+            broker_id,
+            namespace
+        );
 
         // Step 1: Validate PVC exists and is bound
         if !self.validate_pvc_binding(broker_id, namespace).await? {
-            return Err(crate::error::RustMqError::Storage(
-                format!("PVC for broker {} is not properly bound", broker_id)
-            ));
+            return Err(crate::error::RustMqError::Storage(format!(
+                "PVC for broker {} is not properly bound",
+                broker_id
+            )));
         }
 
         // Step 2: Check node affinity to ensure pod lands on correct node
@@ -504,19 +517,31 @@ impl VolumeRecoveryManager {
     }
 
     async fn validate_pvc_binding(&self, broker_id: &str, namespace: &str) -> Result<bool> {
-        tracing::debug!("Validating PVC binding for broker {} in namespace {}", broker_id, namespace);
+        tracing::debug!(
+            "Validating PVC binding for broker {} in namespace {}",
+            broker_id,
+            namespace
+        );
         // In real implementation, check PVC status via Kubernetes API
         Ok(true)
     }
 
     async fn ensure_node_affinity(&self, broker_id: &str, namespace: &str) -> Result<()> {
-        tracing::debug!("Ensuring node affinity for broker {} in namespace {}", broker_id, namespace);
+        tracing::debug!(
+            "Ensuring node affinity for broker {} in namespace {}",
+            broker_id,
+            namespace
+        );
         // In real implementation, verify pod scheduling constraints
         Ok(())
     }
 
     async fn validate_wal_recovery(&self, broker_id: &str, namespace: &str) -> Result<()> {
-        tracing::debug!("Validating WAL recovery for broker {} in namespace {}", broker_id, namespace);
+        tracing::debug!(
+            "Validating WAL recovery for broker {} in namespace {}",
+            broker_id,
+            namespace
+        );
         // In real implementation, validate WAL file integrity and recovery
         Ok(())
     }
@@ -605,12 +630,16 @@ rpc_listen = "0.0.0.0:9093"
         };
 
         let recovery_manager = VolumeRecoveryManager::new(config);
-        
-        let result = recovery_manager.validate_volume_attachment("broker-1", "default").await;
+
+        let result = recovery_manager
+            .validate_volume_attachment("broker-1", "default")
+            .await;
         assert!(result.is_ok());
         assert!(result.unwrap());
 
-        let recovery_result = recovery_manager.recover_broker_with_volume("broker-1", "default").await;
+        let recovery_result = recovery_manager
+            .recover_broker_with_volume("broker-1", "default")
+            .await;
         assert!(recovery_result.is_ok());
     }
 }

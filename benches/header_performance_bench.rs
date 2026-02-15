@@ -1,7 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use rustmq::types::{Record, Header, Headers};
-use smallvec::SmallVec;
 use bytes::Bytes;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use rustmq::types::{Header, Headers, Record};
+use smallvec::SmallVec;
 
 /// Benchmark message creation with varying header counts
 fn bench_header_operations(c: &mut Criterion) {

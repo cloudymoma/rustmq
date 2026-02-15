@@ -1,13 +1,13 @@
 use crate::{
     config::ClientConfig,
     connection::Connection,
+    consumer::{Consumer, ConsumerBuilder},
     error::Result,
     producer::{Producer, ProducerBuilder},
-    consumer::{Consumer, ConsumerBuilder},
     stream::{MessageStream, StreamConfig},
 };
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 /// Main RustMQ client for managing connections and creating producers/consumers
 #[derive(Clone)]
@@ -22,7 +22,7 @@ impl RustMqClient {
     /// Create a new RustMQ client
     pub async fn new(config: ClientConfig) -> Result<Self> {
         let connection = Connection::new(&config).await?;
-        
+
         Ok(Self {
             config: Arc::new(config),
             connection: Arc::new(connection),
@@ -38,7 +38,7 @@ impl RustMqClient {
             .client(self.clone())
             .build()
             .await?;
-        
+
         self.producers.insert(topic.to_string(), producer.clone());
         Ok(producer)
     }
@@ -51,7 +51,7 @@ impl RustMqClient {
             .client(self.clone())
             .build()
             .await?;
-        
+
         let key = format!("{}:{}", topic, consumer_group);
         self.consumers.insert(key, consumer.clone());
         Ok(consumer)
@@ -87,15 +87,15 @@ impl RustMqClient {
         for producer in self.producers.iter() {
             producer.close().await?;
         }
-        
+
         // Close all consumers
         for consumer in self.consumers.iter() {
             consumer.close().await?;
         }
-        
+
         // Close connection
         self.connection.close().await?;
-        
+
         Ok(())
     }
 

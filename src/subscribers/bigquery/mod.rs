@@ -108,12 +108,12 @@ mod tests {
     #[test]
     fn test_bigquery_message_creation() {
         let message = create_test_message();
-        
+
         assert_eq!(message.metadata.topic, "test-topic");
         assert_eq!(message.metadata.partition_id, 0);
         assert_eq!(message.metadata.offset, 123);
         assert!(message.insert_id.is_none()); // Should be None initially
-        
+
         // Check that data is properly stored
         assert_eq!(message.data["id"], 123);
         assert_eq!(message.data["message"], "test message");
@@ -122,17 +122,17 @@ mod tests {
     #[test]
     fn test_bigquery_message_insert_id_generation() {
         let mut message = create_test_message();
-        
+
         // Initially no insert ID
         assert!(message.insert_id.is_none());
-        
+
         // Generate insert ID
         message.generate_insert_id();
-        
+
         // Should now have an insert ID
         assert!(message.insert_id.is_some());
         let insert_id = message.insert_id.as_ref().unwrap();
-        
+
         // Insert ID should contain expected components
         assert!(insert_id.contains("test-topic"));
         assert!(insert_id.contains("0")); // partition
@@ -143,7 +143,7 @@ mod tests {
     fn test_bigquery_batch_creation() {
         let batch_id = "test-batch-123".to_string();
         let batch = types::BigQueryBatch::new(batch_id.clone());
-        
+
         assert_eq!(batch.metadata.batch_id, batch_id);
         assert_eq!(batch.messages.len(), 0);
         assert_eq!(batch.metadata.size_bytes, 0);
@@ -155,14 +155,14 @@ mod tests {
     fn test_bigquery_batch_add_message() {
         let mut batch = types::BigQueryBatch::new("test-batch".to_string());
         let message = create_test_message();
-        
+
         // Initially empty
         assert_eq!(batch.messages.len(), 0);
         assert_eq!(batch.metadata.message_count, 0);
-        
+
         // Add message
         batch.add_message(message);
-        
+
         // Should now have one message
         assert_eq!(batch.messages.len(), 1);
         assert_eq!(batch.metadata.message_count, 1);
@@ -172,20 +172,20 @@ mod tests {
     #[test]
     fn test_bigquery_batch_is_full() {
         let mut batch = types::BigQueryBatch::new("test-batch".to_string());
-        
+
         // Not full when empty
         assert!(!batch.is_full(10, 1024));
-        
+
         // Add messages until full by count
         for i in 0..5 {
             let mut message = create_test_message();
             message.metadata.offset = i;
             batch.add_message(message);
         }
-        
+
         // Should be full when max_rows is 3
         assert!(batch.is_full(3, 10_000_000));
-        
+
         // Should not be full when max_rows is 10
         assert!(!batch.is_full(10, 10_000_000));
     }
@@ -199,9 +199,9 @@ mod tests {
             bytes_sent: 1024,
             retry_count: 0,
         };
-        
+
         let result = types::InsertResult::success(5, stats);
-        
+
         assert!(result.success);
         assert_eq!(result.rows_inserted, 5);
         assert!(result.errors.is_empty());
@@ -217,19 +217,17 @@ mod tests {
             bytes_sent: 0,
             retry_count: 2,
         };
-        
-        let errors = vec![
-            types::InsertError {
-                message: "Test error".to_string(),
-                code: Some("TEST_ERROR".to_string()),
-                row_index: Some(0),
-                field: None,
-                retryable: true,
-            }
-        ];
-        
+
+        let errors = vec![types::InsertError {
+            message: "Test error".to_string(),
+            code: Some("TEST_ERROR".to_string()),
+            row_index: Some(0),
+            field: None,
+            retryable: true,
+        }];
+
         let result = types::InsertResult::failure(errors.clone(), stats);
-        
+
         assert!(!result.success);
         assert_eq!(result.rows_inserted, 0);
         assert_eq!(result.errors.len(), 1);
@@ -240,14 +238,14 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let config = create_test_config();
-        
+
         // Should have valid required fields
         assert!(!config.project_id.is_empty());
         assert!(!config.dataset.is_empty());
         assert!(!config.table.is_empty());
         assert!(!config.subscription.topic.is_empty());
         assert!(!config.subscription.broker_endpoints.is_empty());
-        
+
         // Should have reasonable defaults
         assert!(config.batching.max_rows_per_batch > 0);
         assert!(config.batching.max_batch_size_bytes > 0);
@@ -268,11 +266,11 @@ mod tests {
             bigquery_connection: types::ConnectionStatus::Connected,
             rustmq_connection: types::ConnectionStatus::Connected,
         };
-        
+
         // Should serialize and deserialize correctly
         let serialized = serde_json::to_string(&health_status).expect("Failed to serialize");
-        let _deserialized: types::HealthStatus = serde_json::from_str(&serialized)
-            .expect("Failed to deserialize");
+        let _deserialized: types::HealthStatus =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
     }
 
     #[test]
@@ -293,11 +291,11 @@ mod tests {
             current_backlog_size: 10,
             peak_backlog_size: 100,
         };
-        
+
         // Should serialize and deserialize correctly
         let serialized = serde_json::to_string(&metrics).expect("Failed to serialize");
-        let _deserialized: types::SubscriberMetrics = serde_json::from_str(&serialized)
-            .expect("Failed to deserialize");
+        let _deserialized: types::SubscriberMetrics =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
     }
 
     #[test]
@@ -307,22 +305,18 @@ mod tests {
             base_ms: 1000,
             max_ms: 30000,
         };
-        
+
         // Should serialize correctly
         let _serialized = serde_json::to_string(&exponential).expect("Failed to serialize");
-        
+
         // Test linear backoff
-        let linear = config::RetryBackoffStrategy::Linear {
-            increment_ms: 500,
-        };
-        
+        let linear = config::RetryBackoffStrategy::Linear { increment_ms: 500 };
+
         let _serialized = serde_json::to_string(&linear).expect("Failed to serialize");
-        
+
         // Test fixed backoff
-        let fixed = config::RetryBackoffStrategy::Fixed {
-            delay_ms: 2000,
-        };
-        
+        let fixed = config::RetryBackoffStrategy::Fixed { delay_ms: 2000 };
+
         let _serialized = serde_json::to_string(&fixed).expect("Failed to serialize");
     }
 
@@ -331,11 +325,11 @@ mod tests {
         // Test Latest
         let latest = config::StartOffset::Latest;
         let _serialized = serde_json::to_string(&latest).expect("Failed to serialize");
-        
+
         // Test Earliest
         let earliest = config::StartOffset::Earliest;
         let _serialized = serde_json::to_string(&earliest).expect("Failed to serialize");
-        
+
         // Test Specific
         let specific = config::StartOffset::Specific(12345);
         let _serialized = serde_json::to_string(&specific).expect("Failed to serialize");
@@ -350,7 +344,7 @@ mod tests {
             template_suffix: Some("test".to_string()),
         };
         let _serialized = serde_json::to_string(&streaming).expect("Failed to serialize");
-        
+
         // Test StorageWrite
         let storage = config::WriteMethod::StorageWrite {
             stream_type: config::StorageWriteStreamType::Default,
@@ -364,11 +358,11 @@ mod tests {
         // Test Direct mapping
         let direct = config::SchemaMappingStrategy::Direct;
         let _serialized = serde_json::to_string(&direct).expect("Failed to serialize");
-        
+
         // Test Custom mapping
         let custom = config::SchemaMappingStrategy::Custom;
         let _serialized = serde_json::to_string(&custom).expect("Failed to serialize");
-        
+
         // Test Nested mapping
         let nested = config::SchemaMappingStrategy::Nested {
             root_field: "data".to_string(),
@@ -381,15 +375,15 @@ mod tests {
         // Test Drop
         let drop = config::DeadLetterAction::Drop;
         let _serialized = serde_json::to_string(&drop).expect("Failed to serialize");
-        
+
         // Test Log
         let log = config::DeadLetterAction::Log;
         let _serialized = serde_json::to_string(&log).expect("Failed to serialize");
-        
+
         // Test DeadLetterQueue
         let dlq = config::DeadLetterAction::DeadLetterQueue;
         let _serialized = serde_json::to_string(&dlq).expect("Failed to serialize");
-        
+
         // Test File
         let file = config::DeadLetterAction::File {
             path: "/tmp/dead_letters.json".to_string(),

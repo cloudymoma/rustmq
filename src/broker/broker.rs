@@ -7,17 +7,21 @@ use crate::broker::core::{MessageBrokerCore, ProduceRecord, Producer};
 use crate::config::Config;
 use crate::error::{Result, RustMqError};
 use crate::network::grpc_server::BrokerReplicationServiceImpl;
-use crate::network::quic_server::{QuicServer, ProduceHandler, FetchHandler, MetadataHandler};
+use crate::network::quic_server::{FetchHandler, MetadataHandler, ProduceHandler, QuicServer};
 use crate::network::traits::NetworkHandler;
-use crate::replication::grpc_client::{GrpcReplicationRpcClient, GrpcReplicationConfig, BrokerEndpoint};
+use crate::replication::grpc_client::{
+    BrokerEndpoint, GrpcReplicationConfig, GrpcReplicationRpcClient,
+};
 use crate::replication::manager::ReplicationManager;
-use crate::storage::{DirectIOWal, LocalObjectStorage, LruCache, UploadManagerImpl, AlignedBufferPool};
+use crate::storage::{
+    AlignedBufferPool, DirectIOWal, LocalObjectStorage, LruCache, UploadManagerImpl,
+};
 use crate::types::*;
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock as AsyncRwLock};
+use tokio::sync::{RwLock as AsyncRwLock, oneshot};
 use tokio::task::JoinHandle;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
 // Type aliases to make the broker core type more manageable
 type BrokerCore = MessageBrokerCore<
@@ -122,7 +126,7 @@ impl Broker {
             _ => {
                 return Err(RustMqError::Config(
                     "Only Local storage supported in this implementation".to_string(),
-                ))
+                ));
             }
         };
 
@@ -234,10 +238,9 @@ impl Broker {
         info!("Starting RustMQ Broker...");
 
         // Start QUIC server in background
-        let quic_server = self
-            .quic_server
-            .take()
-            .ok_or_else(|| RustMqError::InvalidOperation("QUIC server already started".to_string()))?;
+        let quic_server = self.quic_server.take().ok_or_else(|| {
+            RustMqError::InvalidOperation("QUIC server already started".to_string())
+        })?;
 
         let quic_handle = tokio::spawn(async move {
             if let Err(e) = quic_server.start().await {
@@ -377,23 +380,38 @@ impl Broker {
         // Step 1: Flush WAL to disk (critical for preventing data loss)
         let wal_shutdown_start = std::time::Instant::now();
         if let Err(e) = tokio::time::timeout(
-            std::time::Duration::from_secs(5),  // 5s timeout for WAL flush
-            self.broker_core.get_wal().shutdown()
-        ).await {
+            std::time::Duration::from_secs(5), // 5s timeout for WAL flush
+            self.broker_core.get_wal().shutdown(),
+        )
+        .await
+        {
             warn!("WAL shutdown timed out after 5s: {:?}", e);
         } else {
-            info!("✅ WAL flushed and shut down ({:?})", wal_shutdown_start.elapsed());
+            info!(
+                "✅ WAL flushed and shut down ({:?})",
+                wal_shutdown_start.elapsed()
+            );
         }
 
         // Step 2: Wait for inflight replications (best effort, followers will catch up)
         let replication_shutdown_start = std::time::Instant::now();
         if let Err(e) = tokio::time::timeout(
-            std::time::Duration::from_secs(10),  // 10s timeout for replication drain
-            self.broker_core.get_replication_manager().shutdown(std::time::Duration::from_secs(10))
-        ).await {
-            warn!("Replication shutdown timed out after 10s: {:?}. Followers will catch up on restart.", e);
+            std::time::Duration::from_secs(10), // 10s timeout for replication drain
+            self.broker_core
+                .get_replication_manager()
+                .shutdown(std::time::Duration::from_secs(10)),
+        )
+        .await
+        {
+            warn!(
+                "Replication shutdown timed out after 10s: {:?}. Followers will catch up on restart.",
+                e
+            );
         } else {
-            info!("✅ Replication drained ({:?})", replication_shutdown_start.elapsed());
+            info!(
+                "✅ Replication drained ({:?})",
+                replication_shutdown_start.elapsed()
+            );
         }
 
         // Step 3: Close connections gracefully (give clients time to disconnect)
@@ -607,7 +625,11 @@ mod tests {
         let config = get_test_config();
         let broker = Broker::from_config(config).await;
 
-        assert!(broker.is_ok(), "Broker creation should succeed: {:?}", broker.err());
+        assert!(
+            broker.is_ok(),
+            "Broker creation should succeed: {:?}",
+            broker.err()
+        );
 
         let broker = broker.unwrap();
         let state = broker.state().await;

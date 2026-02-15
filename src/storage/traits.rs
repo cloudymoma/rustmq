@@ -1,8 +1,8 @@
+use crate::{Result, types::*};
 use async_trait::async_trait;
 use bytes::Bytes;
-use crate::{Result, types::*};
-use std::ops::Range;
 use std::any::Any;
+use std::ops::Range;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[async_trait]
@@ -29,11 +29,11 @@ pub trait ObjectStorage: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
     async fn list(&self, prefix: &str) -> Result<Vec<String>>;
     async fn exists(&self, key: &str) -> Result<bool>;
-    
+
     /// Open a streaming reader for an object.
     /// Enables processing large objects without loading them entirely into memory.
     async fn open_read_stream(&self, key: &str) -> Result<Box<dyn AsyncRead + Send + Unpin>>;
-    
+
     /// Open a streaming writer for an object.
     /// Enables writing large objects chunk by chunk to prevent OOM issues.
     async fn open_write_stream(&self, key: &str) -> Result<Box<dyn AsyncWrite + Send + Unpin>>;
@@ -73,7 +73,10 @@ pub trait UploadManager: Send + Sync {
 pub trait CompactionManager: Send + Sync {
     async fn compact_segments(&self, segments: Vec<String>) -> Result<String>;
     async fn schedule_compaction(&self, topic_partition: TopicPartition) -> Result<()>;
-    async fn get_compaction_status(&self, topic_partition: &TopicPartition) -> Result<CompactionStatus>;
+    async fn get_compaction_status(
+        &self,
+        topic_partition: &TopicPartition,
+    ) -> Result<CompactionStatus>;
 }
 
 #[derive(Debug, Clone)]

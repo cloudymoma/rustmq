@@ -1,13 +1,13 @@
-use crate::security::SecurityManager;
 use crate::admin::ApiResponse;
 use crate::controller::ControllerService;
+use crate::security::SecurityManager;
+use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
+use tracing::{debug, info, warn};
 use warp::{Filter, Rejection, Reply};
-use serde::{Deserialize, Serialize};
-use tracing::{info, warn, debug};
-use chrono::{DateTime, Utc, TimeZone};
 
 /// Security API extension for the Admin REST API
 #[derive(Clone)]
@@ -284,10 +284,7 @@ pub struct MaintenanceResponse {
 }
 
 impl SecurityApi {
-    pub fn new(
-        security_manager: Arc<SecurityManager>,
-        controller: Arc<ControllerService>,
-    ) -> Self {
+    pub fn new(security_manager: Arc<SecurityManager>, controller: Arc<ControllerService>) -> Self {
         Self {
             security_manager,
             controller,
@@ -316,16 +313,22 @@ impl SecurityApi {
         // We'll apply rate limiting directly in each route method
 
         // Certificate Authority endpoints
-        let ca_routes = Self::ca_routes_static(security_manager.clone(), rate_limit_middleware.clone());
+        let ca_routes =
+            Self::ca_routes_static(security_manager.clone(), rate_limit_middleware.clone());
 
         // Certificate lifecycle endpoints
-        let cert_routes = Self::certificate_routes_static(security_manager.clone(), rate_limit_middleware.clone());
+        let cert_routes = Self::certificate_routes_static(
+            security_manager.clone(),
+            rate_limit_middleware.clone(),
+        );
 
         // ACL management endpoints
-        let acl_routes = Self::acl_routes_static(security_manager.clone(), rate_limit_middleware.clone());
+        let acl_routes =
+            Self::acl_routes_static(security_manager.clone(), rate_limit_middleware.clone());
 
         // Security audit and monitoring endpoints
-        let audit_routes = Self::audit_routes_static(security_manager.clone(), rate_limit_middleware.clone());
+        let audit_routes =
+            Self::audit_routes_static(security_manager.clone(), rate_limit_middleware.clone());
 
         ca_routes
             .or(cert_routes)
@@ -403,17 +406,19 @@ impl SecurityApi {
             .and_then(handle_renew_certificate);
 
         // POST /api/v1/security/certificates/rotate/{cert_id}
-        let rotate_cert = warp::path!("api" / "v1" / "security" / "certificates" / "rotate" / String)
-            .and(warp::post())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_rotate_certificate);
+        let rotate_cert =
+            warp::path!("api" / "v1" / "security" / "certificates" / "rotate" / String)
+                .and(warp::post())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_rotate_certificate);
 
         // POST /api/v1/security/certificates/revoke/{cert_id}
-        let revoke_cert = warp::path!("api" / "v1" / "security" / "certificates" / "revoke" / String)
-            .and(warp::post())
-            .and(warp::body::json())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_revoke_certificate);
+        let revoke_cert =
+            warp::path!("api" / "v1" / "security" / "certificates" / "revoke" / String)
+                .and(warp::post())
+                .and(warp::body::json())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_revoke_certificate);
 
         // GET /api/v1/security/certificates
         let list_certs = warp::path!("api" / "v1" / "security" / "certificates")
@@ -436,10 +441,11 @@ impl SecurityApi {
             .and_then(handle_get_expiring_certificates);
 
         // GET /api/v1/security/certificates/{cert_id}/status
-        let cert_status = warp::path!("api" / "v1" / "security" / "certificates" / String / "status")
-            .and(warp::get())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_get_certificate_status);
+        let cert_status =
+            warp::path!("api" / "v1" / "security" / "certificates" / String / "status")
+                .and(warp::get())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_get_certificate_status);
 
         // GET /api/v1/security/certificates/{cert_id}/chain
         let cert_chain = warp::path!("api" / "v1" / "security" / "certificates" / String / "chain")
@@ -455,22 +461,13 @@ impl SecurityApi {
             .and_then(handle_validate_certificate);
 
         // Group routes to avoid complex trait bounds - split into smaller chains
-        let crud_routes = issue_cert
-            .or(renew_cert)
-            .or(rotate_cert)
-            .or(revoke_cert);
+        let crud_routes = issue_cert.or(renew_cert).or(rotate_cert).or(revoke_cert);
 
-        let listing_routes = list_certs
-            .or(get_cert)
-            .or(expiring_certs);
+        let listing_routes = list_certs.or(get_cert).or(expiring_certs);
 
-        let info_routes = cert_status
-            .or(cert_chain)
-            .or(validate_cert);
+        let info_routes = cert_status.or(cert_chain).or(validate_cert);
 
-        let routes = crud_routes
-            .or(listing_routes)
-            .or(info_routes);
+        let routes = crud_routes.or(listing_routes).or(info_routes);
 
         if let Some(rate_limit) = rate_limit_middleware {
             rate_limit.and(routes).boxed()
@@ -527,16 +524,18 @@ impl SecurityApi {
             .and_then(handle_evaluate_acl);
 
         // GET /api/v1/security/acl/principals/{principal}/permissions
-        let principal_perms = warp::path!("api" / "v1" / "security" / "acl" / "principals" / String / "permissions")
-            .and(warp::get())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_get_principal_permissions);
+        let principal_perms =
+            warp::path!("api" / "v1" / "security" / "acl" / "principals" / String / "permissions")
+                .and(warp::get())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_get_principal_permissions);
 
         // GET /api/v1/security/acl/resources/{resource}/rules
-        let resource_rules = warp::path!("api" / "v1" / "security" / "acl" / "resources" / String / "rules")
-            .and(warp::get())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_get_resource_rules);
+        let resource_rules =
+            warp::path!("api" / "v1" / "security" / "acl" / "resources" / String / "rules")
+                .and(warp::get())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_get_resource_rules);
 
         // POST /api/v1/security/acl/bulk-evaluate
         let bulk_evaluate = warp::path!("api" / "v1" / "security" / "acl" / "bulk-evaluate")
@@ -558,10 +557,11 @@ impl SecurityApi {
             .and_then(handle_get_acl_version);
 
         // POST /api/v1/security/acl/cache/invalidate
-        let invalidate_cache = warp::path!("api" / "v1" / "security" / "acl" / "cache" / "invalidate")
-            .and(warp::post())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_invalidate_acl_cache);
+        let invalidate_cache =
+            warp::path!("api" / "v1" / "security" / "acl" / "cache" / "invalidate")
+                .and(warp::post())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_invalidate_acl_cache);
 
         // POST /api/v1/security/acl/cache/warm
         let warm_cache = warp::path!("api" / "v1" / "security" / "acl" / "cache" / "warm")
@@ -651,11 +651,12 @@ impl SecurityApi {
             .and_then(handle_get_security_configuration);
 
         // POST /api/v1/security/maintenance/cleanup
-        let maintenance_cleanup = warp::path!("api" / "v1" / "security" / "maintenance" / "cleanup")
-            .and(warp::post())
-            .and(warp::body::json())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_maintenance_cleanup);
+        let maintenance_cleanup =
+            warp::path!("api" / "v1" / "security" / "maintenance" / "cleanup")
+                .and(warp::post())
+                .and(warp::body::json())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_maintenance_cleanup);
 
         // POST /api/v1/security/maintenance/backup
         let maintenance_backup = warp::path!("api" / "v1" / "security" / "maintenance" / "backup")
@@ -665,11 +666,12 @@ impl SecurityApi {
             .and_then(handle_maintenance_backup);
 
         // POST /api/v1/security/maintenance/restore
-        let maintenance_restore = warp::path!("api" / "v1" / "security" / "maintenance" / "restore")
-            .and(warp::post())
-            .and(warp::body::json())
-            .and(with_security_manager(security_mgr.clone()))
-            .and_then(handle_maintenance_restore);
+        let maintenance_restore =
+            warp::path!("api" / "v1" / "security" / "maintenance" / "restore")
+                .and(warp::post())
+                .and(warp::body::json())
+                .and(with_security_manager(security_mgr.clone()))
+                .and_then(handle_maintenance_restore);
 
         let routes = audit_logs
             .or(audit_events)
@@ -705,7 +707,7 @@ async fn handle_generate_ca(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     info!("Generating CA certificate: {}", request.common_name);
-    
+
     // Use CertificateManager to generate actual CA certificate
     let ca_params = crate::security::tls::CaGenerationParams {
         common_name: request.common_name.clone(),
@@ -715,12 +717,16 @@ async fn handle_generate_ca(
         state_province: None,
         locality: None,
         validity_years: Some(request.validity_days.unwrap_or(3650) / 365), // Convert days to years
-        key_type: None, // Use default
+        key_type: None,                                                    // Use default
         key_size: Some(request.key_size.unwrap_or(2048)),
         is_root: true, // For admin API, we're creating root CAs
     };
-    
-    match security_manager.certificate_manager().generate_root_ca(ca_params).await {
+
+    match security_manager
+        .certificate_manager()
+        .generate_root_ca(ca_params)
+        .await
+    {
         Ok(cert_info) => {
             info!("CA certificate generated successfully: {}", cert_info.id);
             let response = ApiResponse {
@@ -738,7 +744,7 @@ async fn handle_generate_ca(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to generate CA certificate: {}", e);
             let response = ApiResponse::<()> {
@@ -758,17 +764,17 @@ async fn handle_list_cas(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     debug!("Listing CA certificates");
-    
+
     // Get CA certificates from CertificateManager
     match security_manager.certificate_manager().get_ca_chain().await {
         Ok(ca_certificates) => {
             let mut cas = Vec::new();
-            
+
             for (index, ca_cert) in ca_certificates.iter().enumerate() {
                 // Parse certificate information (simplified for now)
                 let ca_id = format!("ca_{}", index);
                 let common_name = format!("RustMQ CA {}", index + 1);
-                
+
                 cas.push(CaInfo {
                     ca_id: ca_id.clone(),
                     common_name: common_name.clone(),
@@ -778,14 +784,17 @@ async fn handle_list_cas(
                     serial_number: format!("{}", index + 1),
                     not_before: Utc::now() - chrono::Duration::days(30),
                     not_after: Utc::now() + chrono::Duration::days(3650),
-                    key_usage: vec!["Digital Signature".to_string(), "Certificate Sign".to_string()],
+                    key_usage: vec![
+                        "Digital Signature".to_string(),
+                        "Certificate Sign".to_string(),
+                    ],
                     is_ca: true,
                     path_length: Some(0),
                     status: "Active".to_string(),
                     fingerprint: format!("sha256:ca_fingerprint_{}", index),
                 });
             }
-            
+
             if cas.is_empty() {
                 // No CA certificates found
                 cas.push(CaInfo {
@@ -804,16 +813,16 @@ async fn handle_list_cas(
                     fingerprint: "none".to_string(),
                 });
             }
-            
+
             let response = ApiResponse {
                 success: true,
                 data: Some(cas),
                 error: None,
                 leader_hint: None,
             };
-            
+
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to list CA certificates: {}", e);
             let response = ApiResponse::<Vec<CaInfo>> {
@@ -832,17 +841,20 @@ async fn handle_get_ca(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     debug!("Getting CA certificate: {}", ca_id);
-    
+
     // Use SecurityManager to get actual CA certificate information
     match security_manager.certificate_manager().get_ca_chain().await {
         Ok(ca_certificates) => {
             // Parse CA ID to find the specific certificate
             let ca_index = if ca_id.starts_with("ca_") {
-                ca_id.trim_start_matches("ca_").parse::<usize>().unwrap_or(0)
+                ca_id
+                    .trim_start_matches("ca_")
+                    .parse::<usize>()
+                    .unwrap_or(0)
             } else {
                 0 // Default to first CA if ID format is different
             };
-            
+
             if let Some(ca_cert) = ca_certificates.get(ca_index) {
                 // Parse certificate information from DER data
                 let ca_info = CaInfo {
@@ -854,13 +866,16 @@ async fn handle_get_ca(
                     serial_number: format!("{}", ca_index + 1),
                     not_before: Utc::now() - chrono::Duration::days(30),
                     not_after: Utc::now() + chrono::Duration::days(3650),
-                    key_usage: vec!["Digital Signature".to_string(), "Certificate Sign".to_string()],
+                    key_usage: vec![
+                        "Digital Signature".to_string(),
+                        "Certificate Sign".to_string(),
+                    ],
                     is_ca: true,
                     path_length: Some(0),
                     status: "Active".to_string(),
                     fingerprint: format!("sha256:ca_fingerprint_{}", ca_index),
                 };
-                
+
                 let response = ApiResponse {
                     success: true,
                     data: Some(ca_info),
@@ -877,7 +892,7 @@ async fn handle_get_ca(
                 };
                 Ok(warp::reply::json(&response))
             }
-        },
+        }
         Err(e) => {
             warn!("Failed to retrieve CA certificate: {}", e);
             let response = ApiResponse::<CaInfo> {
@@ -896,22 +911,28 @@ async fn handle_delete_ca(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     warn!("Deactivating CA certificate: {}", ca_id);
-    
+
     // In a simplified architecture, we don't actually delete/deactivate CA certificates
     // as they are critical to the PKI infrastructure. Log the request but return success.
     // In production, this would mark the CA as inactive rather than deleting it.
-    
+
     // Verify the CA exists first
     match security_manager.certificate_manager().get_ca_chain().await {
         Ok(ca_certificates) => {
             let ca_index = if ca_id.starts_with("ca_") {
-                ca_id.trim_start_matches("ca_").parse::<usize>().unwrap_or(0)
+                ca_id
+                    .trim_start_matches("ca_")
+                    .parse::<usize>()
+                    .unwrap_or(0)
             } else {
                 0
             };
-            
+
             if ca_index < ca_certificates.len() {
-                info!("CA certificate '{}' marked for deactivation (not physically removed)", ca_id);
+                info!(
+                    "CA certificate '{}' marked for deactivation (not physically removed)",
+                    ca_id
+                );
                 let response = ApiResponse {
                     success: true,
                     data: Some(format!("CA certificate '{}' deactivated", ca_id)),
@@ -928,7 +949,7 @@ async fn handle_delete_ca(
                 };
                 Ok(warp::reply::json(&response))
             }
-        },
+        }
         Err(e) => {
             warn!("Failed to verify CA certificate existence: {}", e);
             let response = ApiResponse::<String> {
@@ -949,51 +970,63 @@ async fn handle_issue_certificate(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     info!("Issuing certificate for: {}", request.common_name);
-    
+
     // Create distinguished name
     let mut subject = rcgen::DistinguishedName::new();
     subject.push(rcgen::DnType::CommonName, request.common_name.clone());
     if let Some(org) = request.organization.clone() {
         subject.push(rcgen::DnType::OrganizationName, org);
     }
-    
+
     // Store cloned values for later use
     let request_san_entries = request.subject_alt_names.clone();
     let request_role = request.role.clone();
-    
+
     // Convert SAN entries
-    let san_entries = request.subject_alt_names.unwrap_or_default()
+    let san_entries = request
+        .subject_alt_names
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|san| match san.as_str() {
             dns if dns.starts_with("DNS:") => Some(rcgen::SanType::DnsName(dns[4..].to_string())),
-            ip if ip.starts_with("IP:") => {
-                ip[3..].parse::<std::net::IpAddr>().ok().map(rcgen::SanType::IpAddress)
-            },
-            email if email.starts_with("email:") => Some(rcgen::SanType::Rfc822Name(email[6..].to_string())),
+            ip if ip.starts_with("IP:") => ip[3..]
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(rcgen::SanType::IpAddress),
+            email if email.starts_with("email:") => {
+                Some(rcgen::SanType::Rfc822Name(email[6..].to_string()))
+            }
             _ => None,
         })
         .collect();
-        
+
     // Convert role
-    let role = request.role.map(|r| match r.as_str() {
-        "broker" => crate::security::tls::CertificateRole::Broker,
-        "client" => crate::security::tls::CertificateRole::Client,
-        "admin" => crate::security::tls::CertificateRole::Admin,
-        _ => crate::security::tls::CertificateRole::Client,
-    }).unwrap_or(crate::security::tls::CertificateRole::Client);
-    
+    let role = request
+        .role
+        .map(|r| match r.as_str() {
+            "broker" => crate::security::tls::CertificateRole::Broker,
+            "client" => crate::security::tls::CertificateRole::Client,
+            "admin" => crate::security::tls::CertificateRole::Admin,
+            _ => crate::security::tls::CertificateRole::Client,
+        })
+        .unwrap_or(crate::security::tls::CertificateRole::Client);
+
     // Convert request to CertificateRequest format
     let cert_request = crate::security::tls::CertificateRequest {
         subject,
         role,
         san_entries,
         validity_days: Some(request.validity_days.unwrap_or(365)),
-        key_type: None, // Use default
+        key_type: None,       // Use default
         key_size: Some(2048), // Default key size
         issuer_id: Some(request.ca_id),
     };
-    
-    match security_manager.certificate_manager().issue_certificate(cert_request).await {
+
+    match security_manager
+        .certificate_manager()
+        .issue_certificate(cert_request)
+        .await
+    {
         Ok(cert_info) => {
             info!("Certificate issued successfully: {}", cert_info.id);
             let cert_response = CertificateDetailResponse {
@@ -1014,16 +1047,16 @@ async fn handle_issue_certificate(
                 revocation_reason: None,
                 revocation_time: None,
             };
-            
+
             let response = ApiResponse {
                 success: true,
                 data: Some(cert_response),
                 error: None,
                 leader_hint: None,
             };
-            
+
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to issue certificate: {}", e);
             let response = ApiResponse::<CertificateDetailResponse> {
@@ -1042,12 +1075,20 @@ async fn handle_renew_certificate(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     info!("Renewing certificate: {}", cert_id);
-    
+
     // Use SecurityManager to check if certificate exists and can be renewed
-    match security_manager.certificate_manager().get_certificate_by_id(&cert_id).await {
+    match security_manager
+        .certificate_manager()
+        .get_certificate_by_id(&cert_id)
+        .await
+    {
         Ok(Some(cert_info)) => {
             // Use the actual renew_certificate method
-            match security_manager.certificate_manager().renew_certificate(&cert_id).await {
+            match security_manager
+                .certificate_manager()
+                .renew_certificate(&cert_id)
+                .await
+            {
                 Ok(renewed_cert) => {
                     info!("Certificate '{}' renewed successfully", cert_id);
                     let response = ApiResponse {
@@ -1063,7 +1104,7 @@ async fn handle_renew_certificate(
                         leader_hint: None,
                     };
                     Ok(warp::reply::json(&response))
-                },
+                }
                 Err(e) => {
                     warn!("Failed to renew certificate '{}': {}", cert_id, e);
                     let response = ApiResponse::<serde_json::Value> {
@@ -1075,7 +1116,7 @@ async fn handle_renew_certificate(
                     Ok(warp::reply::json(&response))
                 }
             }
-        },
+        }
         Ok(None) => {
             let response = ApiResponse::<serde_json::Value> {
                 success: false,
@@ -1084,7 +1125,7 @@ async fn handle_renew_certificate(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to renew certificate '{}': {}", cert_id, e);
             let response = ApiResponse::<serde_json::Value> {
@@ -1103,14 +1144,25 @@ async fn handle_rotate_certificate(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     info!("Rotating certificate: {}", cert_id);
-    
+
     // Use SecurityManager to validate and rotate certificate
-    match security_manager.certificate_manager().get_certificate_by_id(&cert_id).await {
+    match security_manager
+        .certificate_manager()
+        .get_certificate_by_id(&cert_id)
+        .await
+    {
         Ok(Some(cert_info)) => {
             // Use the actual rotate_certificate method
-            match security_manager.certificate_manager().rotate_certificate(&cert_id).await {
+            match security_manager
+                .certificate_manager()
+                .rotate_certificate(&cert_id)
+                .await
+            {
                 Ok(new_cert) => {
-                    info!("Certificate '{}' rotated to new certificate '{}'", cert_id, new_cert.id);
+                    info!(
+                        "Certificate '{}' rotated to new certificate '{}'",
+                        cert_id, new_cert.id
+                    );
                     let response = ApiResponse {
                         success: true,
                         data: Some(serde_json::json!({
@@ -1125,7 +1177,7 @@ async fn handle_rotate_certificate(
                         leader_hint: None,
                     };
                     Ok(warp::reply::json(&response))
-                },
+                }
                 Err(e) => {
                     warn!("Failed to rotate certificate '{}': {}", cert_id, e);
                     let response = ApiResponse::<serde_json::Value> {
@@ -1137,7 +1189,7 @@ async fn handle_rotate_certificate(
                     Ok(warp::reply::json(&response))
                 }
             }
-        },
+        }
         Ok(None) => {
             let response = ApiResponse::<serde_json::Value> {
                 success: false,
@@ -1146,7 +1198,7 @@ async fn handle_rotate_certificate(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to rotate certificate '{}': {}", cert_id, e);
             let response = ApiResponse::<serde_json::Value> {
@@ -1165,20 +1217,32 @@ async fn handle_revoke_certificate(
     request: RevokeCertificateRequest,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    warn!("Revoking certificate: {} with reason: {}", cert_id, request.reason);
-    
+    warn!(
+        "Revoking certificate: {} with reason: {}",
+        cert_id, request.reason
+    );
+
     // Convert revocation reason to SecurityManager format
     let revocation_reason = match request.reason.to_lowercase().as_str() {
         "compromised" | "key_compromise" => crate::security::tls::RevocationReason::KeyCompromise,
         "superseded" => crate::security::tls::RevocationReason::Superseded,
-        "cessation" | "cessation_of_operation" => crate::security::tls::RevocationReason::CessationOfOperation,
+        "cessation" | "cessation_of_operation" => {
+            crate::security::tls::RevocationReason::CessationOfOperation
+        }
         "unspecified" | _ => crate::security::tls::RevocationReason::Unspecified,
     };
-    
+
     // Use SecurityManager to revoke certificate
-    match security_manager.certificate_manager().revoke_certificate(&cert_id, revocation_reason).await {
+    match security_manager
+        .certificate_manager()
+        .revoke_certificate(&cert_id, revocation_reason)
+        .await
+    {
         Ok(_) => {
-            info!("Certificate '{}' successfully revoked with reason: {}", cert_id, request.reason);
+            info!(
+                "Certificate '{}' successfully revoked with reason: {}",
+                cert_id, request.reason
+            );
             let response = ApiResponse {
                 success: true,
                 data: Some(serde_json::json!({
@@ -1192,7 +1256,7 @@ async fn handle_revoke_certificate(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to revoke certificate '{}': {}", cert_id, e);
             let response = ApiResponse::<serde_json::Value> {
@@ -1216,11 +1280,22 @@ async fn handle_list_certificates(
     let status_filter = query.get("status").map(|s| s.as_str());
     let role_filter = query.get("role").map(|s| s.as_str());
     let expiry_days = query.get("expiry_days").and_then(|d| d.parse::<i64>().ok());
-    let offset = query.get("offset").and_then(|o| o.parse::<usize>().ok()).unwrap_or(0);
-    let limit = query.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(50).min(1000);
+    let offset = query
+        .get("offset")
+        .and_then(|o| o.parse::<usize>().ok())
+        .unwrap_or(0);
+    let limit = query
+        .get("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(50)
+        .min(1000);
 
     // Get all certificates from CertificateManager
-    match security_manager.certificate_manager().list_all_certificates().await {
+    match security_manager
+        .certificate_manager()
+        .list_all_certificates()
+        .await
+    {
         Ok(all_certs) => {
             let now = Utc::now();
 
@@ -1246,8 +1321,12 @@ async fn handle_list_certificates(
 
                     // Expiry days filter
                     if let Some(days) = expiry_days {
-                        if let Ok(not_after_duration) = cert.not_after.duration_since(std::time::UNIX_EPOCH) {
-                            let not_after_chrono = Utc.timestamp_opt(not_after_duration.as_secs() as i64, 0).unwrap();
+                        if let Ok(not_after_duration) =
+                            cert.not_after.duration_since(std::time::UNIX_EPOCH)
+                        {
+                            let not_after_chrono = Utc
+                                .timestamp_opt(not_after_duration.as_secs() as i64, 0)
+                                .unwrap();
                             let days_until_expiry = (not_after_chrono - now).num_days();
                             if days_until_expiry > days {
                                 return false;
@@ -1258,7 +1337,8 @@ async fn handle_list_certificates(
                     true
                 })
                 .map(|cert| {
-                    let (not_before_chrono, not_after_chrono) = convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
+                    let (not_before_chrono, not_after_chrono) =
+                        convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
 
                     CertificateListItem {
                         certificate_id: cert.id.clone(),
@@ -1283,7 +1363,13 @@ async fn handle_list_certificates(
                 .take(limit)
                 .collect();
 
-            debug!("Found {} certificates (total: {}, offset: {}, limit: {})", paginated.len(), total, offset, limit);
+            debug!(
+                "Found {} certificates (total: {}, offset: {}, limit: {})",
+                paginated.len(),
+                total,
+                offset,
+                limit
+            );
 
             let response = ApiResponse {
                 success: true,
@@ -1293,7 +1379,7 @@ async fn handle_list_certificates(
             };
 
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to list certificates: {}", e);
             let response = ApiResponse::<Vec<CertificateListItem>> {
@@ -1314,19 +1400,25 @@ async fn handle_get_certificate(
     debug!("Getting certificate: {}", cert_id);
 
     // Get certificate by ID from CertificateManager
-    match security_manager.certificate_manager().get_certificate_by_id(&cert_id).await {
+    match security_manager
+        .certificate_manager()
+        .get_certificate_by_id(&cert_id)
+        .await
+    {
         Ok(Some(cert)) => {
-            let (not_before_chrono, not_after_chrono) = convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
+            let (not_before_chrono, not_after_chrono) =
+                convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
 
             // Parse PEM to extract x509 fields
-            let (key_usage, extended_key_usage, subject_alt_names) = if let Some(ref pem) = cert.certificate_pem {
-                parse_certificate_pem(pem).await.unwrap_or_else(|e| {
-                    warn!("Failed to parse certificate PEM: {}", e);
-                    (vec![], vec![], vec![])
-                })
-            } else {
-                (vec![], vec![], cert.san_entries.clone())
-            };
+            let (key_usage, extended_key_usage, subject_alt_names) =
+                if let Some(ref pem) = cert.certificate_pem {
+                    parse_certificate_pem(pem).await.unwrap_or_else(|e| {
+                        warn!("Failed to parse certificate PEM: {}", e);
+                        (vec![], vec![], vec![])
+                    })
+                } else {
+                    (vec![], vec![], cert.san_entries.clone())
+                };
 
             // Get certificate chain (simplified: cert + root CA)
             let certificate_chain = if let Some(ref pem) = cert.certificate_pem {
@@ -1340,7 +1432,7 @@ async fn handle_get_certificate(
                             }
                         }
                         chain
-                    },
+                    }
                     Err(e) => {
                         warn!("Failed to get CA chain: {}", e);
                         vec![pem.clone()]
@@ -1352,7 +1444,8 @@ async fn handle_get_certificate(
 
             // Convert revocation reason
             let revocation_reason = cert.revocation_reason.as_ref().map(|r| format!("{:?}", r));
-            let revocation_time = if cert.status == crate::security::tls::CertificateStatus::Revoked {
+            let revocation_time = if cert.status == crate::security::tls::CertificateStatus::Revoked
+            {
                 Some(not_after_chrono) // Placeholder - would need actual revocation timestamp
             } else {
                 None
@@ -1385,7 +1478,7 @@ async fn handle_get_certificate(
             };
 
             Ok(warp::reply::json(&response))
-        },
+        }
         Ok(None) => {
             let response = ApiResponse::<CertificateDetailResponse> {
                 success: false,
@@ -1394,7 +1487,7 @@ async fn handle_get_certificate(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to get certificate: {}", e);
             let response = ApiResponse::<CertificateDetailResponse> {
@@ -1412,17 +1505,28 @@ async fn handle_get_expiring_certificates(
     query: HashMap<String, String>,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    let threshold_days = query.get("days").and_then(|d| d.parse::<u32>().ok()).unwrap_or(30);
-    debug!("Getting certificates expiring within {} days", threshold_days);
+    let threshold_days = query
+        .get("days")
+        .and_then(|d| d.parse::<u32>().ok())
+        .unwrap_or(30);
+    debug!(
+        "Getting certificates expiring within {} days",
+        threshold_days
+    );
 
     // Use CertificateManager's get_expiring_certificates method
-    match security_manager.certificate_manager().get_expiring_certificates(threshold_days).await {
+    match security_manager
+        .certificate_manager()
+        .get_expiring_certificates(threshold_days)
+        .await
+    {
         Ok(expiring_certs) => {
             // Convert to CertificateListItem and sort by expiration date (soonest first)
             let mut cert_items: Vec<CertificateListItem> = expiring_certs
                 .into_iter()
                 .map(|cert| {
-                    let (not_before_chrono, not_after_chrono) = convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
+                    let (not_before_chrono, not_after_chrono) =
+                        convert_systemtime_to_chrono(&cert.not_before, &cert.not_after);
 
                     CertificateListItem {
                         certificate_id: cert.id.clone(),
@@ -1452,7 +1556,7 @@ async fn handle_get_expiring_certificates(
             };
 
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to get expiring certificates: {}", e);
             let response = ApiResponse::<Vec<CertificateListItem>> {
@@ -1473,7 +1577,11 @@ async fn handle_get_certificate_status(
     debug!("Getting certificate status: {}", cert_id);
 
     // Get certificate by ID to check status
-    match security_manager.certificate_manager().get_certificate_by_id(&cert_id).await {
+    match security_manager
+        .certificate_manager()
+        .get_certificate_by_id(&cert_id)
+        .await
+    {
         Ok(Some(cert)) => {
             use std::time::SystemTime;
             let now = SystemTime::now();
@@ -1522,7 +1630,7 @@ async fn handle_get_certificate_status(
             };
 
             Ok(warp::reply::json(&response))
-        },
+        }
         Ok(None) => {
             let response = ApiResponse::<serde_json::Value> {
                 success: false,
@@ -1531,7 +1639,7 @@ async fn handle_get_certificate_status(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to get certificate: {}", e);
             let response = ApiResponse::<serde_json::Value> {
@@ -1552,7 +1660,11 @@ async fn handle_get_certificate_chain(
     debug!("Getting certificate chain: {}", cert_id);
 
     // Get certificate by ID
-    match security_manager.certificate_manager().get_certificate_by_id(&cert_id).await {
+    match security_manager
+        .certificate_manager()
+        .get_certificate_by_id(&cert_id)
+        .await
+    {
         Ok(Some(cert)) => {
             // Build chain: [leaf certificate, root CA] (simplified architecture)
             let mut chain = Vec::new();
@@ -1596,7 +1708,7 @@ async fn handle_get_certificate_chain(
                     };
 
                     Ok(warp::reply::json(&response))
-                },
+                }
                 Err(e) => {
                     warn!("Failed to get CA chain: {}", e);
                     let response = ApiResponse::<serde_json::Value> {
@@ -1608,7 +1720,7 @@ async fn handle_get_certificate_chain(
                     Ok(warp::reply::json(&response))
                 }
             }
-        },
+        }
         Ok(None) => {
             let response = ApiResponse::<serde_json::Value> {
                 success: false,
@@ -1617,7 +1729,7 @@ async fn handle_get_certificate_chain(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Failed to get certificate: {}", e);
             let response = ApiResponse::<serde_json::Value> {
@@ -1636,7 +1748,7 @@ async fn handle_validate_certificate(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     debug!("Validating certificate");
-    
+
     // Parse certificate PEM
     let cert_der = match pem::parse(&request.certificate_pem) {
         Ok(pem) => pem.contents().to_vec(),
@@ -1650,22 +1762,26 @@ async fn handle_validate_certificate(
             return Ok(warp::reply::json(&response));
         }
     };
-    
+
     // Use SecurityManager to validate certificate
-    match security_manager.certificate_manager().validate_certificate_cached(&cert_der).await {
+    match security_manager
+        .certificate_manager()
+        .validate_certificate_cached(&cert_der)
+        .await
+    {
         Ok(validation_result) => {
             let mut issues = Vec::new();
             let mut warnings = Vec::new();
-            
+
             // Check validation result
             let is_valid = validation_result.is_valid;
-            
+
             if !is_valid {
                 if let Some(error) = validation_result.error {
                     issues.push(error);
                 }
             }
-            
+
             // Parse certificate to get expiration info
             let expires_in_days = match x509_parser::parse_x509_certificate(&cert_der) {
                 Ok((_, cert)) => {
@@ -1673,36 +1789,37 @@ async fn handle_validate_certificate(
                     let now = std::time::SystemTime::now();
                     // Convert ASN1Time to SystemTime via timestamp
                     let not_after_timestamp = not_after.timestamp();
-                    let not_after_system_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(not_after_timestamp as u64);
-                    let duration_until_expiry = not_after_system_time.duration_since(now).unwrap_or_default();
+                    let not_after_system_time = std::time::UNIX_EPOCH
+                        + std::time::Duration::from_secs(not_after_timestamp as u64);
+                    let duration_until_expiry = not_after_system_time
+                        .duration_since(now)
+                        .unwrap_or_default();
                     let days_until_expiry = duration_until_expiry.as_secs() / (24 * 3600);
-                    
+
                     if days_until_expiry <= 30 {
                         warnings.push(format!("Certificate expires in {} days", days_until_expiry));
                     }
-                    
+
                     Some(days_until_expiry as i64)
-                },
+                }
                 Err(_) => {
                     issues.push("Unable to parse certificate expiration date".to_string());
                     None
                 }
             };
-            
+
             // Check certificate chain if provided
             let chain_valid = if let Some(chain_pems) = request.chain_pem {
                 // Validate each certificate in the chain
-                chain_pems.iter().all(|pem| {
-                    pem::parse(pem).is_ok()
-                })
+                chain_pems.iter().all(|pem| pem::parse(pem).is_ok())
             } else {
                 true // No chain provided, assume valid
             };
-            
+
             if !chain_valid {
                 issues.push("Certificate chain validation failed".to_string());
             }
-            
+
             let validation_response = CertificateValidationResponse {
                 valid: is_valid && chain_valid,
                 issues,
@@ -1711,7 +1828,7 @@ async fn handle_validate_certificate(
                 revocation_status: "Not Checked".to_string(), // CRL/OCSP checking not implemented
                 expires_in_days,
             };
-            
+
             let response = ApiResponse {
                 success: true,
                 data: Some(validation_response),
@@ -1719,7 +1836,7 @@ async fn handle_validate_certificate(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("Certificate validation error: {}", e);
             let validation_response = CertificateValidationResponse {
@@ -1730,7 +1847,7 @@ async fn handle_validate_certificate(
                 revocation_status: "Error".to_string(),
                 expires_in_days: None,
             };
-            
+
             let response = ApiResponse {
                 success: true,
                 data: Some(validation_response),
@@ -1749,7 +1866,7 @@ async fn handle_create_acl_rule(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     info!("Creating ACL rule for principal: {}", request.principal);
-    
+
     // Validate request parameters
     if request.principal.is_empty() {
         let response = ApiResponse::<AclRuleResponse> {
@@ -1760,7 +1877,7 @@ async fn handle_create_acl_rule(
         };
         return Ok(warp::reply::json(&response));
     }
-    
+
     // Parse operation and effect
     let operation_enum = match request.operation.to_lowercase().as_str() {
         "read" => crate::security::acl::AclOperation::Read,
@@ -1778,7 +1895,7 @@ async fn handle_create_acl_rule(
             return Ok(warp::reply::json(&response));
         }
     };
-    
+
     let effect_enum = match request.effect.to_lowercase().as_str() {
         "allow" => crate::security::acl::Effect::Allow,
         "deny" => crate::security::acl::Effect::Deny,
@@ -1792,14 +1909,17 @@ async fn handle_create_acl_rule(
             return Ok(warp::reply::json(&response));
         }
     };
-    
+
     // Create ACL rule through SecurityManager
     // Note: In the current architecture, ACL rules are managed through the AuthorizationManager
     // For now, we'll simulate successful creation and return a response
     let rule_id = uuid::Uuid::new_v4().to_string();
-    
-    info!("ACL rule '{}' created successfully for principal: {}", rule_id, request.principal);
-    
+
+    info!(
+        "ACL rule '{}' created successfully for principal: {}",
+        rule_id, request.principal
+    );
+
     let acl_rule = AclRuleResponse {
         rule_id: rule_id.clone(),
         principal: request.principal,
@@ -1812,14 +1932,14 @@ async fn handle_create_acl_rule(
         updated_at: Utc::now(),
         version: 1,
     };
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(acl_rule),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -1833,8 +1953,15 @@ async fn handle_list_acl_rules(
     let principal_filter = query.get("principal").map(|s| s.clone());
     let resource_filter = query.get("resource").map(|s| s.clone());
     let permission_filter = query.get("permission").map(|s| s.clone());
-    let offset = query.get("offset").and_then(|o| o.parse::<usize>().ok()).unwrap_or(0);
-    let limit = query.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(50).min(1000);
+    let offset = query
+        .get("offset")
+        .and_then(|o| o.parse::<usize>().ok())
+        .unwrap_or(0);
+    let limit = query
+        .get("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(50)
+        .min(1000);
 
     // Build filter from query parameters
     // Note: AclRuleFilter doesn't have a permission field, only operations
@@ -1842,7 +1969,7 @@ async fn handle_list_acl_rules(
     let _filter = crate::security::acl::storage::AclRuleFilter {
         principal: principal_filter.clone(),
         resource_pattern: resource_filter.clone(),
-        operations: None,  // Would map permission_filter to operations
+        operations: None, // Would map permission_filter to operations
         ..Default::default()
     };
 
@@ -1852,27 +1979,21 @@ async fn handle_list_acl_rules(
     // For now, return placeholder data as ACL manager is not directly exposed
     // Production implementation would require adding a list_rules method to AuthorizationManager
 
-    let rules = vec![
-        AclRuleResponse {
-            rule_id: "rule_12345".to_string(),
-            principal: principal_filter.unwrap_or_else(|| "user@domain.com".to_string()),
-            resource_pattern: resource_filter.unwrap_or_else(|| "topic.users.*".to_string()),
-            resource_type: "topic".to_string(),
-            operation: permission_filter.unwrap_or_else(|| "read".to_string()),
-            effect: "allow".to_string(),
-            conditions: HashMap::new(),
-            created_at: Utc::now() - chrono::Duration::hours(1),
-            updated_at: Utc::now() - chrono::Duration::hours(1),
-            version: 1,
-        }
-    ];
+    let rules = vec![AclRuleResponse {
+        rule_id: "rule_12345".to_string(),
+        principal: principal_filter.unwrap_or_else(|| "user@domain.com".to_string()),
+        resource_pattern: resource_filter.unwrap_or_else(|| "topic.users.*".to_string()),
+        resource_type: "topic".to_string(),
+        operation: permission_filter.unwrap_or_else(|| "read".to_string()),
+        effect: "allow".to_string(),
+        conditions: HashMap::new(),
+        created_at: Utc::now() - chrono::Duration::hours(1),
+        updated_at: Utc::now() - chrono::Duration::hours(1),
+        version: 1,
+    }];
 
     // Apply pagination
-    let paginated: Vec<AclRuleResponse> = rules
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let paginated: Vec<AclRuleResponse> = rules.into_iter().skip(offset).take(limit).collect();
 
     debug!("Returning {} ACL rules", paginated.len());
 
@@ -1943,8 +2064,12 @@ async fn handle_update_acl_rule(
     // Build updated rule from request
     let updated_rule = AclRuleResponse {
         rule_id: rule_id.clone(),
-        principal: request.principal.unwrap_or_else(|| "user@domain.com".to_string()),
-        resource_pattern: request.resource_pattern.unwrap_or_else(|| "topic.users.*".to_string()),
+        principal: request
+            .principal
+            .unwrap_or_else(|| "user@domain.com".to_string()),
+        resource_pattern: request
+            .resource_pattern
+            .unwrap_or_else(|| "topic.users.*".to_string()),
         resource_type: request.resource_type.unwrap_or_else(|| "topic".to_string()),
         operation: request.operation.unwrap_or_else(|| "read".to_string()),
         effect: request.effect.unwrap_or_else(|| "allow".to_string()),
@@ -2009,14 +2134,16 @@ async fn handle_evaluate_acl(
     request: AclEvaluationRequest,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    debug!("Evaluating ACL for principal: {} on resource: {}", 
-           request.principal, request.resource);
-    
+    debug!(
+        "Evaluating ACL for principal: {} on resource: {}",
+        request.principal, request.resource
+    );
+
     let start_time = std::time::Instant::now();
-    
+
     // Use SecurityManager's authorization system for actual ACL evaluation
     let principal: Arc<str> = Arc::from(request.principal.as_str());
-    
+
     // Parse operation
     let operation = match request.operation.to_lowercase().as_str() {
         "read" => crate::security::acl::AclOperation::Read,
@@ -2034,13 +2161,13 @@ async fn handle_evaluate_acl(
             return Ok(warp::reply::json(&response));
         }
     };
-    
+
     // For admin API evaluation, we'll create a simple connection cache and convert operation to Permission
-    use crate::security::auth::{authorization::ConnectionAclCache, Permission, Principal};
-    
+    use crate::security::auth::{Permission, Principal, authorization::ConnectionAclCache};
+
     let connection_cache = ConnectionAclCache::new(1000);
     let principal_obj = Principal::from(request.principal.as_str());
-    
+
     // Convert ACL operation to Permission
     let permission = match operation {
         crate::security::acl::AclOperation::Read => Permission::Read,
@@ -2050,24 +2177,28 @@ async fn handle_evaluate_acl(
         crate::security::acl::AclOperation::Admin => Permission::Admin,
         _ => Permission::Read, // Default fallback
     };
-    
+
     // Perform authorization check through SecurityManager
-    match security_manager.authorization().check_permission(
-        &connection_cache,
-        &principal_obj,
-        &request.resource,
-        permission
-    ).await {
+    match security_manager
+        .authorization()
+        .check_permission(
+            &connection_cache,
+            &principal_obj,
+            &request.resource,
+            permission,
+        )
+        .await
+    {
         Ok(is_allowed) => {
             let evaluation_time = start_time.elapsed().as_nanos() as u64;
-            
+
             let evaluation_result = AclEvaluationResponse {
                 allowed: is_allowed,
                 effect: if is_allowed { "allow" } else { "deny" }.to_string(),
                 matched_rules: vec![], // Rule details would come from authorization manager
                 evaluation_time_ns: evaluation_time,
             };
-            
+
             let response = ApiResponse {
                 success: true,
                 data: Some(evaluation_result),
@@ -2075,7 +2206,7 @@ async fn handle_evaluate_acl(
                 leader_hint: None,
             };
             Ok(warp::reply::json(&response))
-        },
+        }
         Err(e) => {
             warn!("ACL evaluation failed: {}", e);
             let response = ApiResponse::<AclEvaluationResponse> {
@@ -2111,16 +2242,20 @@ async fn handle_get_principal_permissions(
                 operations: vec!["read".to_string()],
                 effect: "allow".to_string(),
                 conditions: HashMap::new(),
-            }
+            },
         ],
         effective_permissions: vec![
             "read:topic.users.*".to_string(),
             "write:topic.users.*".to_string(),
-            "read:topic.events.*".to_string()
+            "read:topic.events.*".to_string(),
         ],
     };
 
-    debug!("Retrieved {} permission entries for principal: {}", permissions.permissions.len(), principal);
+    debug!(
+        "Retrieved {} permission entries for principal: {}",
+        permissions.permissions.len(),
+        principal
+    );
 
     let response = ApiResponse {
         success: true,
@@ -2166,7 +2301,7 @@ async fn handle_get_resource_rules(
                 created_at: Utc::now() - chrono::Duration::hours(2),
                 updated_at: Utc::now() - chrono::Duration::hours(2),
                 version: 1,
-            }
+            },
         ],
         effective_permissions: {
             let mut perms = HashMap::new();
@@ -2176,7 +2311,11 @@ async fn handle_get_resource_rules(
         },
     };
 
-    debug!("Found {} ACL rules for resource: {}", resource_rules.rules.len(), resource);
+    debug!(
+        "Found {} ACL rules for resource: {}",
+        resource_rules.rules.len(),
+        resource
+    );
 
     let response = ApiResponse {
         success: true,
@@ -2197,7 +2336,7 @@ async fn handle_bulk_evaluate_acl(
     let start_time = std::time::Instant::now();
 
     // Evaluate multiple ACL checks concurrently
-    use crate::security::auth::{authorization::ConnectionAclCache, Permission, Principal};
+    use crate::security::auth::{Permission, Principal, authorization::ConnectionAclCache};
     let connection_cache = ConnectionAclCache::new(1000);
 
     let mut results = Vec::new();
@@ -2214,12 +2353,16 @@ async fn handle_bulk_evaluate_acl(
         };
 
         // Perform authorization check
-        let allowed = security_manager.authorization().check_permission(
-            &connection_cache,
-            &principal_obj,
-            &eval.resource,
-            permission
-        ).await.unwrap_or(false);
+        let allowed = security_manager
+            .authorization()
+            .check_permission(
+                &connection_cache,
+                &principal_obj,
+                &eval.resource,
+                permission,
+            )
+            .await
+            .unwrap_or(false);
 
         let eval_time = eval_start.elapsed().as_nanos() as u64;
 
@@ -2233,7 +2376,11 @@ async fn handle_bulk_evaluate_acl(
 
     let total_time = start_time.elapsed().as_nanos() as u64;
 
-    debug!("Bulk evaluation completed: {} checks in {}ns", results.len(), total_time);
+    debug!(
+        "Bulk evaluation completed: {} checks in {}ns",
+        results.len(),
+        total_time
+    );
 
     let bulk_result = BulkAclEvaluationResponse {
         results,
@@ -2342,7 +2489,9 @@ async fn handle_warm_acl_cache(
     // Note: Would use acl_manager.warm_cache(principals) in production
 
     let principal_list: Vec<String> = if let Some(arr) = principals.as_array() {
-        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+        arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect()
     } else {
         vec![]
     };
@@ -2378,7 +2527,9 @@ async fn handle_get_audit_logs(
     // Note: Would use security_metrics.get_audit_logs(filter) in production
 
     // Apply filters: time_range, principal, event_type, resource
-    let time_start = request.start_time.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
+    let time_start = request
+        .start_time
+        .unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
     let time_end = request.end_time.unwrap_or_else(|| Utc::now());
     let offset = request.offset.unwrap_or(0) as usize;
     let limit = request.limit.unwrap_or(100).min(1000) as usize;
@@ -2393,7 +2544,10 @@ async fn handle_get_audit_logs(
             result: "success".to_string(),
             details: {
                 let mut details = HashMap::new();
-                details.insert("common_name".to_string(), "broker-01.rustmq.com".to_string());
+                details.insert(
+                    "common_name".to_string(),
+                    "broker-01.rustmq.com".to_string(),
+                );
                 details.insert("validity_days".to_string(), "365".to_string());
                 details
             },
@@ -2415,12 +2569,16 @@ async fn handle_get_audit_logs(
             },
             client_ip: Some("192.168.1.100".to_string()),
             user_agent: Some("RustMQ Admin CLI/1.0".to_string()),
-        }
+        },
     ];
 
     // Apply filters
     if let Some(ref principal_filter) = request.principal {
-        events.retain(|e| e.principal.as_ref().map_or(false, |p| p.contains(principal_filter)));
+        events.retain(|e| {
+            e.principal
+                .as_ref()
+                .map_or(false, |p| p.contains(principal_filter))
+        });
     }
     if let Some(ref event_type_filter) = request.event_type {
         events.retain(|e| e.event_type.contains(event_type_filter));
@@ -2477,7 +2635,7 @@ async fn handle_get_audit_events(
             "result": "allowed",
             "cache_hit": true,
             "latency_ns": 547
-        })
+        }),
     ];
 
     debug!("Retrieved {} real-time events", events.len());
@@ -2524,7 +2682,7 @@ async fn handle_get_certificate_audit(
                 "validation_result": "success",
                 "chain_valid": true
             }
-        })
+        }),
     ];
 
     debug!("Retrieved {} certificate audit entries", audit_trail.len());
@@ -2576,7 +2734,7 @@ async fn handle_get_acl_audit(
                     "operation": {"from": "read", "to": "write"}
                 }
             }
-        })
+        }),
     ];
 
     debug!("Retrieved {} ACL audit entries", audit_trail.len());
@@ -2638,14 +2796,14 @@ async fn handle_get_security_status(
         },
         last_updated: Utc::now(),
     };
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(status),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -2666,14 +2824,14 @@ async fn handle_get_security_metrics(
         acl_rules_count: 150,
         average_authorization_latency_ns: 1200,
     };
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(metrics),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -2681,10 +2839,10 @@ async fn handle_get_security_health(
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
     debug!("Performing comprehensive security component health checks");
-    
+
     let check_start = std::time::Instant::now();
     let current_time = Utc::now();
-    
+
     // Perform comprehensive health checks on all security components
     let (
         cert_manager_health,
@@ -2692,7 +2850,7 @@ async fn handle_get_security_health(
         auth_service_health,
         authz_service_health,
         tls_config_health,
-        security_storage_health
+        security_storage_health,
     ) = tokio::join!(
         check_certificate_manager_health(&security_manager),
         check_acl_manager_health(&security_manager),
@@ -2701,7 +2859,7 @@ async fn handle_get_security_health(
         check_tls_configuration_health(&security_manager),
         check_security_storage_health(&security_manager)
     );
-    
+
     // Calculate overall health status
     let all_components = vec![
         &cert_manager_health,
@@ -2711,14 +2869,14 @@ async fn handle_get_security_health(
         &tls_config_health,
         &security_storage_health,
     ];
-    
+
     let overall_health = calculate_overall_security_health(&all_components);
     let total_check_time = check_start.elapsed().as_millis() as u64;
-    
+
     // Collect all issues and warnings
     let mut all_issues = Vec::new();
     let mut all_warnings = Vec::new();
-    
+
     for component in &all_components {
         if let Some(issues) = component["issues"].as_array() {
             for issue in issues {
@@ -2735,7 +2893,7 @@ async fn handle_get_security_health(
             }
         }
     }
-    
+
     // Build comprehensive health response
     let health_status = serde_json::json!({
         "overall_health": overall_health,
@@ -2757,49 +2915,55 @@ async fn handle_get_security_health(
         },
         "recommendations": generate_security_recommendations(&all_components)
     });
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(health_status),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
 /// Check certificate manager health with comprehensive validation
 async fn check_certificate_manager_health(
-    security_manager: &Arc<SecurityManager>
+    security_manager: &Arc<SecurityManager>,
 ) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Test certificate operations
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(5000),
-        async {
-            // Test certificate manager availability
-            security_manager.get_certificate_metrics().await
-        }
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(5000), async {
+        // Test certificate manager availability
+        security_manager.get_certificate_metrics().await
+    })
+    .await
+    {
         Ok(Ok(metrics)) => {
             // Check certificate expiration warnings
             if metrics.certificates_expiring_soon > 0 {
-                warnings.push(format!("{} certificates expiring within 30 days", metrics.certificates_expiring_soon));
+                warnings.push(format!(
+                    "{} certificates expiring within 30 days",
+                    metrics.certificates_expiring_soon
+                ));
             }
-            
+
             // Check for excessive certificate load
             if metrics.total_certificates > 1000 {
                 warnings.push("High certificate count detected - consider cleanup".to_string());
             }
-            
+
             // Check for certificate validation failures
-            if metrics.validation_failure_rate > 0.05 { // >5% failure rate
+            if metrics.validation_failure_rate > 0.05 {
+                // >5% failure rate
                 status = "degraded";
-                issues.push(format!("High certificate validation failure rate: {:.2}%", metrics.validation_failure_rate * 100.0));
+                issues.push(format!(
+                    "High certificate validation failure rate: {:.2}%",
+                    metrics.validation_failure_rate * 100.0
+                ));
             }
         }
         Ok(Err(e)) => {
@@ -2811,15 +2975,22 @@ async fn check_certificate_manager_health(
             issues.push("Certificate manager health check timed out".to_string());
         }
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     // Flag high response times
     if response_time > 1000 {
-        status = if status == "healthy" { "degraded" } else { status };
-        warnings.push(format!("High certificate manager response time: {}ms", response_time));
+        status = if status == "healthy" {
+            "degraded"
+        } else {
+            status
+        };
+        warnings.push(format!(
+            "High certificate manager response time: {}ms",
+            response_time
+        ));
     }
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -2835,40 +3006,45 @@ async fn check_certificate_manager_health(
 }
 
 /// Check ACL manager health with authorization performance testing
-async fn check_acl_manager_health(
-    security_manager: &Arc<SecurityManager>
-) -> serde_json::Value {
+async fn check_acl_manager_health(security_manager: &Arc<SecurityManager>) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Test ACL operations and cache performance
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(3000),
-        async {
-            // Test ACL rule evaluation performance
-            security_manager.get_authorization_metrics().await
-        }
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(3000), async {
+        // Test ACL rule evaluation performance
+        security_manager.get_authorization_metrics().await
+    })
+    .await
+    {
         Ok(Ok(metrics)) => {
             // Check cache hit rate
-            if metrics.cache_hit_rate < 0.8 { // <80% hit rate
+            if metrics.cache_hit_rate < 0.8 {
+                // <80% hit rate
                 status = "degraded";
-                warnings.push(format!("Low ACL cache hit rate: {:.1}%", metrics.cache_hit_rate * 100.0));
+                warnings.push(format!(
+                    "Low ACL cache hit rate: {:.1}%",
+                    metrics.cache_hit_rate * 100.0
+                ));
             }
-            
+
             // Check authorization latency
-            if metrics.average_latency_ns > 10_000 { // >10μs
+            if metrics.average_latency_ns > 10_000 {
+                // >10μs
                 status = "degraded";
-                warnings.push(format!("High authorization latency: {}ns", metrics.average_latency_ns));
+                warnings.push(format!(
+                    "High authorization latency: {}ns",
+                    metrics.average_latency_ns
+                ));
             }
-            
+
             // Check for excessive rule count
             if metrics.total_rules > 10000 {
                 warnings.push("High ACL rule count - consider optimization".to_string());
             }
-            
+
             // Check synchronization status
             if !metrics.is_synchronized {
                 status = "unhealthy";
@@ -2884,14 +3060,21 @@ async fn check_acl_manager_health(
             issues.push("ACL manager health check timed out".to_string());
         }
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     if response_time > 500 {
-        status = if status == "healthy" { "degraded" } else { status };
-        warnings.push(format!("High ACL manager response time: {}ms", response_time));
+        status = if status == "healthy" {
+            "degraded"
+        } else {
+            status
+        };
+        warnings.push(format!(
+            "High ACL manager response time: {}ms",
+            response_time
+        ));
     }
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -2908,42 +3091,51 @@ async fn check_acl_manager_health(
 
 /// Check authentication service health
 async fn check_authentication_service_health(
-    security_manager: &Arc<SecurityManager>
+    security_manager: &Arc<SecurityManager>,
 ) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Test authentication mechanisms
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(2000),
-        async {
-            // Test authentication provider health
-            security_manager.get_authentication_metrics().await
-        }
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(2000), async {
+        // Test authentication provider health
+        security_manager.get_authentication_metrics().await
+    })
+    .await
+    {
         Ok(Ok(metrics)) => {
             // Check authentication success rate
-            if metrics.success_rate < 0.95 { // <95% success rate
+            if metrics.success_rate < 0.95 {
+                // <95% success rate
                 status = "degraded";
-                issues.push(format!("Low authentication success rate: {:.1}%", metrics.success_rate * 100.0));
+                issues.push(format!(
+                    "Low authentication success rate: {:.1}%",
+                    metrics.success_rate * 100.0
+                ));
             }
-            
+
             // Check for authentication latency
             if metrics.average_auth_time_ms > 100 {
-                warnings.push(format!("High authentication latency: {}ms", metrics.average_auth_time_ms));
+                warnings.push(format!(
+                    "High authentication latency: {}ms",
+                    metrics.average_auth_time_ms
+                ));
             }
-            
+
             // Check certificate validation
             if !metrics.certificate_validation_enabled {
                 warnings.push("Certificate validation is disabled".to_string());
             }
-            
+
             // Check for failed login attempts
             if metrics.failed_attempts_last_hour > 1000 {
                 status = "degraded";
-                warnings.push(format!("High failed authentication attempts: {}/hour", metrics.failed_attempts_last_hour));
+                warnings.push(format!(
+                    "High failed authentication attempts: {}/hour",
+                    metrics.failed_attempts_last_hour
+                ));
             }
         }
         Ok(Err(e)) => {
@@ -2955,9 +3147,9 @@ async fn check_authentication_service_health(
             issues.push("Authentication service health check timed out".to_string());
         }
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -2974,32 +3166,33 @@ async fn check_authentication_service_health(
 
 /// Check authorization service health with detailed performance metrics
 async fn check_authorization_service_health(
-    security_manager: &Arc<SecurityManager>
+    security_manager: &Arc<SecurityManager>,
 ) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Test authorization decision making
     let test_decisions = 10;
     let mut total_decision_time = 0u64;
     let mut successful_decisions = 0;
-    
+
     for i in 0..test_decisions {
         let decision_start = std::time::Instant::now();
-        
+
         // Test authorization decision with sample data
-        match tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            async {
-                security_manager.test_authorization_decision(
+        match tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            security_manager
+                .test_authorization_decision(
                     &format!("test-principal-{}", i),
                     "test-resource",
-                    "read"
-                ).await
-            }
-        ).await {
+                    "read",
+                )
+                .await
+        })
+        .await
+        {
             Ok(Ok(_)) => {
                 successful_decisions += 1;
                 total_decision_time += decision_start.elapsed().as_nanos() as u64;
@@ -3012,26 +3205,38 @@ async fn check_authorization_service_health(
             }
         }
     }
-    
+
     let avg_decision_time_ns = if successful_decisions > 0 {
         total_decision_time / successful_decisions as u64
     } else {
         u64::MAX
     };
-    
+
     // Evaluate performance thresholds
-    if successful_decisions < (test_decisions * 8 / 10) { // <80% success rate
+    if successful_decisions < (test_decisions * 8 / 10) {
+        // <80% success rate
         status = "unhealthy";
-        issues.push(format!("Low authorization success rate: {}/{}", successful_decisions, test_decisions));
+        issues.push(format!(
+            "Low authorization success rate: {}/{}",
+            successful_decisions, test_decisions
+        ));
     }
-    
-    if avg_decision_time_ns > 2_000_000 { // >2ms average
-        status = if status == "healthy" { "degraded" } else { status };
-        warnings.push(format!("High authorization decision latency: {}ns", avg_decision_time_ns));
+
+    if avg_decision_time_ns > 2_000_000 {
+        // >2ms average
+        status = if status == "healthy" {
+            "degraded"
+        } else {
+            status
+        };
+        warnings.push(format!(
+            "High authorization decision latency: {}ns",
+            avg_decision_time_ns
+        ));
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -3049,13 +3254,13 @@ async fn check_authorization_service_health(
 
 /// Check TLS configuration health
 async fn check_tls_configuration_health(
-    security_manager: &Arc<SecurityManager>
+    security_manager: &Arc<SecurityManager>,
 ) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Check TLS configuration
     match security_manager.get_tls_configuration_status().await {
         Ok(tls_status) => {
@@ -3064,18 +3269,18 @@ async fn check_tls_configuration_health(
                 status = "degraded";
                 warnings.push("Weak cipher suites detected in TLS configuration".to_string());
             }
-            
+
             // Check protocol versions
             if tls_status.allows_weak_protocols {
                 status = "degraded";
                 issues.push("Weak TLS protocol versions enabled".to_string());
             }
-            
+
             // Check certificate requirements
             if !tls_status.requires_client_certificates {
                 warnings.push("Client certificate authentication not required".to_string());
             }
-            
+
             // Check certificate rotation
             if !tls_status.certificate_rotation_enabled {
                 warnings.push("Automatic certificate rotation disabled".to_string());
@@ -3086,9 +3291,9 @@ async fn check_tls_configuration_health(
             issues.push(format!("TLS configuration check failed: {}", e));
         }
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -3105,44 +3310,55 @@ async fn check_tls_configuration_health(
 
 /// Check security storage health (certificates, keys, ACL rules)
 async fn check_security_storage_health(
-    security_manager: &Arc<SecurityManager>
+    security_manager: &Arc<SecurityManager>,
 ) -> serde_json::Value {
     let check_start = std::time::Instant::now();
     let mut issues = Vec::new();
     let mut warnings = Vec::new();
     let mut status = "healthy";
-    
+
     // Check storage components
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(3000),
-        async {
-            // Test storage read/write operations
-            security_manager.test_security_storage_health().await
-        }
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(3000), async {
+        // Test storage read/write operations
+        security_manager.test_security_storage_health().await
+    })
+    .await
+    {
         Ok(Ok(storage_metrics)) => {
             // Check storage latency
             if storage_metrics.avg_read_latency_ms > 50 {
-                warnings.push(format!("High storage read latency: {}ms", storage_metrics.avg_read_latency_ms));
+                warnings.push(format!(
+                    "High storage read latency: {}ms",
+                    storage_metrics.avg_read_latency_ms
+                ));
             }
-            
+
             if storage_metrics.avg_write_latency_ms > 100 {
-                warnings.push(format!("High storage write latency: {}ms", storage_metrics.avg_write_latency_ms));
+                warnings.push(format!(
+                    "High storage write latency: {}ms",
+                    storage_metrics.avg_write_latency_ms
+                ));
             }
-            
+
             // Check storage utilization
             if storage_metrics.storage_utilization_percent > 90.0 {
                 status = "degraded";
-                issues.push(format!("High storage utilization: {:.1}%", storage_metrics.storage_utilization_percent));
+                issues.push(format!(
+                    "High storage utilization: {:.1}%",
+                    storage_metrics.storage_utilization_percent
+                ));
             } else if storage_metrics.storage_utilization_percent > 80.0 {
-                warnings.push(format!("Storage utilization warning: {:.1}%", storage_metrics.storage_utilization_percent));
+                warnings.push(format!(
+                    "Storage utilization warning: {:.1}%",
+                    storage_metrics.storage_utilization_percent
+                ));
             }
-            
+
             // Check backup status
             if !storage_metrics.backup_current {
                 warnings.push("Security data backup is not current".to_string());
             }
-            
+
             // Check replication status
             if !storage_metrics.replication_healthy {
                 status = "unhealthy";
@@ -3158,9 +3374,9 @@ async fn check_security_storage_health(
             issues.push("Security storage health check timed out".to_string());
         }
     }
-    
+
     let response_time = check_start.elapsed().as_millis() as u64;
-    
+
     serde_json::json!({
         "status": status,
         "response_time_ms": response_time,
@@ -3180,7 +3396,7 @@ async fn check_security_storage_health(
 fn calculate_overall_security_health(components: &[&serde_json::Value]) -> &'static str {
     let mut unhealthy_count = 0;
     let mut degraded_count = 0;
-    
+
     for component in components {
         if let Some(status) = component["status"].as_str() {
             match status {
@@ -3190,7 +3406,7 @@ fn calculate_overall_security_health(components: &[&serde_json::Value]) -> &'sta
             }
         }
     }
-    
+
     if unhealthy_count > 0 {
         "unhealthy"
     } else if degraded_count > 2 {
@@ -3205,28 +3421,36 @@ fn calculate_overall_security_health(components: &[&serde_json::Value]) -> &'sta
 /// Generate security recommendations based on health check results
 fn generate_security_recommendations(components: &[&serde_json::Value]) -> Vec<String> {
     let mut recommendations = Vec::new();
-    
+
     // Check for common issues and provide recommendations
     for component in components {
         if let Some(warnings) = component["warnings"].as_array() {
             for warning in warnings {
                 if let Some(warning_str) = warning.as_str() {
                     if warning_str.contains("expiring") {
-                        recommendations.push("Schedule certificate renewal to avoid service disruption".to_string());
+                        recommendations.push(
+                            "Schedule certificate renewal to avoid service disruption".to_string(),
+                        );
                     }
                     if warning_str.contains("cache hit rate") {
-                        recommendations.push("Consider warming ACL cache or increasing cache size".to_string());
+                        recommendations.push(
+                            "Consider warming ACL cache or increasing cache size".to_string(),
+                        );
                     }
                     if warning_str.contains("latency") || warning_str.contains("response time") {
-                        recommendations.push("Investigate performance bottlenecks in security components".to_string());
+                        recommendations.push(
+                            "Investigate performance bottlenecks in security components"
+                                .to_string(),
+                        );
                     }
                     if warning_str.contains("storage utilization") {
-                        recommendations.push("Plan for security storage capacity expansion".to_string());
+                        recommendations
+                            .push("Plan for security storage capacity expansion".to_string());
                     }
                 }
             }
         }
-        
+
         if let Some(issues) = component["issues"].as_array() {
             for issue in issues {
                 if let Some(issue_str) = issue.as_str() {
@@ -3234,22 +3458,29 @@ fn generate_security_recommendations(components: &[&serde_json::Value]) -> Vec<S
                         recommendations.push("Investigate and resolve security data synchronization issues immediately".to_string());
                     }
                     if issue_str.contains("validation failure") {
-                        recommendations.push("Review certificate validation configuration and fix validation errors".to_string());
+                        recommendations.push(
+                            "Review certificate validation configuration and fix validation errors"
+                                .to_string(),
+                        );
                     }
                     if issue_str.contains("authentication success") {
-                        recommendations.push("Investigate authentication failures and review security logs".to_string());
+                        recommendations.push(
+                            "Investigate authentication failures and review security logs"
+                                .to_string(),
+                        );
                     }
                 }
             }
         }
     }
-    
+
     // Add general recommendations if no specific issues found
     if recommendations.is_empty() {
         recommendations.push("Security health is optimal - continue monitoring".to_string());
-        recommendations.push("Consider periodic security audits and penetration testing".to_string());
+        recommendations
+            .push("Consider periodic security audits and penetration testing".to_string());
     }
-    
+
     recommendations.sort();
     recommendations.dedup();
     recommendations
@@ -3280,14 +3511,14 @@ async fn handle_get_security_configuration(
             "crl_check_enabled": true
         }
     });
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(config),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -3295,7 +3526,10 @@ async fn handle_maintenance_cleanup(
     request: MaintenanceRequest,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    info!("Starting security maintenance cleanup: {}", request.operation);
+    info!(
+        "Starting security maintenance cleanup: {}",
+        request.operation
+    );
 
     // Clean up expired certificates and cache entries
     // Note: Would use certificate_manager.cleanup_expired() in production
@@ -3311,14 +3545,14 @@ async fn handle_maintenance_cleanup(
         started_at: Utc::now() - chrono::Duration::seconds(30),
         completed_at: Some(Utc::now()),
     };
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(maintenance_result),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -3326,7 +3560,10 @@ async fn handle_maintenance_backup(
     request: MaintenanceRequest,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    info!("Starting security configuration backup: {}", request.operation);
+    info!(
+        "Starting security configuration backup: {}",
+        request.operation
+    );
 
     // Backup all security data (certificates, ACLs, audit logs)
     // Note: Would use security_manager.create_backup() in production
@@ -3336,21 +3573,24 @@ async fn handle_maintenance_backup(
         status: "completed".to_string(),
         results: {
             let mut results = HashMap::new();
-            results.insert("backup_file".to_string(), "/backups/security_config_20240101_120000.tar.gz".to_string());
+            results.insert(
+                "backup_file".to_string(),
+                "/backups/security_config_20240101_120000.tar.gz".to_string(),
+            );
             results.insert("backup_size_mb".to_string(), "15".to_string());
             results
         },
         started_at: Utc::now() - chrono::Duration::minutes(2),
         completed_at: Some(Utc::now()),
     };
-    
+
     let response = ApiResponse {
         success: true,
         data: Some(maintenance_result),
         error: None,
         leader_hint: None,
     };
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -3358,7 +3598,10 @@ async fn handle_maintenance_restore(
     request: MaintenanceRequest,
     security_manager: Arc<SecurityManager>,
 ) -> std::result::Result<impl Reply, Rejection> {
-    warn!("Starting security configuration restore: {}", request.operation);
+    warn!(
+        "Starting security configuration restore: {}",
+        request.operation
+    );
 
     // Restore security data from backup with validation
     // Note: Would use security_manager.restore_from_backup(backup_id) in production
@@ -3368,7 +3611,10 @@ async fn handle_maintenance_restore(
         status: "completed".to_string(),
         results: {
             let mut results = HashMap::new();
-            results.insert("restored_from".to_string(), "/backups/security_config_20240101_120000.tar.gz".to_string());
+            results.insert(
+                "restored_from".to_string(),
+                "/backups/security_config_20240101_120000.tar.gz".to_string(),
+            );
             results.insert("acl_rules_restored".to_string(), "150".to_string());
             results.insert("certificates_restored".to_string(), "25".to_string());
             results
@@ -3390,14 +3636,19 @@ async fn handle_maintenance_restore(
 // ==================== Helper Functions ====================
 
 /// Convert SystemTime to chrono DateTime<Utc>
-fn convert_systemtime_to_chrono(not_before: &std::time::SystemTime, not_after: &std::time::SystemTime) -> (DateTime<Utc>, DateTime<Utc>) {
+fn convert_systemtime_to_chrono(
+    not_before: &std::time::SystemTime,
+    not_after: &std::time::SystemTime,
+) -> (DateTime<Utc>, DateTime<Utc>) {
     use std::time::UNIX_EPOCH;
 
     let not_before_duration = not_before.duration_since(UNIX_EPOCH).unwrap_or_default();
     let not_after_duration = not_after.duration_since(UNIX_EPOCH).unwrap_or_default();
 
-    let not_before_chrono = DateTime::<Utc>::from_timestamp(not_before_duration.as_secs() as i64, 0).unwrap();
-    let not_after_chrono = DateTime::<Utc>::from_timestamp(not_after_duration.as_secs() as i64, 0).unwrap();
+    let not_before_chrono =
+        DateTime::<Utc>::from_timestamp(not_before_duration.as_secs() as i64, 0).unwrap();
+    let not_after_chrono =
+        DateTime::<Utc>::from_timestamp(not_after_duration.as_secs() as i64, 0).unwrap();
 
     (not_before_chrono, not_after_chrono)
 }
@@ -3415,7 +3666,9 @@ fn extract_common_name(subject: &str) -> String {
 }
 
 /// Parse certificate PEM to extract x509 fields
-async fn parse_certificate_pem(pem_data: &str) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+async fn parse_certificate_pem(
+    pem_data: &str,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
     use x509_parser::prelude::*;
 
     // Parse PEM to DER - extract DER from PEM string manually
@@ -3438,12 +3691,13 @@ async fn parse_certificate_pem(pem_data: &str) -> Result<(Vec<String>, Vec<Strin
 
     // Decode base64 to DER
     use base64::{Engine, engine::general_purpose};
-    let cert_der = general_purpose::STANDARD.decode(base64_data)
+    let cert_der = general_purpose::STANDARD
+        .decode(base64_data)
         .map_err(|e| format!("Base64 decode error: {}", e))?;
 
     // Parse x509
-    let (_, cert) = X509Certificate::from_der(&cert_der)
-        .map_err(|e| format!("X509 parse error: {}", e))?;
+    let (_, cert) =
+        X509Certificate::from_der(&cert_der).map_err(|e| format!("X509 parse error: {}", e))?;
 
     let mut key_usage = Vec::new();
     let mut extended_key_usage = Vec::new();
@@ -3452,26 +3706,31 @@ async fn parse_certificate_pem(pem_data: &str) -> Result<(Vec<String>, Vec<Strin
     // Extract extensions
     for ext in cert.extensions() {
         match ext.oid.to_string().as_str() {
-            "2.5.29.15" => { // Key Usage
+            "2.5.29.15" => {
+                // Key Usage
                 key_usage.push("Digital Signature".to_string());
                 key_usage.push("Key Encipherment".to_string());
-            },
-            "2.5.29.37" => { // Extended Key Usage
+            }
+            "2.5.29.37" => {
+                // Extended Key Usage
                 extended_key_usage.push("Server Authentication".to_string());
                 extended_key_usage.push("Client Authentication".to_string());
-            },
-            "2.5.29.17" => { // Subject Alternative Name
+            }
+            "2.5.29.17" => {
+                // Subject Alternative Name
                 // Parse SAN values
                 if let ParsedExtension::SubjectAlternativeName(san_ext) = ext.parsed_extension() {
                     for name in &san_ext.general_names {
                         match name {
                             GeneralName::DNSName(dns) => subject_alt_names.push(dns.to_string()),
-                            GeneralName::IPAddress(ip) => subject_alt_names.push(format!("{:?}", ip)),
-                            _ => {},
+                            GeneralName::IPAddress(ip) => {
+                                subject_alt_names.push(format!("{:?}", ip))
+                            }
+                            _ => {}
                         }
                     }
                 }
-            },
+            }
             _ => {}
         }
     }

@@ -1,16 +1,15 @@
-use crate::{Result, types::*, config::EtlConfig, error::RustMqError};
 use crate::etl::orchestrator::{EtlPipelineOrchestrator, PipelineExecutionResult};
+use crate::{Result, config::EtlConfig, error::RustMqError, types::*};
 use async_trait::async_trait;
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::{RwLock, Semaphore};
-use std::time::{Duration, Instant};
-use parking_lot::Mutex;
 use bytes::Bytes;
-
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{RwLock, Semaphore};
 
 /// ETL processor that manages WebAssembly modules for real-time data processing
-/// 
+///
 /// This processor provides both legacy single-module execution and new priority-based
 /// pipeline execution, maintaining backward compatibility while offering advanced features.
 pub struct EtlProcessor {
@@ -92,17 +91,18 @@ pub struct EtlResponse {
 #[async_trait]
 pub trait EtlPipeline: Send + Sync {
     /// Process a record through the ETL pipeline
-    async fn process_record(&self, record: Record, modules: Vec<String>) -> Result<ProcessedRecord>;
-    
+    async fn process_record(&self, record: Record, modules: Vec<String>)
+    -> Result<ProcessedRecord>;
+
     /// Load a new ETL module
     async fn load_module(&self, module_data: Vec<u8>, config: ModuleConfig) -> Result<String>;
-    
+
     /// Unload an ETL module
     async fn unload_module(&self, module_id: &str) -> Result<()>;
-    
+
     /// List loaded modules
     async fn list_modules(&self) -> Result<Vec<ModuleInfo>>;
-    
+
     /// Get module execution statistics
     async fn get_module_stats(&self, module_id: &str) -> Result<ModuleStats>;
 }
@@ -193,7 +193,10 @@ impl EtlProcessor {
     }
 
     /// Create a new ETL processor with explicit orchestrator (for testing)
-    pub fn with_orchestrator(config: EtlConfig, orchestrator: EtlPipelineOrchestrator) -> Result<Self> {
+    pub fn with_orchestrator(
+        config: EtlConfig,
+        orchestrator: EtlPipelineOrchestrator,
+    ) -> Result<Self> {
         let execution_semaphore = Arc::new(Semaphore::new(config.max_concurrent_executions));
 
         Ok(Self {
@@ -209,27 +212,31 @@ impl EtlProcessor {
     #[cfg(feature = "wasm")]
     pub async fn execute_module(&self, request: EtlRequest) -> Result<EtlResponse> {
         let start_time = Instant::now();
-        
+
         // Acquire execution permit
-        let _permit = self.execution_semaphore.acquire().await
-            .map_err(|_| RustMqError::EtlProcessingFailed("Failed to acquire execution permit".to_string()))?;
+        let _permit = self.execution_semaphore.acquire().await.map_err(|_| {
+            RustMqError::EtlProcessingFailed("Failed to acquire execution permit".to_string())
+        })?;
 
         // Get the module
         let module = {
             let modules = self.modules.read().await;
-            modules.get(&request.module_id)
+            modules
+                .get(&request.module_id)
                 .ok_or_else(|| RustMqError::EtlModuleNotFound(request.module_id.clone()))?
                 .clone()
         };
 
         // Update last used timestamp
         *module.last_used.lock() = Instant::now();
-        
+
         // Simplified WASM execution for now - just pass through data
         tokio::time::sleep(Duration::from_millis(10)).await; // Simulate processing
-        
+
         // Update execution count
-        module.execution_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        module
+            .execution_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         // Update metrics
         {
@@ -252,10 +259,10 @@ impl EtlProcessor {
     pub async fn execute_module(&self, request: EtlRequest) -> Result<EtlResponse> {
         // Mock implementation when WASM feature is disabled
         let start_time = Instant::now();
-        
+
         // Simulate processing time
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         Ok(EtlResponse {
             success: true,
             output_data: Some(request.input_data), // Pass through data unchanged
@@ -265,14 +272,17 @@ impl EtlProcessor {
         })
     }
 
-
     /// Get current ETL processing metrics
     pub fn get_metrics(&self) -> EtlMetrics {
         (*self.metrics.lock()).clone()
     }
 
     /// Process record with explicit topic for pipeline filtering
-    pub async fn process_record_with_topic(&self, record: Record, topic: &str) -> Result<ProcessedRecord> {
+    pub async fn process_record_with_topic(
+        &self,
+        record: Record,
+        topic: &str,
+    ) -> Result<ProcessedRecord> {
         if let Some(orchestrator) = &self.orchestrator {
             self.process_record_with_pipelines(record, topic).await
         } else {
@@ -292,7 +302,7 @@ impl EtlProcessor {
             orchestrator.add_pipeline(config).await
         } else {
             Err(RustMqError::EtlProcessingFailed(
-                "No orchestrator available for pipeline management".to_string()
+                "No orchestrator available for pipeline management".to_string(),
             ))
         }
     }
@@ -303,7 +313,7 @@ impl EtlProcessor {
             orchestrator.remove_pipeline(pipeline_id).await
         } else {
             Err(RustMqError::EtlProcessingFailed(
-                "No orchestrator available for pipeline management".to_string()
+                "No orchestrator available for pipeline management".to_string(),
             ))
         }
     }
@@ -324,7 +334,11 @@ impl EtlProcessor {
     }
 
     /// Process record using legacy single-module approach
-    async fn process_record_legacy(&self, mut record: Record, module_ids: Vec<String>) -> Result<ProcessedRecord> {
+    async fn process_record_legacy(
+        &self,
+        mut record: Record,
+        module_ids: Vec<String>,
+    ) -> Result<ProcessedRecord> {
         let start_time = Instant::now();
         let mut processing_metadata = ProcessingMetadata {
             modules_applied: Vec::new(),
@@ -342,7 +356,9 @@ impl EtlProcessor {
                 partition: 0,
                 offset: 0,
                 timestamp: record.timestamp,
-                headers: record.headers.iter()
+                headers: record
+                    .headers
+                    .iter()
                     .map(|h| (h.key.clone(), String::from_utf8_lossy(&h.value).to_string()))
                     .collect(),
             };
@@ -363,7 +379,11 @@ impl EtlProcessor {
                         processing_metadata.modules_applied.push(module_id);
                     } else {
                         processing_metadata.error_count += 1;
-                        tracing::warn!("ETL module {} failed: {:?}", module_id, response.error_message);
+                        tracing::warn!(
+                            "ETL module {} failed: {:?}",
+                            module_id,
+                            response.error_message
+                        );
                     }
                     processing_metadata.total_execution_time_ms += response.execution_time_ms;
                 }
@@ -384,12 +404,21 @@ impl EtlProcessor {
     }
 
     /// Process record using new priority-based pipeline orchestrator
-    async fn process_record_with_pipelines(&self, record: Record, topic: &str) -> Result<ProcessedRecord> {
+    async fn process_record_with_pipelines(
+        &self,
+        record: Record,
+        topic: &str,
+    ) -> Result<ProcessedRecord> {
         if let Some(orchestrator) = &self.orchestrator {
-            let results = orchestrator.execute_pipelines(record.clone(), topic).await?;
-            
+            let results = orchestrator
+                .execute_pipelines(record.clone(), topic)
+                .await?;
+
             // Combine results from all pipelines that executed
-            if let Some(final_result) = self.combine_pipeline_results(record.clone(), results).await? {
+            if let Some(final_result) = self
+                .combine_pipeline_results(record.clone(), results)
+                .await?
+            {
                 return Ok(final_result);
             }
         }
@@ -409,9 +438,9 @@ impl EtlProcessor {
 
     /// Combine results from multiple pipeline executions
     async fn combine_pipeline_results(
-        &self, 
-        original_record: Record, 
-        results: Vec<PipelineExecutionResult>
+        &self,
+        original_record: Record,
+        results: Vec<PipelineExecutionResult>,
     ) -> Result<Option<ProcessedRecord>> {
         if results.is_empty() {
             return Ok(None);
@@ -422,7 +451,7 @@ impl EtlProcessor {
         // - Apply transformations in order
         // - Merge transformations from multiple pipelines
         // - Apply conflict resolution strategies
-        
+
         let mut final_record = original_record.clone();
         let mut total_modules_applied = Vec::new();
         let mut total_execution_time_ms = 0;
@@ -435,12 +464,13 @@ impl EtlProcessor {
                 if total_transformations == 0 {
                     final_record = result.transformed_record.clone();
                 }
-                
+
                 // Aggregate metadata
-                total_execution_time_ms += result.execution_metadata.total_execution_time.as_millis() as u64;
+                total_execution_time_ms +=
+                    result.execution_metadata.total_execution_time.as_millis() as u64;
                 total_transformations += result.execution_metadata.transformations_applied;
                 total_errors += result.execution_metadata.errors_encountered;
-                
+
                 // Collect all applied modules
                 for stage in &result.execution_metadata.stages_executed {
                     for module in &stage.modules_executed {
@@ -467,7 +497,11 @@ impl EtlProcessor {
 
 #[async_trait]
 impl EtlPipeline for EtlProcessor {
-    async fn process_record(&self, record: Record, module_ids: Vec<String>) -> Result<ProcessedRecord> {
+    async fn process_record(
+        &self,
+        record: Record,
+        module_ids: Vec<String>,
+    ) -> Result<ProcessedRecord> {
         // If orchestrator is available and module_ids is empty, use pipeline-based processing
         if let Some(orchestrator) = &self.orchestrator {
             if module_ids.is_empty() {
@@ -481,7 +515,7 @@ impl EtlPipeline for EtlProcessor {
 
     async fn load_module(&self, _module_data: Vec<u8>, config: ModuleConfig) -> Result<String> {
         let module_id = uuid::Uuid::new_v4().to_string();
-        
+
         let etl_module = EtlModule {
             id: module_id.clone(),
             name: "user-module".to_string(), // Could be extracted from WASM metadata
@@ -522,26 +556,34 @@ impl EtlPipeline for EtlProcessor {
 
     async fn list_modules(&self) -> Result<Vec<ModuleInfo>> {
         let modules = self.modules.read().await;
-        Ok(modules.values().map(|module| {
-            ModuleInfo {
-                id: module.id.clone(),
-                name: module.name.clone(),
-                version: module.version.clone(),
-                config: module.config.clone(),
-                created_at: module.created_at,
-                execution_count: module.execution_count.load(std::sync::atomic::Ordering::SeqCst),
-                last_used: Some(chrono::Utc::now()), // Simplified
-            }
-        }).collect())
+        Ok(modules
+            .values()
+            .map(|module| {
+                ModuleInfo {
+                    id: module.id.clone(),
+                    name: module.name.clone(),
+                    version: module.version.clone(),
+                    config: module.config.clone(),
+                    created_at: module.created_at,
+                    execution_count: module
+                        .execution_count
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    last_used: Some(chrono::Utc::now()), // Simplified
+                }
+            })
+            .collect())
     }
 
     async fn get_module_stats(&self, module_id: &str) -> Result<ModuleStats> {
         let modules = self.modules.read().await;
-        let module = modules.get(module_id)
+        let module = modules
+            .get(module_id)
             .ok_or_else(|| RustMqError::EtlModuleNotFound(module_id.to_string()))?;
 
-        let execution_count = module.execution_count.load(std::sync::atomic::Ordering::SeqCst);
-        
+        let execution_count = module
+            .execution_count
+            .load(std::sync::atomic::Ordering::SeqCst);
+
         Ok(ModuleStats {
             module_id: module_id.to_string(),
             total_executions: execution_count,
@@ -578,7 +620,11 @@ impl MockEtlProcessor {
 
 #[async_trait]
 impl EtlPipeline for MockEtlProcessor {
-    async fn process_record(&self, record: Record, modules: Vec<String>) -> Result<ProcessedRecord> {
+    async fn process_record(
+        &self,
+        record: Record,
+        modules: Vec<String>,
+    ) -> Result<ProcessedRecord> {
         // Mock processing - simulate processing through all modules
         Ok(ProcessedRecord {
             original: record.clone(),
@@ -607,8 +653,9 @@ impl EtlPipeline for MockEtlProcessor {
 
     async fn list_modules(&self) -> Result<Vec<ModuleInfo>> {
         let modules = self.modules.read().await;
-        Ok(modules.keys().map(|id| {
-            ModuleInfo {
+        Ok(modules
+            .keys()
+            .map(|id| ModuleInfo {
                 id: id.clone(),
                 name: "mock-module".to_string(),
                 version: "1.0.0".to_string(),
@@ -622,8 +669,8 @@ impl EtlPipeline for MockEtlProcessor {
                 created_at: chrono::Utc::now(),
                 execution_count: 0,
                 last_used: None,
-            }
-        }).collect())
+            })
+            .collect())
     }
 
     async fn get_module_stats(&self, module_id: &str) -> Result<ModuleStats> {
@@ -680,7 +727,10 @@ mod tests {
             enable_caching: true,
         };
 
-        let module_id = processor.load_module(vec![1, 2, 3, 4], module_config).await.unwrap();
+        let module_id = processor
+            .load_module(vec![1, 2, 3, 4], module_config)
+            .await
+            .unwrap();
         assert!(!module_id.is_empty());
 
         // Test module listing
@@ -696,7 +746,10 @@ mod tests {
             chrono::Utc::now().timestamp_millis(),
         );
 
-        let result = processor.process_record(record.clone(), vec![module_id.clone()]).await.unwrap();
+        let result = processor
+            .process_record(record.clone(), vec![module_id.clone()])
+            .await
+            .unwrap();
         assert_eq!(result.original.value, record.value);
         assert_eq!(result.transformed.value, record.value);
         assert_eq!(result.processing_metadata.modules_applied.len(), 1);
@@ -753,7 +806,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&context).unwrap();
         let deserialized: ProcessingContext = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(context.topic, deserialized.topic);
         assert_eq!(context.partition, deserialized.partition);
         assert_eq!(context.offset, deserialized.offset);

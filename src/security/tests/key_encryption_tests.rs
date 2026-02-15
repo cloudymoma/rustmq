@@ -2,20 +2,22 @@
 ///
 /// These tests verify that the entire certificate lifecycle works correctly
 /// with encrypted private keys.
-
 use crate::error::Result;
-use crate::security::tls::{
-    CertificateManager, EnhancedCertificateManagementConfig, CaGenerationParams,
-    CertificateRequest, CertificateRole, CertificateStatus, CertificateTemplate,
-};
 use crate::security::CertificateManagementConfig;
-use std::collections::HashMap;
+use crate::security::tls::{
+    CaGenerationParams, CertificateManager, CertificateRequest, CertificateRole, CertificateStatus,
+    CertificateTemplate, EnhancedCertificateManagementConfig,
+};
 use rcgen::DistinguishedName;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Helper to create test configuration with mandatory encryption
-fn create_test_config_with_encryption(temp_dir: &TempDir, password: &str) -> EnhancedCertificateManagementConfig {
+fn create_test_config_with_encryption(
+    temp_dir: &TempDir,
+    password: &str,
+) -> EnhancedCertificateManagementConfig {
     let storage_path = temp_dir.path().to_str().unwrap().to_string();
 
     let basic_config = CertificateManagementConfig {
@@ -28,9 +30,18 @@ fn create_test_config_with_encryption(temp_dir: &TempDir, password: &str) -> Enh
     };
 
     let mut templates = HashMap::new();
-    templates.insert(CertificateRole::Broker, CertificateTemplate::broker_default());
-    templates.insert(CertificateRole::Controller, CertificateTemplate::controller_default());
-    templates.insert(CertificateRole::Client, CertificateTemplate::client_default());
+    templates.insert(
+        CertificateRole::Broker,
+        CertificateTemplate::broker_default(),
+    );
+    templates.insert(
+        CertificateRole::Controller,
+        CertificateTemplate::controller_default(),
+    );
+    templates.insert(
+        CertificateRole::Client,
+        CertificateTemplate::client_default(),
+    );
     templates.insert(CertificateRole::Admin, CertificateTemplate::admin_default());
 
     EnhancedCertificateManagementConfig {
@@ -267,7 +278,10 @@ async fn test_wrong_password_fails_decryption() -> Result<()> {
 
     // Try to decrypt with wrong password - should fail
     let result = key_encryption::decrypt_private_key(&encrypted, wrong_password);
-    assert!(result.is_err(), "Expected decryption to fail with wrong password");
+    assert!(
+        result.is_err(),
+        "Expected decryption to fail with wrong password"
+    );
 
     // Decrypt with correct password - should succeed
     let decrypted = key_encryption::decrypt_private_key(&encrypted, correct_password)?;
@@ -300,7 +314,10 @@ async fn test_multiple_certificates_with_encryption() -> Result<()> {
 
     for (i, role) in roles.iter().enumerate() {
         let mut dn = DistinguishedName::new();
-        dn.push(rcgen::DnType::CommonName, format!("test-{}-{}", role.to_string().to_lowercase(), i));
+        dn.push(
+            rcgen::DnType::CommonName,
+            format!("test-{}-{}", role.to_string().to_lowercase(), i),
+        );
 
         let cert_request = CertificateRequest {
             subject: dn,

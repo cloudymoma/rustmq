@@ -6,34 +6,34 @@ use std::time::Duration;
 pub struct ClientConfig {
     /// Broker endpoints
     pub brokers: Vec<String>,
-    
+
     /// Client ID for identification
     pub client_id: Option<String>,
-    
+
     /// Connection timeout
     pub connect_timeout: Duration,
-    
+
     /// Request timeout
     pub request_timeout: Duration,
-    
+
     /// Enable TLS (deprecated: use tls_config.mode instead)
     pub enable_tls: bool,
-    
+
     /// TLS configuration
     pub tls_config: Option<TlsConfig>,
-    
+
     /// Connection pool size
     pub max_connections: usize,
-    
+
     /// Keep-alive interval
     pub keep_alive_interval: Duration,
-    
+
     /// Retry configuration
     pub retry_config: RetryConfig,
-    
+
     /// Compression settings
     pub compression: CompressionConfig,
-    
+
     /// Authentication settings
     pub auth: Option<AuthConfig>,
 }
@@ -43,28 +43,28 @@ pub struct ClientConfig {
 pub struct TlsConfig {
     /// TLS mode (disabled, server_auth, mutual_auth)
     pub mode: TlsMode,
-    
+
     /// Certificate authority certificate path or PEM data
     pub ca_cert: Option<String>,
-    
+
     /// Client certificate path or PEM data (for mTLS)
     pub client_cert: Option<String>,
-    
+
     /// Client private key path or PEM data (for mTLS)
     pub client_key: Option<String>,
-    
+
     /// Server name for SNI and certificate verification
     pub server_name: Option<String>,
-    
+
     /// Skip certificate verification (insecure, dev only)
     pub insecure_skip_verify: bool,
-    
+
     /// Supported TLS versions
     pub supported_versions: Vec<String>,
-    
+
     /// Certificate validation settings
     pub validation: CertificateValidationConfig,
-    
+
     /// ALPN protocols to negotiate
     pub alpn_protocols: Vec<String>,
 }
@@ -85,35 +85,35 @@ pub enum TlsMode {
 pub struct CertificateValidationConfig {
     /// Verify server certificate chain
     pub verify_chain: bool,
-    
+
     /// Verify certificate expiration
     pub verify_expiration: bool,
-    
+
     /// Check certificate revocation (CRL/OCSP)
     pub check_revocation: bool,
-    
+
     /// Allow self-signed certificates
     pub allow_self_signed: bool,
-    
+
     /// Maximum certificate chain depth
     pub max_chain_depth: usize,
-    
+
     // Advanced enhancements
     /// Enable WebPKI validation for improved performance and security
     pub enable_webpki: bool,
-    
+
     /// Enable certificate caching for performance optimization
     pub enable_caching: bool,
-    
+
     /// Certificate cache TTL in seconds
     pub cache_ttl_seconds: u64,
-    
+
     /// Certificate cache size (number of certificates)
     pub cache_size: usize,
-    
+
     /// Enable batch certificate validation
     pub enable_batch_validation: bool,
-    
+
     /// Performance target for certificate validation (microseconds)
     pub performance_target_us: u64,
 }
@@ -123,16 +123,16 @@ pub struct CertificateValidationConfig {
 pub struct RetryConfig {
     /// Maximum retry attempts
     pub max_retries: usize,
-    
+
     /// Base retry delay
     pub base_delay: Duration,
-    
+
     /// Maximum retry delay
     pub max_delay: Duration,
-    
+
     /// Retry multiplier for exponential backoff
     pub multiplier: f64,
-    
+
     /// Jitter for retry timing
     pub jitter: bool,
 }
@@ -142,13 +142,13 @@ pub struct RetryConfig {
 pub struct CompressionConfig {
     /// Enable compression
     pub enabled: bool,
-    
+
     /// Compression algorithm
     pub algorithm: CompressionAlgorithm,
-    
+
     /// Compression level (1-9)
     pub level: u8,
-    
+
     /// Minimum size for compression
     pub min_size: usize,
 }
@@ -167,22 +167,22 @@ pub enum CompressionAlgorithm {
 pub struct AuthConfig {
     /// Authentication method
     pub method: AuthMethod,
-    
+
     /// Username for SASL authentication
     pub username: Option<String>,
-    
+
     /// Password for SASL authentication
     pub password: Option<String>,
-    
+
     /// Token for token-based authentication
     pub token: Option<String>,
-    
+
     /// Principal for mTLS authentication (extracted from certificate)
     pub principal: Option<String>,
-    
+
     /// Additional authentication properties
     pub properties: std::collections::HashMap<String, String>,
-    
+
     /// Security configuration for mTLS
     pub security: Option<SecurityConfig>,
 }
@@ -209,13 +209,13 @@ pub enum AuthMethod {
 pub struct SecurityConfig {
     /// Enable security features
     pub enabled: bool,
-    
+
     /// Principal extraction configuration
     pub principal_extraction: PrincipalExtractionConfig,
-    
+
     /// ACL configuration
     pub acl: AclClientConfig,
-    
+
     /// Certificate management
     pub certificate_management: CertificateClientConfig,
 }
@@ -225,13 +225,13 @@ pub struct SecurityConfig {
 pub struct PrincipalExtractionConfig {
     /// Extract principal from certificate Common Name
     pub use_common_name: bool,
-    
+
     /// Extract principal from certificate Subject Alternative Name
     pub use_subject_alt_name: bool,
-    
+
     /// Custom principal extraction patterns
     pub custom_patterns: Vec<String>,
-    
+
     /// Principal normalization (lowercase, trim, etc.)
     pub normalize: bool,
 }
@@ -241,16 +241,16 @@ pub struct PrincipalExtractionConfig {
 pub struct AclClientConfig {
     /// Enable ACL checks
     pub enabled: bool,
-    
+
     /// Client-side cache size (number of ACL entries)
     pub cache_size: usize,
-    
+
     /// Cache TTL in seconds
     pub cache_ttl_seconds: u64,
-    
+
     /// Request batching for ACL checks
     pub batch_requests: bool,
-    
+
     /// Fail open on ACL errors (allow access when ACL service unavailable)
     pub fail_open: bool,
 }
@@ -260,13 +260,13 @@ pub struct AclClientConfig {
 pub struct CertificateClientConfig {
     /// Enable automatic certificate renewal
     pub auto_renew: bool,
-    
+
     /// Renew certificate this many days before expiry
     pub renew_before_expiry_days: u32,
-    
+
     /// Certificate storage location
     pub cert_storage_path: Option<String>,
-    
+
     /// Certificate request template
     pub cert_template: Option<CertificateTemplate>,
 }
@@ -276,28 +276,28 @@ pub struct CertificateClientConfig {
 pub struct CertificateTemplate {
     /// Subject common name
     pub common_name: String,
-    
+
     /// Subject organization
     pub organization: Option<String>,
-    
+
     /// Subject organizational unit
     pub organizational_unit: Option<String>,
-    
+
     /// Subject country
     pub country: Option<String>,
-    
+
     /// Subject locality
     pub locality: Option<String>,
-    
+
     /// Subject state/province
     pub state_or_province: Option<String>,
-    
+
     /// Subject alternative names
     pub subject_alt_names: Vec<String>,
-    
+
     /// Key usage extensions
     pub key_usage: Vec<String>,
-    
+
     /// Extended key usage extensions
     pub extended_key_usage: Vec<String>,
 }
@@ -307,25 +307,25 @@ pub struct CertificateTemplate {
 pub struct ProducerConfig {
     /// Producer ID
     pub producer_id: Option<String>,
-    
+
     /// Batch size for batching messages
     pub batch_size: usize,
-    
+
     /// Batch timeout
     pub batch_timeout: Duration,
-    
+
     /// Maximum message size
     pub max_message_size: usize,
-    
+
     /// Acknowledgment level
     pub ack_level: AckLevel,
-    
+
     /// Idempotent producer
     pub idempotent: bool,
-    
+
     /// Compression for producer
     pub compression: CompressionConfig,
-    
+
     /// Custom message properties
     pub default_properties: std::collections::HashMap<String, String>,
 }
@@ -335,28 +335,28 @@ pub struct ProducerConfig {
 pub struct ConsumerConfig {
     /// Consumer ID
     pub consumer_id: Option<String>,
-    
+
     /// Consumer group
     pub consumer_group: String,
-    
+
     /// Auto-commit interval
     pub auto_commit_interval: Duration,
-    
+
     /// Enable auto-commit
     pub enable_auto_commit: bool,
-    
+
     /// Fetch size
     pub fetch_size: usize,
-    
+
     /// Fetch timeout
     pub fetch_timeout: Duration,
-    
+
     /// Starting position
     pub start_position: StartPosition,
-    
+
     /// Maximum retry attempts for message processing
     pub max_retry_attempts: usize,
-    
+
     /// Dead letter queue topic
     pub dead_letter_queue: Option<String>,
 }
@@ -366,10 +366,10 @@ pub struct ConsumerConfig {
 pub enum AckLevel {
     /// No acknowledgment required
     None,
-    
+
     /// Acknowledgment from leader only
     Leader,
-    
+
     /// Acknowledgment from all replicas
     All,
 }
@@ -379,13 +379,13 @@ pub enum AckLevel {
 pub enum StartPosition {
     /// Start from earliest available message
     Earliest,
-    
+
     /// Start from latest message
     Latest,
-    
+
     /// Start from specific offset
     Offset(u64),
-    
+
     /// Start from specific timestamp
     Timestamp(u64),
 }
@@ -579,7 +579,7 @@ impl AuthConfig {
             }),
         }
     }
-    
+
     /// Create a token-based authentication configuration
     pub fn token_config(token: String) -> Self {
         Self {
@@ -592,7 +592,7 @@ impl AuthConfig {
             security: Some(SecurityConfig::default()),
         }
     }
-    
+
     /// Create SASL PLAIN authentication configuration
     pub fn sasl_plain_config(username: String, password: String) -> Self {
         Self {
@@ -605,15 +605,21 @@ impl AuthConfig {
             security: None,
         }
     }
-    
+
     /// Check if this authentication configuration requires TLS
     pub fn requires_tls(&self) -> bool {
-        matches!(self.method, AuthMethod::Mtls | AuthMethod::SaslPlain | AuthMethod::Token)
+        matches!(
+            self.method,
+            AuthMethod::Mtls | AuthMethod::SaslPlain | AuthMethod::Token
+        )
     }
-    
+
     /// Check if this authentication configuration supports ACL
     pub fn supports_acl(&self) -> bool {
-        self.security.as_ref().map(|s| s.acl.enabled).unwrap_or(false)
+        self.security
+            .as_ref()
+            .map(|s| s.acl.enabled)
+            .unwrap_or(false)
     }
 }
 
@@ -630,7 +636,7 @@ impl TlsConfig {
         } else {
             TlsMode::ServerAuth
         };
-        
+
         Self {
             mode,
             ca_cert: Some(ca_cert),
@@ -649,14 +655,14 @@ impl TlsConfig {
                 enable_webpki: true,
                 enable_caching: true,
                 cache_ttl_seconds: 1800, // 30 minutes for production
-                cache_size: 2000, // Larger cache for production
+                cache_size: 2000,        // Larger cache for production
                 enable_batch_validation: true,
                 performance_target_us: 200, // Stricter target for production
             },
             alpn_protocols: vec!["h3".to_string()],
         }
     }
-    
+
     /// Create an insecure TLS configuration for development (not recommended)
     pub fn insecure_config() -> Self {
         Self {
@@ -683,23 +689,23 @@ impl TlsConfig {
             alpn_protocols: vec!["h3".to_string()],
         }
     }
-    
+
     /// Check if this configuration enables TLS
     pub fn is_enabled(&self) -> bool {
         self.mode != TlsMode::Disabled
     }
-    
+
     /// Check if this configuration requires client certificates
     pub fn requires_client_cert(&self) -> bool {
         self.mode == TlsMode::MutualAuth
     }
-    
+
     /// Validate the TLS configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.mode == TlsMode::Disabled {
             return Ok(()); // No validation needed for disabled TLS
         }
-        
+
         if self.mode == TlsMode::MutualAuth {
             if self.client_cert.is_none() {
                 return Err("Client certificate required for mutual TLS".to_string());
@@ -708,15 +714,17 @@ impl TlsConfig {
                 return Err("Client private key required for mutual TLS".to_string());
             }
         }
-        
+
         if !self.insecure_skip_verify && self.ca_cert.is_none() {
-            return Err("CA certificate required when certificate verification is enabled".to_string());
+            return Err(
+                "CA certificate required when certificate verification is enabled".to_string(),
+            );
         }
-        
+
         if self.supported_versions.is_empty() {
             return Err("At least one TLS version must be supported".to_string());
         }
-        
+
         Ok(())
     }
 }

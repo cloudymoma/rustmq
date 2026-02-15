@@ -1,19 +1,19 @@
 use crate::config::{
-    EtlPipelineConfig, EtlStage, EtlModuleInstance, ErrorHandlingStrategy,
-    ModuleInstanceConfig, EtlInstancePoolConfig
+    ErrorHandlingStrategy, EtlInstancePoolConfig, EtlModuleInstance, EtlPipelineConfig, EtlStage,
+    ModuleInstanceConfig,
 };
-use crate::etl::filter::{TopicFilterEngine, ConditionalRuleEngine, FilterResult};
-use crate::etl::instance_pool::{WasmInstancePool, InstanceCheckout, WasmContext};
+use crate::etl::filter::{ConditionalRuleEngine, FilterResult, TopicFilterEngine};
+use crate::etl::instance_pool::{InstanceCheckout, WasmContext, WasmInstancePool};
 use crate::{Result, error::RustMqError, types::Record};
-use std::collections::BinaryHeap;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
-use std::time::{Duration, Instant};
-use std::cmp::Ordering;
-use futures::future::join_all;
-use tracing::{info, warn, error, debug};
 use bytes::Bytes;
 use dashmap::DashMap;
+use futures::future::join_all;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
+use tracing::{debug, error, info, warn};
 
 /// Priority-based ETL pipeline orchestrator with optimized execution
 pub struct EtlPipelineOrchestrator {
@@ -191,7 +191,7 @@ impl EtlPipelineOrchestrator {
 
         stats.active_pipelines.store(
             compiled_pipelines.len(),
-            std::sync::atomic::Ordering::Relaxed
+            std::sync::atomic::Ordering::Relaxed,
         );
 
         Ok(Self {
@@ -211,7 +211,8 @@ impl EtlPipelineOrchestrator {
 
             for module in &stage.modules {
                 let topic_filter = TopicFilterEngine::new(module.topic_filters.clone())?;
-                let conditional_rules = ConditionalRuleEngine::new(module.conditional_rules.clone())?;
+                let conditional_rules =
+                    ConditionalRuleEngine::new(module.conditional_rules.clone())?;
 
                 compiled_modules.push(CompiledModule {
                     module_id: module.module_id.clone(),
@@ -251,10 +252,9 @@ impl EtlPipelineOrchestrator {
         let start_time = Instant::now();
 
         // Acquire execution permit for resource management
-        let _permit = self.execution_semaphore.acquire().await
-            .map_err(|_| RustMqError::EtlProcessingFailed(
-                "Failed to acquire execution permit".to_string()
-            ))?;
+        let _permit = self.execution_semaphore.acquire().await.map_err(|_| {
+            RustMqError::EtlProcessingFailed("Failed to acquire execution permit".to_string())
+        })?;
 
         let mut results = Vec::new();
 
@@ -278,7 +278,9 @@ impl EtlPipelineOrchestrator {
                     }
                     Err(e) => {
                         error!("Pipeline {} execution failed: {}", pipeline_id, e);
-                        self.stats.failed_executions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        self.stats
+                            .failed_executions
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                         // Create error result
                         results.push(PipelineExecutionResult {
@@ -302,17 +304,23 @@ impl EtlPipelineOrchestrator {
 
         // Update global statistics
         let total_time = start_time.elapsed();
-        self.stats.total_executions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .total_executions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.stats.total_execution_time.fetch_add(
-            total_time.as_millis() as u64, 
-            std::sync::atomic::Ordering::Relaxed
+            total_time.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
         );
 
         Ok(results)
     }
 
     /// Check if a pipeline applies to the given topic
-    async fn pipeline_applies_to_topic(&self, pipeline: &PipelineInstance, topic: &str) -> Result<bool> {
+    async fn pipeline_applies_to_topic(
+        &self,
+        pipeline: &PipelineInstance,
+        topic: &str,
+    ) -> Result<bool> {
         for stage in &pipeline.stages {
             for module in &stage.modules {
                 let filter_result = module.topic_filter.matches_topic(topic);
@@ -341,9 +349,10 @@ impl EtlPipelineOrchestrator {
         };
 
         let mut current_record = context.record.clone();
-        
+
         // Create priority queue for stage execution (min-heap by priority)
-        let mut stage_queue: BinaryHeap<PriorityStage> = pipeline.stages
+        let mut stage_queue: BinaryHeap<PriorityStage> = pipeline
+            .stages
             .iter()
             .enumerate()
             .map(|(index, stage)| PriorityStage {
@@ -355,23 +364,29 @@ impl EtlPipelineOrchestrator {
         // Execute stages in priority order
         while let Some(priority_stage) = stage_queue.pop() {
             let stage = &pipeline.stages[priority_stage.stage_index];
-            
+
             // Apply global timeout check
-            if context.start_time.elapsed().as_millis() > pipeline.config.global_timeout_ms as u128 {
+            if context.start_time.elapsed().as_millis() > pipeline.config.global_timeout_ms as u128
+            {
                 warn!("Pipeline {} global timeout exceeded", context.pipeline_id);
                 execution_metadata.errors_encountered += 1;
                 break;
             }
 
-            match self.execute_stage(stage, &mut current_record, &context.topic).await {
+            match self
+                .execute_stage(stage, &mut current_record, &context.topic)
+                .await
+            {
                 Ok(stage_info) => {
                     execution_metadata.stages_executed.push(stage_info.clone());
-                    execution_metadata.transformations_applied += stage_info.modules_executed
+                    execution_metadata.transformations_applied += stage_info
+                        .modules_executed
                         .iter()
                         .filter(|m| m.transformation_applied)
                         .count();
                     // Count errors from individual module failures
-                    execution_metadata.errors_encountered += stage_info.modules_executed
+                    execution_metadata.errors_encountered += stage_info
+                        .modules_executed
                         .iter()
                         .filter(|m| !m.success)
                         .count();
@@ -379,24 +394,36 @@ impl EtlPipelineOrchestrator {
                 Err(e) => {
                     error!("Stage {} execution failed: {}", stage.priority, e);
                     execution_metadata.errors_encountered += 1;
-                    
+
                     match pipeline.config.error_handling {
                         ErrorHandlingStrategy::StopPipeline => {
-                            error!("Stopping pipeline {} due to stage failure", context.pipeline_id);
+                            error!(
+                                "Stopping pipeline {} due to stage failure",
+                                context.pipeline_id
+                            );
                             break;
                         }
                         ErrorHandlingStrategy::SkipModule => {
-                            warn!("Skipping failed stage {} in pipeline {}", stage.priority, context.pipeline_id);
+                            warn!(
+                                "Skipping failed stage {} in pipeline {}",
+                                stage.priority, context.pipeline_id
+                            );
                             continue;
                         }
                         ErrorHandlingStrategy::RetryWithBackoff => {
                             // Implement retry logic here
-                            warn!("Retry not implemented yet, skipping stage {}", stage.priority);
+                            warn!(
+                                "Retry not implemented yet, skipping stage {}",
+                                stage.priority
+                            );
                             continue;
                         }
                         ErrorHandlingStrategy::SendToDeadLetter => {
                             // Implement dead letter routing here
-                            warn!("Dead letter routing not implemented yet, skipping stage {}", stage.priority);
+                            warn!(
+                                "Dead letter routing not implemented yet, skipping stage {}",
+                                stage.priority
+                            );
                             continue;
                         }
                     }
@@ -408,7 +435,9 @@ impl EtlPipelineOrchestrator {
         let success = execution_metadata.errors_encountered == 0;
 
         if success {
-            self.stats.successful_executions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .successful_executions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
         Ok(PipelineExecutionResult {
@@ -430,10 +459,15 @@ impl EtlPipelineOrchestrator {
         let mut modules_executed = Vec::new();
 
         // Filter modules that apply to this record
-        let applicable_modules = self.filter_applicable_modules(&stage.modules, record, topic).await?;
+        let applicable_modules = self
+            .filter_applicable_modules(&stage.modules, record, topic)
+            .await?;
 
         if applicable_modules.is_empty() {
-            debug!("No applicable modules for stage priority {}", stage.priority);
+            debug!(
+                "No applicable modules for stage priority {}",
+                stage.priority
+            );
             return Ok(StageExecutionInfo {
                 priority: stage.priority,
                 modules_executed: vec![],
@@ -444,10 +478,14 @@ impl EtlPipelineOrchestrator {
 
         if stage.parallel_execution && applicable_modules.len() > 1 {
             // Execute modules in parallel
-            modules_executed = self.execute_modules_parallel(&stage.modules, applicable_modules, record, topic).await?;
+            modules_executed = self
+                .execute_modules_parallel(&stage.modules, applicable_modules, record, topic)
+                .await?;
         } else {
             // Execute modules sequentially
-            modules_executed = self.execute_modules_sequential(&stage.modules, applicable_modules, record, topic).await?;
+            modules_executed = self
+                .execute_modules_sequential(&stage.modules, applicable_modules, record, topic)
+                .await?;
         }
 
         Ok(StageExecutionInfo {
@@ -535,22 +573,34 @@ impl EtlPipelineOrchestrator {
                 let module_id = module.module_id.clone();
                 let instance_config = module.instance_config.clone();
                 let instance_pool = Arc::clone(&self.instance_pool);
-                
+
                 tokio::spawn(async move {
                     let module_start = Instant::now();
 
-                    match instance_pool.checkout_instance(&module_id, &instance_config).await {
+                    match instance_pool
+                        .checkout_instance(&module_id, &instance_config)
+                        .await
+                    {
                         Ok(mut checkout) => {
                             // Execute with timeout
-                            let timeout_duration = Duration::from_millis(instance_config.execution_timeout_ms as u64);
+                            let timeout_duration =
+                                Duration::from_millis(instance_config.execution_timeout_ms as u64);
                             let execute_result = tokio::time::timeout(
                                 timeout_duration,
-                                checkout.instance.wasm_context.execute("transform", &record_copy.value)
-                            ).await;
+                                checkout
+                                    .instance
+                                    .wasm_context
+                                    .execute("transform", &record_copy.value),
+                            )
+                            .await;
 
                             match execute_result {
                                 Ok(Ok(output)) => {
-                                    checkout.return_handle.return_instance(checkout.instance).await.ok();
+                                    checkout
+                                        .return_handle
+                                        .return_instance(checkout.instance)
+                                        .await
+                                        .ok();
                                     ModuleExecutionInfo {
                                         module_id,
                                         execution_time: module_start.elapsed(),
@@ -562,7 +612,11 @@ impl EtlPipelineOrchestrator {
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    checkout.return_handle.return_instance(checkout.instance).await.ok();
+                                    checkout
+                                        .return_handle
+                                        .return_instance(checkout.instance)
+                                        .await
+                                        .ok();
                                     ModuleExecutionInfo {
                                         module_id,
                                         execution_time: module_start.elapsed(),
@@ -574,12 +628,19 @@ impl EtlPipelineOrchestrator {
                                     }
                                 }
                                 Err(_timeout) => {
-                                    checkout.return_handle.return_instance(checkout.instance).await.ok();
+                                    checkout
+                                        .return_handle
+                                        .return_instance(checkout.instance)
+                                        .await
+                                        .ok();
                                     ModuleExecutionInfo {
                                         module_id: module_id.clone(),
                                         execution_time: module_start.elapsed(),
                                         success: false,
-                                        error_message: Some(format!("Execution timed out after {}ms", instance_config.execution_timeout_ms)),
+                                        error_message: Some(format!(
+                                            "Execution timed out after {}ms",
+                                            instance_config.execution_timeout_ms
+                                        )),
                                         bytes_processed: 0,
                                         transformation_applied: false,
                                         output: None,
@@ -595,7 +656,7 @@ impl EtlPipelineOrchestrator {
                             bytes_processed: 0,
                             transformation_applied: false,
                             output: None,
-                        }
+                        },
                     }
                 })
             })
@@ -629,7 +690,10 @@ impl EtlPipelineOrchestrator {
             if module_result.success && module_result.transformation_applied {
                 if let Some(ref output) = module_result.output {
                     record.value = Bytes::from(output.clone());
-                    debug!("Applied transformation from module {}", module_result.module_id);
+                    debug!(
+                        "Applied transformation from module {}",
+                        module_result.module_id
+                    );
                     break;
                 }
             }
@@ -646,18 +710,24 @@ impl EtlPipelineOrchestrator {
         _topic: &str,
     ) -> Result<ModuleExecutionInfo> {
         let module_start = Instant::now();
-        
+
         // Checkout WASM instance from pool
-        let mut checkout = self.instance_pool
+        let mut checkout = self
+            .instance_pool
             .checkout_instance(&module.module_id, &module.instance_config)
             .await?;
 
         // Execute the transformation with timeout
-        let timeout_duration = Duration::from_millis(module.instance_config.execution_timeout_ms as u64);
+        let timeout_duration =
+            Duration::from_millis(module.instance_config.execution_timeout_ms as u64);
         let execute_result = tokio::time::timeout(
             timeout_duration,
-            checkout.instance.wasm_context.execute("transform", &record.value)
-        ).await;
+            checkout
+                .instance
+                .wasm_context
+                .execute("transform", &record.value),
+        )
+        .await;
 
         match execute_result {
             Ok(Ok(output)) => {
@@ -665,7 +735,10 @@ impl EtlPipelineOrchestrator {
                 record.value = Bytes::from(output); // Convert Vec<u8> back to Bytes
 
                 // Return instance to pool
-                checkout.return_handle.return_instance(checkout.instance).await?;
+                checkout
+                    .return_handle
+                    .return_instance(checkout.instance)
+                    .await?;
 
                 Ok(ModuleExecutionInfo {
                     module_id: module.module_id.clone(),
@@ -679,19 +752,29 @@ impl EtlPipelineOrchestrator {
             }
             Ok(Err(e)) => {
                 // Execution failed
-                checkout.return_handle.return_instance(checkout.instance).await.ok();
+                checkout
+                    .return_handle
+                    .return_instance(checkout.instance)
+                    .await
+                    .ok();
 
-                Err(RustMqError::EtlProcessingFailed(
-                    format!("Module {} execution failed: {}", module.module_id, e)
-                ))
+                Err(RustMqError::EtlProcessingFailed(format!(
+                    "Module {} execution failed: {}",
+                    module.module_id, e
+                )))
             }
             Err(_timeout) => {
                 // Timeout occurred
-                checkout.return_handle.return_instance(checkout.instance).await.ok();
+                checkout
+                    .return_handle
+                    .return_instance(checkout.instance)
+                    .await
+                    .ok();
 
-                Err(RustMqError::EtlProcessingFailed(
-                    format!("Module {} execution timed out after {}ms", module.module_id, module.instance_config.execution_timeout_ms)
-                ))
+                Err(RustMqError::EtlProcessingFailed(format!(
+                    "Module {} execution timed out after {}ms",
+                    module.module_id, module.instance_config.execution_timeout_ms
+                )))
             }
         }
     }
@@ -706,12 +789,12 @@ impl EtlPipelineOrchestrator {
         let pipeline_id = pipeline_instance.config.pipeline_id.clone();
 
         // Lock-free insert with DashMap
-        self.pipelines.insert(pipeline_id.clone(), Arc::new(pipeline_instance));
+        self.pipelines
+            .insert(pipeline_id.clone(), Arc::new(pipeline_instance));
 
-        self.stats.active_pipelines.store(
-            self.pipelines.len(),
-            std::sync::atomic::Ordering::Relaxed
-        );
+        self.stats
+            .active_pipelines
+            .store(self.pipelines.len(), std::sync::atomic::Ordering::Relaxed);
 
         info!("Added new pipeline: {}", pipeline_id);
         Ok(())
@@ -721,16 +804,16 @@ impl EtlPipelineOrchestrator {
     pub async fn remove_pipeline(&self, pipeline_id: &str) -> Result<()> {
         // Lock-free remove with DashMap
         if self.pipelines.remove(pipeline_id).is_some() {
-            self.stats.active_pipelines.store(
-                self.pipelines.len(),
-                std::sync::atomic::Ordering::Relaxed
-            );
+            self.stats
+                .active_pipelines
+                .store(self.pipelines.len(), std::sync::atomic::Ordering::Relaxed);
             info!("Removed pipeline: {}", pipeline_id);
             Ok(())
         } else {
-            Err(RustMqError::EtlModuleNotFound(
-                format!("Pipeline not found: {}", pipeline_id)
-            ))
+            Err(RustMqError::EtlModuleNotFound(format!(
+                "Pipeline not found: {}",
+                pipeline_id
+            )))
         }
     }
 
@@ -738,22 +821,34 @@ impl EtlPipelineOrchestrator {
     pub fn get_stats(&self) -> OrchestratorStats {
         OrchestratorStats {
             total_executions: std::sync::atomic::AtomicU64::new(
-                self.stats.total_executions.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .total_executions
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             successful_executions: std::sync::atomic::AtomicU64::new(
-                self.stats.successful_executions.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .successful_executions
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             failed_executions: std::sync::atomic::AtomicU64::new(
-                self.stats.failed_executions.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .failed_executions
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             total_execution_time: std::sync::atomic::AtomicU64::new(
-                self.stats.total_execution_time.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .total_execution_time
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             active_pipelines: std::sync::atomic::AtomicUsize::new(
-                self.stats.active_pipelines.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .active_pipelines
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
             average_latency_ms: std::sync::atomic::AtomicU64::new(
-                self.stats.average_latency_ms.load(std::sync::atomic::Ordering::Relaxed)
+                self.stats
+                    .average_latency_ms
+                    .load(std::sync::atomic::Ordering::Relaxed),
             ),
         }
     }
@@ -804,26 +899,37 @@ mod tests {
             enable_lru_eviction: true,
         };
 
-        let orchestrator = EtlPipelineOrchestrator::new(
-            vec![pipeline_config],
-            instance_pool_config,
-            50,
-        ).unwrap();
+        let orchestrator =
+            EtlPipelineOrchestrator::new(vec![pipeline_config], instance_pool_config, 50).unwrap();
 
         let stats = orchestrator.get_stats();
-        assert_eq!(stats.active_pipelines.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            stats
+                .active_pipelines
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 
     #[tokio::test]
     async fn test_priority_stage_ordering() {
         let mut stages = vec![
-            PriorityStage { priority: 3, stage_index: 0 },
-            PriorityStage { priority: 1, stage_index: 1 },
-            PriorityStage { priority: 2, stage_index: 2 },
+            PriorityStage {
+                priority: 3,
+                stage_index: 0,
+            },
+            PriorityStage {
+                priority: 1,
+                stage_index: 1,
+            },
+            PriorityStage {
+                priority: 2,
+                stage_index: 2,
+            },
         ];
 
         let mut heap: BinaryHeap<PriorityStage> = stages.into_iter().collect();
-        
+
         // Should pop in priority order: 1, 2, 3
         assert_eq!(heap.pop().unwrap().priority, 1);
         assert_eq!(heap.pop().unwrap().priority, 2);
@@ -835,28 +941,24 @@ mod tests {
     async fn test_pipeline_execution_with_stages() {
         let stage = EtlStage {
             priority: 0,
-            modules: vec![
-                EtlModuleInstance {
-                    module_id: "test-module".to_string(),
-                    instance_config: ModuleInstanceConfig {
-                        memory_limit_bytes: 1024 * 1024,
-                        execution_timeout_ms: 5000,
-                        max_concurrent_instances: 10,
-                        enable_caching: true,
-                        cache_ttl_seconds: 300,
-                        custom_config: serde_json::Value::Object(serde_json::Map::new()),
-                    },
-                    topic_filters: vec![
-                        TopicFilter {
-                            filter_type: FilterType::Exact,
-                            pattern: "test.topic".to_string(),
-                            case_sensitive: true,
-                            negate: false,
-                        }
-                    ],
-                    conditional_rules: vec![],
-                }
-            ],
+            modules: vec![EtlModuleInstance {
+                module_id: "test-module".to_string(),
+                instance_config: ModuleInstanceConfig {
+                    memory_limit_bytes: 1024 * 1024,
+                    execution_timeout_ms: 5000,
+                    max_concurrent_instances: 10,
+                    enable_caching: true,
+                    cache_ttl_seconds: 300,
+                    custom_config: serde_json::Value::Object(serde_json::Map::new()),
+                },
+                topic_filters: vec![TopicFilter {
+                    filter_type: FilterType::Exact,
+                    pattern: "test.topic".to_string(),
+                    case_sensitive: true,
+                    negate: false,
+                }],
+                conditional_rules: vec![],
+            }],
             parallel_execution: false,
             stage_timeout_ms: None,
             continue_on_error: true,
@@ -881,11 +983,8 @@ mod tests {
             enable_lru_eviction: true,
         };
 
-        let orchestrator = EtlPipelineOrchestrator::new(
-            vec![pipeline_config],
-            instance_pool_config,
-            50,
-        ).unwrap();
+        let orchestrator =
+            EtlPipelineOrchestrator::new(vec![pipeline_config], instance_pool_config, 50).unwrap();
 
         let record = Record::new(
             Some(b"test-key".to_vec()),
@@ -894,7 +993,10 @@ mod tests {
             chrono::Utc::now().timestamp_millis(),
         );
 
-        let results = orchestrator.execute_pipelines(record, "test.topic").await.unwrap();
+        let results = orchestrator
+            .execute_pipelines(record, "test.topic")
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
         assert_eq!(results[0].execution_metadata.stages_executed.len(), 1);
@@ -904,28 +1006,24 @@ mod tests {
     async fn test_pipeline_topic_filtering() {
         let stage = EtlStage {
             priority: 0,
-            modules: vec![
-                EtlModuleInstance {
-                    module_id: "test-module".to_string(),
-                    instance_config: ModuleInstanceConfig {
-                        memory_limit_bytes: 1024 * 1024,
-                        execution_timeout_ms: 5000,
-                        max_concurrent_instances: 10,
-                        enable_caching: true,
-                        cache_ttl_seconds: 300,
-                        custom_config: serde_json::Value::Object(serde_json::Map::new()),
-                    },
-                    topic_filters: vec![
-                        TopicFilter {
-                            filter_type: FilterType::Wildcard,
-                            pattern: "events.*".to_string(),
-                            case_sensitive: true,
-                            negate: false,
-                        }
-                    ],
-                    conditional_rules: vec![],
-                }
-            ],
+            modules: vec![EtlModuleInstance {
+                module_id: "test-module".to_string(),
+                instance_config: ModuleInstanceConfig {
+                    memory_limit_bytes: 1024 * 1024,
+                    execution_timeout_ms: 5000,
+                    max_concurrent_instances: 10,
+                    enable_caching: true,
+                    cache_ttl_seconds: 300,
+                    custom_config: serde_json::Value::Object(serde_json::Map::new()),
+                },
+                topic_filters: vec![TopicFilter {
+                    filter_type: FilterType::Wildcard,
+                    pattern: "events.*".to_string(),
+                    case_sensitive: true,
+                    negate: false,
+                }],
+                conditional_rules: vec![],
+            }],
             parallel_execution: false,
             stage_timeout_ms: None,
             continue_on_error: true,
@@ -950,11 +1048,8 @@ mod tests {
             enable_lru_eviction: true,
         };
 
-        let orchestrator = EtlPipelineOrchestrator::new(
-            vec![pipeline_config],
-            instance_pool_config,
-            50,
-        ).unwrap();
+        let orchestrator =
+            EtlPipelineOrchestrator::new(vec![pipeline_config], instance_pool_config, 50).unwrap();
 
         let record = Record::new(
             Some(b"test-key".to_vec()),
@@ -964,11 +1059,17 @@ mod tests {
         );
 
         // Should match events.user
-        let results = orchestrator.execute_pipelines(record.clone(), "events.user").await.unwrap();
+        let results = orchestrator
+            .execute_pipelines(record.clone(), "events.user")
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         // Should not match logs.error
-        let results = orchestrator.execute_pipelines(record, "logs.error").await.unwrap();
+        let results = orchestrator
+            .execute_pipelines(record, "logs.error")
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 }

@@ -8,16 +8,16 @@
 //!
 //! Target: 50+ tests covering production security requirements
 
-pub mod test_utils;
+pub mod acl_tests;
 pub mod authentication_tests;
 pub mod authorization_tests;
-pub mod acl_tests;
-pub mod integration_tests;
-pub mod performance_tests;
-pub mod webpki_tests;
 pub mod enhanced_tests;
-pub mod validation_tests;
+pub mod integration_tests;
 pub mod key_encryption_tests;
+pub mod performance_tests;
+pub mod test_utils;
+pub mod validation_tests;
+pub mod webpki_tests;
 
 // Re-export test utilities for convenient access
 pub use test_utils::*;
@@ -25,7 +25,7 @@ pub use test_utils::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     /// Smoke test to ensure all test modules compile and basic functionality works
     #[tokio::test]
     async fn test_security_test_suite_smoke_test() {

@@ -1,15 +1,15 @@
 // High-performance optimizations for RustMQ OpenRaft implementation
 // Production-ready with batching, caching, threading, and memory management
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock, Semaphore};
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, bounded};
 use dashmap::DashMap;
 use lru::LruCache;
 use parking_lot::RwLock as ParkingLotRwLock;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{debug, info, warn};
 
 use crate::controller::openraft_storage::{NodeId, RustMqAppData, RustMqAppDataResponse};
@@ -91,12 +91,13 @@ impl PerformanceMetrics {
     /// Record an operation
     pub fn record_operation(&self, latency_us: u64, was_batched: bool, batch_size: usize) {
         self.total_operations.fetch_add(1, Ordering::Relaxed);
-        
+
         if was_batched {
             self.batched_operations.fetch_add(1, Ordering::Relaxed);
-            self.avg_batch_size.store(batch_size as u64, Ordering::Relaxed);
+            self.avg_batch_size
+                .store(batch_size as u64, Ordering::Relaxed);
         }
-        
+
         // Update moving average latency
         let current_avg = self.avg_latency_us.load(Ordering::Relaxed);
         let new_avg = (current_avg * 9 + latency_us) / 10; // Simple moving average
@@ -116,7 +117,7 @@ impl PerformanceMetrics {
     /// Update memory usage
     pub fn update_memory_usage(&self, current: u64) {
         self.memory_allocated.store(current, Ordering::Relaxed);
-        
+
         let peak = self.peak_memory_usage.load(Ordering::Relaxed);
         if current > peak {
             self.peak_memory_usage.store(current, Ordering::Relaxed);
@@ -202,7 +203,7 @@ impl OperationBatcher {
         let metrics = Arc::new(PerformanceMetrics::default());
         let pending_ops = Arc::new(Mutex::new(VecDeque::new()));
         let batch_semaphore = Arc::new(Semaphore::new(config.max_concurrent_ops));
-        
+
         Self {
             config,
             metrics,
@@ -222,14 +223,14 @@ impl OperationBatcher {
                 self.pending_ops.clone(),
                 self.batch_semaphore.clone(),
             );
-            
+
             let handle = tokio::spawn(async move {
                 worker.run().await;
             });
-            
+
             self.worker_handles.push(handle);
         }
-        
+
         info!("Started {} batch workers", self.config.worker_threads);
     }
 
@@ -239,19 +240,19 @@ impl OperationBatcher {
         data: RustMqAppData,
     ) -> tokio::sync::oneshot::Receiver<RustMqAppDataResponse> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         let operation = Operation::Apply {
             data,
             response_tx: tx,
             timestamp: Instant::now(),
         };
-        
+
         let mut pending = self.pending_ops.lock().await;
         pending.push_back(operation);
-        
+
         // Update queue depth metric
         self.metrics.update_queue_depth(pending.len());
-        
+
         rx
     }
 
@@ -261,19 +262,19 @@ impl OperationBatcher {
         operations: Vec<RustMqAppData>,
     ) -> tokio::sync::oneshot::Receiver<Vec<RustMqAppDataResponse>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         let operation = Operation::Batch {
             operations,
             response_tx: tx,
             timestamp: Instant::now(),
         };
-        
+
         let mut pending = self.pending_ops.lock().await;
         pending.push_back(operation);
-        
+
         // Update queue depth metric
         self.metrics.update_queue_depth(pending.len());
-        
+
         rx
     }
 
@@ -318,11 +319,12 @@ impl BatchWorker {
     }
 
     async fn run(&self) {
-        let mut batch_interval = tokio::time::interval(Duration::from_millis(self.config.batch_timeout_ms));
-        
+        let mut batch_interval =
+            tokio::time::interval(Duration::from_millis(self.config.batch_timeout_ms));
+
         loop {
             batch_interval.tick().await;
-            
+
             // Try to acquire semaphore for batch processing
             if let Ok(_permit) = self.batch_semaphore.try_acquire() {
                 self.process_batch().await;
@@ -333,47 +335,55 @@ impl BatchWorker {
     async fn process_batch(&self) {
         let start = Instant::now();
         let mut batch = Vec::new();
-        
+
         // Collect operations for batching
         {
             let mut pending = self.pending_ops.lock().await;
             let batch_size = std::cmp::min(self.config.max_batch_size, pending.len());
-            
+
             for _ in 0..batch_size {
                 if let Some(op) = pending.pop_front() {
                     batch.push(op);
                 }
             }
-            
+
             // Update queue depth
             self.metrics.update_queue_depth(pending.len());
         }
-        
+
         if batch.is_empty() {
             return;
         }
-        
+
         // Process the batch
         for operation in batch {
             match operation {
-                Operation::Apply { data, response_tx, timestamp } => {
+                Operation::Apply {
+                    data,
+                    response_tx,
+                    timestamp,
+                } => {
                     let response = self.apply_single_operation(data).await;
                     let latency = timestamp.elapsed().as_micros() as u64;
-                    
+
                     self.metrics.record_operation(latency, false, 1);
                     let _ = response_tx.send(response);
                 }
-                Operation::Batch { operations, response_tx, timestamp } => {
+                Operation::Batch {
+                    operations,
+                    response_tx,
+                    timestamp,
+                } => {
                     let responses = self.apply_batch_operations(operations).await;
                     let latency = timestamp.elapsed().as_micros() as u64;
                     let batch_size = responses.len();
-                    
+
                     self.metrics.record_operation(latency, true, batch_size);
                     let _ = response_tx.send(responses);
                 }
             }
         }
-        
+
         debug!(
             "Worker {} processed batch in {:?}",
             self.worker_id,
@@ -385,52 +395,50 @@ impl BatchWorker {
         // This would integrate with the actual state machine
         // For now, return a mock response
         match data {
-            RustMqAppData::CreateTopic { name, .. } => {
-                RustMqAppDataResponse {
-                    success: true,
-                    error_message: None,
-                    data: Some(format!("Topic {} created", name)),
-                }
-            }
-            RustMqAppData::DeleteTopic { name } => {
-                RustMqAppDataResponse {
-                    success: true,
-                    error_message: None,
-                    data: Some(format!("Topic {} deleted", name)),
-                }
-            }
-            RustMqAppData::AddBroker { broker } => {
-                RustMqAppDataResponse {
-                    success: true,
-                    error_message: None,
-                    data: Some(format!("Broker {} added", broker.id)),
-                }
-            }
-            RustMqAppData::RemoveBroker { broker_id } => {
-                RustMqAppDataResponse {
-                    success: true,
-                    error_message: None,
-                    data: Some(format!("Broker {} removed", broker_id)),
-                }
-            }
-            RustMqAppData::UpdatePartitionAssignment { topic_partition, .. } => {
-                RustMqAppDataResponse {
-                    success: true,
-                    error_message: None,
-                    data: Some(format!("Partition assignment updated for {}", topic_partition)),
-                }
-            }
+            RustMqAppData::CreateTopic { name, .. } => RustMqAppDataResponse {
+                success: true,
+                error_message: None,
+                data: Some(format!("Topic {} created", name)),
+            },
+            RustMqAppData::DeleteTopic { name } => RustMqAppDataResponse {
+                success: true,
+                error_message: None,
+                data: Some(format!("Topic {} deleted", name)),
+            },
+            RustMqAppData::AddBroker { broker } => RustMqAppDataResponse {
+                success: true,
+                error_message: None,
+                data: Some(format!("Broker {} added", broker.id)),
+            },
+            RustMqAppData::RemoveBroker { broker_id } => RustMqAppDataResponse {
+                success: true,
+                error_message: None,
+                data: Some(format!("Broker {} removed", broker_id)),
+            },
+            RustMqAppData::UpdatePartitionAssignment {
+                topic_partition, ..
+            } => RustMqAppDataResponse {
+                success: true,
+                error_message: None,
+                data: Some(format!(
+                    "Partition assignment updated for {}",
+                    topic_partition
+                )),
+            },
         }
     }
 
-    async fn apply_batch_operations(&self, operations: Vec<RustMqAppData>) -> Vec<RustMqAppDataResponse> {
+    async fn apply_batch_operations(
+        &self,
+        operations: Vec<RustMqAppData>,
+    ) -> Vec<RustMqAppDataResponse> {
         let mut responses = Vec::with_capacity(operations.len());
-        
+
         for data in operations {
             let response = self.apply_single_operation(data).await;
             responses.push(response);
         }
-        
+
         responses
     }
 }
@@ -445,7 +453,7 @@ pub struct HighPerformanceCache<K, V> {
     max_size: usize,
 }
 
-impl<K, V> HighPerformanceCache<K, V> 
+impl<K, V> HighPerformanceCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
@@ -453,7 +461,9 @@ where
     /// Create a new high-performance cache
     pub fn new(max_size: usize, metrics: Arc<PerformanceMetrics>) -> Self {
         Self {
-            cache: Arc::new(parking_lot::Mutex::new(LruCache::new(max_size.try_into().unwrap()))),
+            cache: Arc::new(parking_lot::Mutex::new(LruCache::new(
+                max_size.try_into().unwrap(),
+            ))),
             metrics,
             max_size,
         }
@@ -463,9 +473,9 @@ where
     pub fn get(&self, key: &K) -> Option<V> {
         let mut cache = self.cache.lock();
         let result = cache.get(key).cloned();
-        
+
         self.metrics.record_cache_access(result.is_some());
-        
+
         result
     }
 
@@ -505,23 +515,23 @@ pub struct MemoryPool<T> {
     metrics: Arc<PerformanceMetrics>,
 }
 
-impl<T> MemoryPool<T> 
+impl<T> MemoryPool<T>
 where
     T: Send + 'static,
 {
     /// Create a new memory pool
-    pub fn new<F>(capacity: usize, factory: F, metrics: Arc<PerformanceMetrics>) -> Self 
+    pub fn new<F>(capacity: usize, factory: F, metrics: Arc<PerformanceMetrics>) -> Self
     where
         F: Fn() -> T + Send + Sync + 'static,
     {
         let (sender, receiver) = bounded(capacity);
-        
+
         // Pre-populate the pool
         for _ in 0..capacity / 2 {
             let obj = factory();
             let _ = sender.try_send(obj);
         }
-        
+
         Self {
             pool: sender,
             receiver,
@@ -564,7 +574,7 @@ impl ZeroCopyBuffer {
     pub fn new(data: Vec<u8>, metrics: Arc<PerformanceMetrics>) -> Self {
         let length = data.len();
         metrics.record_zero_copy();
-        
+
         Self {
             data: Arc::new(data),
             offset: 0,
@@ -629,15 +639,11 @@ impl RaftPerformanceOptimizer {
         let metrics = Arc::new(PerformanceMetrics::default());
         let batcher = OperationBatcher::new(config.clone());
         let state_cache = HighPerformanceCache::new(config.cache_size, metrics.clone());
-        
-        let buffer_pool = MemoryPool::new(
-            1000,
-            || Vec::with_capacity(8192),
-            metrics.clone(),
-        );
-        
+
+        let buffer_pool = MemoryPool::new(1000, || Vec::with_capacity(8192), metrics.clone());
+
         let node_map = DashMap::new();
-        
+
         Self {
             config,
             metrics,
@@ -651,19 +657,19 @@ impl RaftPerformanceOptimizer {
     /// Start the performance optimizer
     pub async fn start(&mut self) {
         self.batcher.start().await;
-        
+
         // Start metrics collection task
         let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
-            
+
             loop {
                 interval.tick().await;
                 let snapshot = metrics.snapshot();
                 debug!("Performance metrics: {:?}", snapshot);
             }
         });
-        
+
         info!("Performance optimizer started");
     }
 
@@ -703,7 +709,9 @@ impl RaftPerformanceOptimizer {
 
     /// Get node address
     pub fn get_node_address(&self, node_id: &NodeId) -> Option<String> {
-        self.node_map.get(node_id).map(|entry| entry.value().clone())
+        self.node_map
+            .get(node_id)
+            .map(|entry| entry.value().clone())
     }
 
     /// Get performance metrics
@@ -731,9 +739,9 @@ mod tests {
     async fn test_operation_batcher() {
         let config = PerformanceConfig::default();
         let mut batcher = OperationBatcher::new(config);
-        
+
         batcher.start().await;
-        
+
         let data = RustMqAppData::CreateTopic {
             name: "test-topic".to_string(),
             partitions: 3,
@@ -744,12 +752,12 @@ mod tests {
                 compression_type: Some("lz4".to_string()),
             },
         };
-        
+
         let response_rx = batcher.submit_operation(data).await;
         let response = response_rx.await.unwrap();
-        
+
         assert!(response.success);
-        
+
         batcher.stop().await;
     }
 
@@ -757,13 +765,13 @@ mod tests {
     async fn test_high_performance_cache() {
         let metrics = Arc::new(PerformanceMetrics::default());
         let cache = HighPerformanceCache::new(100, metrics);
-        
+
         // Test put and get
         cache.put("key1".to_string(), "value1".to_string());
         let value = cache.get(&"key1".to_string());
-        
+
         assert_eq!(value, Some("value1".to_string()));
-        
+
         // Test cache miss
         let missing = cache.get(&"missing".to_string());
         assert_eq!(missing, None);
@@ -773,14 +781,14 @@ mod tests {
     async fn test_memory_pool() {
         let metrics = Arc::new(PerformanceMetrics::default());
         let pool = MemoryPool::new(10, || Vec::<u8>::with_capacity(1024), metrics);
-        
+
         // Get a buffer from the pool
         let buffer1 = pool.get();
         assert_eq!(buffer1.capacity(), 1024);
-        
+
         // Return it to the pool
         pool.put(buffer1);
-        
+
         // Get another buffer (should be the same one)
         let buffer2 = pool.get();
         assert_eq!(buffer2.capacity(), 1024);
@@ -791,10 +799,10 @@ mod tests {
         let metrics = Arc::new(PerformanceMetrics::default());
         let data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let buffer = ZeroCopyBuffer::new(data, metrics);
-        
+
         assert_eq!(buffer.len(), 10);
         assert_eq!(buffer.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        
+
         // Test slicing
         let slice = buffer.slice(2, 4).unwrap();
         assert_eq!(slice.as_slice(), &[3, 4, 5, 6]);
@@ -805,39 +813,39 @@ mod tests {
     async fn test_performance_optimizer() {
         let config = PerformanceConfig::default();
         let mut optimizer = RaftPerformanceOptimizer::new(config);
-        
+
         optimizer.start().await;
-        
+
         // Test caching
         optimizer.cache_state("test_key".to_string(), vec![1, 2, 3, 4]);
         let cached = optimizer.get_cached_state("test_key");
         assert_eq!(cached, Some(vec![1, 2, 3, 4]));
-        
+
         // Test node management
         optimizer.add_node(1, "localhost:9094".to_string());
         let address = optimizer.get_node_address(&1);
         assert_eq!(address, Some("localhost:9094".to_string()));
-        
+
         // Test buffer pool
         let buffer = optimizer.get_buffer();
         assert!(!buffer.is_empty() || buffer.capacity() > 0);
         optimizer.return_buffer(buffer);
-        
+
         optimizer.stop().await;
     }
 
     #[test]
     fn test_performance_metrics() {
         let metrics = PerformanceMetrics::default();
-        
+
         // Record some operations
         metrics.record_operation(100, false, 1);
         metrics.record_operation(200, true, 5);
-        
+
         // Record cache accesses
         metrics.record_cache_access(true);
         metrics.record_cache_access(false);
-        
+
         // Get snapshot
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.total_operations, 2);
@@ -848,7 +856,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_hash_map() {
         let map: Arc<ConcurrentHashMap<u64, String>> = Arc::new(DashMap::new());
-        
+
         // Test concurrent access
         let handles: Vec<_> = (0..10)
             .map(|i| {
@@ -862,17 +870,17 @@ mod tests {
                 })
             })
             .collect();
-        
+
         // Wait for all tasks to complete and collect keys
         let mut inserted_keys = Vec::new();
         for handle in handles {
             let key = handle.await.unwrap();
             inserted_keys.push(key);
         }
-        
+
         // Add a small delay to ensure all operations are complete
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         // Debug: Print actual length if assertion fails
         let actual_len = map.len();
         if actual_len != 10 {
@@ -882,12 +890,15 @@ mod tests {
                 println!("Key: {}, Value: {}", entry.key(), entry.value());
             }
         }
-        
+
         assert_eq!(actual_len, 10);
-        
+
         // Verify all values
         for i in 0..10 {
-            assert_eq!(map.get(&i).map(|entry| entry.value().clone()), Some(format!("value_{}", i)));
+            assert_eq!(
+                map.get(&i).map(|entry| entry.value().clone()),
+                Some(format!("value_{}", i))
+            );
         }
     }
 }

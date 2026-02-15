@@ -8,9 +8,7 @@
 //! - Batch certificate operations and prefetching optimization
 
 use rustmq_client::{
-    ClientConfig, TlsConfig, AuthConfig, ConsumerConfig, 
-    RustMqClient,
-    Result,
+    AuthConfig, ClientConfig, ConsumerConfig, Result, RustMqClient, TlsConfig,
     config::StartPosition,
 };
 use std::time::Duration;
@@ -24,13 +22,10 @@ async fn main() -> Result<()> {
     let tls_config = TlsConfig::secure_config(
         // CA certificate (replace with your CA certificate)
         include_str!("../../../certs/ca.pem").to_string(),
-        
         // Client certificate (replace with your client certificate)
         Some(include_str!("../../../certs/consumer.pem").to_string()),
-        
         // Client private key (replace with your client private key)
         Some(include_str!("../../../certs/consumer.key").to_string()),
-        
         // Server name for SNI
         "localhost".to_string(),
     );
@@ -55,35 +50,41 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating secure RustMQ client with mTLS authentication...");
-    
+
     // Create client
     let client = RustMqClient::new(client_config).await?;
-    
+
     // Verify security is enabled and check permissions
     if let Some(connection) = client.get_connection().await {
         if connection.is_security_enabled() {
             println!("✓ Security is enabled");
-            
+
             if let Some(security_context) = connection.get_security_context().await {
-                println!("✓ Authenticated as principal: {}", security_context.principal);
-                
+                println!(
+                    "✓ Authenticated as principal: {}",
+                    security_context.principal
+                );
+
                 if let Some(cert_info) = &security_context.certificate_info {
                     println!("✓ Certificate subject: {}", cert_info.subject);
                     println!("✓ Certificate issuer: {}", cert_info.issuer);
-                    
+
                     // Show certificate attributes
                     for (key, value) in &cert_info.attributes {
                         println!("  Certificate {}: {}", key, value);
                     }
                 }
-                
+
                 // Check permissions for the topic we want to consume
                 let topic = "secure-topic";
                 if security_context.permissions.can_read_topic(topic) {
                     println!("✓ Permission granted to read from topic: {}", topic);
                 } else {
                     println!("✗ Permission denied to read from topic: {}", topic);
-                    println!("Available read topics: {:?}", security_context.permissions.read_topics);
+                    println!(
+                        "Available read topics: {:?}",
+                        security_context.permissions.read_topics
+                    );
                 }
             }
         } else {
@@ -103,35 +104,43 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating secure consumer...");
-    
+
     // Create consumer
-    let consumer = client.create_consumer("secure-topic", &consumer_config.consumer_group).await?;
+    let consumer = client
+        .create_consumer("secure-topic", &consumer_config.consumer_group)
+        .await?;
 
     println!("Starting secure message consumption...");
     println!("Press Ctrl+C to stop consuming messages");
-    
+
     // Consume messages with security context
     let mut message_count = 0;
-    
+
     loop {
         match consumer.receive().await {
             Ok(Some(message)) => {
                 message_count += 1;
-                
-                println!("✓ Received secure message {} from authenticated source:", message_count);
+
+                println!(
+                    "✓ Received secure message {} from authenticated source:",
+                    message_count
+                );
                 println!("  Key: {:?}", message.message.key);
-                println!("  Value: {}", String::from_utf8_lossy(&message.message.payload));
+                println!(
+                    "  Value: {}",
+                    String::from_utf8_lossy(&message.message.payload)
+                );
                 println!("  Partition: {}", message.message.partition);
                 println!("  Offset: {}", message.message.offset);
-                
+
                 // Show message headers
                 for (key, value) in &message.message.headers {
                     println!("  Header {}: {}", key, value);
                 }
-                
+
                 // Acknowledge message processing
                 message.ack().await?;
-                
+
                 // Demonstrate periodic security context refresh
                 if message_count % 10 == 0 {
                     if let Some(connection) = client.get_connection().await {
@@ -147,7 +156,7 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("Error receiving message: {}", e);
-                
+
                 // Check if it's a security-related error
                 match &e {
                     rustmq_client::ClientError::AuthorizationDenied(msg) => {
@@ -165,13 +174,12 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         // Add a small delay to avoid overwhelming output
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    
+
     println!("Consumed {} messages securely", message_count);
 
     Ok(())
 }
-

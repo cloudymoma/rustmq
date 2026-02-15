@@ -1,11 +1,11 @@
 use crate::{Result, storage::*, types::*};
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::sync::Arc;
 use parking_lot::RwLock;
-use tokio::sync::Mutex;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 pub struct TieredStorageEngine {
     wal: Arc<dyn WriteAheadLog>,
@@ -84,10 +84,7 @@ pub struct CompactionManagerImpl {
 }
 
 impl CompactionManagerImpl {
-    pub fn new(
-        object_storage: Arc<dyn ObjectStorage>,
-        metadata_store: Arc<MetadataStore>,
-    ) -> Self {
+    pub fn new(object_storage: Arc<dyn ObjectStorage>, metadata_store: Arc<MetadataStore>) -> Self {
         Self {
             object_storage,
             metadata_store,
@@ -98,17 +95,17 @@ impl CompactionManagerImpl {
 #[async_trait]
 impl CompactionManager for CompactionManagerImpl {
     /// Compact multiple segments into a single segment using streaming I/O.
-    /// 
+    ///
     /// This implementation addresses OOM risk by:
     /// - Processing data in small chunks (64KB) rather than loading entire segments
     /// - Using streaming read/write operations to minimize memory footprint
     /// - Ensuring constant memory usage regardless of total segment size
-    /// 
-    /// Memory usage is bounded to ~64KB regardless of whether compacting 
+    ///
+    /// Memory usage is bounded to ~64KB regardless of whether compacting
     /// 3x100MB segments or 3x1GB segments, preventing OOM crashes.
     async fn compact_segments(&self, segment_keys: Vec<String>) -> Result<String> {
         const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks to limit memory usage
-        
+
         let mut start_offset = u64::MAX;
         let mut end_offset = 0u64;
         let mut found_valid_offsets = false;
@@ -137,9 +134,12 @@ impl CompactionManager for CompactionManagerImpl {
         }
 
         let compacted_key = format!("compacted_{start_offset}_{end_offset}.seg");
-        
+
         // Open write stream for the compacted output
-        let mut output_stream = self.object_storage.open_write_stream(&compacted_key).await?;
+        let mut output_stream = self
+            .object_storage
+            .open_write_stream(&compacted_key)
+            .await?;
 
         // Stream data from each segment in chunks
         for key in &segment_keys {
@@ -159,7 +159,7 @@ impl CompactionManager for CompactionManagerImpl {
 
         // Ensure all data is written and synced
         output_stream.flush().await?;
-        
+
         // Drop the stream to ensure file is closed and synced
         drop(output_stream);
 
@@ -175,7 +175,9 @@ impl CompactionManager for CompactionManagerImpl {
         let segments = self.metadata_store.get_segments(&topic_partition);
         let small_segments: Vec<_> = segments
             .iter()
-            .filter(|s| s.size_bytes < 10 * 1024 * 1024 && matches!(s.status, SegmentStatus::InObjectStore))
+            .filter(|s| {
+                s.size_bytes < 10 * 1024 * 1024 && matches!(s.status, SegmentStatus::InObjectStore)
+            })
             .collect();
 
         if small_segments.len() >= 3 {
@@ -197,7 +199,10 @@ impl CompactionManager for CompactionManagerImpl {
         Ok(())
     }
 
-    async fn get_compaction_status(&self, _topic_partition: &TopicPartition) -> Result<CompactionStatus> {
+    async fn get_compaction_status(
+        &self,
+        _topic_partition: &TopicPartition,
+    ) -> Result<CompactionStatus> {
         Ok(CompactionStatus::NotScheduled)
     }
 }
@@ -243,32 +248,35 @@ impl TieredStorageEngine {
         let upload_manager = self.upload_manager.clone();
         let metadata_store = self.metadata_store.clone();
         let wal = self.wal.clone();
-        
+
         // Create a mutex to prevent race conditions on segment uploads
         let upload_mutex = Arc::new(Mutex::new(()));
-        
+
         // Register callback with WAL to handle time/size-based upload triggers
-        self.wal.register_upload_callback(Box::new(move |start_offset, end_offset| {
-            let upload_manager = upload_manager.clone();
-            let metadata_store = metadata_store.clone();
-            let wal = wal.clone();
-            let upload_mutex = upload_mutex.clone();
-            
-            tokio::spawn(async move {
-                // Acquire lock to prevent concurrent uploads of the same segment
-                let _lock = upload_mutex.lock().await;
-                
-                if let Err(e) = Self::handle_segment_upload_trigger(
-                    start_offset,
-                    end_offset,
-                    upload_manager,
-                    metadata_store,
-                    wal,
-                ).await {
-                    tracing::error!("Failed to handle upload trigger: {}", e);
-                }
-            });
-        }));
+        self.wal
+            .register_upload_callback(Box::new(move |start_offset, end_offset| {
+                let upload_manager = upload_manager.clone();
+                let metadata_store = metadata_store.clone();
+                let wal = wal.clone();
+                let upload_mutex = upload_mutex.clone();
+
+                tokio::spawn(async move {
+                    // Acquire lock to prevent concurrent uploads of the same segment
+                    let _lock = upload_mutex.lock().await;
+
+                    if let Err(e) = Self::handle_segment_upload_trigger(
+                        start_offset,
+                        end_offset,
+                        upload_manager,
+                        metadata_store,
+                        wal,
+                    )
+                    .await
+                    {
+                        tracing::error!("Failed to handle upload trigger: {}", e);
+                    }
+                });
+            }));
     }
 
     async fn handle_segment_upload_trigger(
@@ -287,14 +295,18 @@ impl TieredStorageEngine {
         // Check if segment is already being uploaded to prevent race conditions
         let segments = metadata_store.get_segments(&topic_partition);
         let already_uploading = segments.iter().any(|s| {
-            s.start_offset == start_offset && 
-            matches!(s.status, SegmentStatus::Uploading | SegmentStatus::InObjectStore)
+            s.start_offset == start_offset
+                && matches!(
+                    s.status,
+                    SegmentStatus::Uploading | SegmentStatus::InObjectStore
+                )
         });
 
         if already_uploading {
             tracing::debug!(
                 "Segment {}-{} already processed, skipping duplicate trigger",
-                start_offset, end_offset
+                start_offset,
+                end_offset
             );
             return Ok(());
         }
@@ -312,15 +324,18 @@ impl TieredStorageEngine {
         // Read WAL records for the segment using efficient bounded read
         // This avoids loading the entire WAL into memory when only a small range is needed
         let wal_records = wal.read_range(start_offset, end_offset).await?;
-        
+
         if wal_records.is_empty() {
-            tracing::debug!("No records found for segment {}-{}, skipping upload", 
-                start_offset, end_offset);
+            tracing::debug!(
+                "No records found for segment {}-{}, skipping upload",
+                start_offset,
+                end_offset
+            );
             return Ok(());
         }
-        
+
         let serialized_data = bincode::serialize(&wal_records)?;
-        
+
         let segment = WalSegment {
             start_offset,
             end_offset,
@@ -338,9 +353,13 @@ impl TieredStorageEngine {
                     start_offset,
                     SegmentStatus::InObjectStore,
                 )?;
-                tracing::info!("Successfully uploaded segment {}-{} to {}", 
-                    start_offset, end_offset, object_key);
-                
+                tracing::info!(
+                    "Successfully uploaded segment {}-{} to {}",
+                    start_offset,
+                    end_offset,
+                    object_key
+                );
+
                 // Note: compaction_manager reference not available in static context
                 // Compaction will be triggered by the main engine
             }
@@ -351,8 +370,12 @@ impl TieredStorageEngine {
                     start_offset,
                     SegmentStatus::Failed(e.to_string()),
                 )?;
-                tracing::error!("Failed to upload segment {}-{}: {}", 
-                    start_offset, end_offset, e);
+                tracing::error!(
+                    "Failed to upload segment {}-{}: {}",
+                    start_offset,
+                    end_offset,
+                    e
+                );
                 return Err(e);
             }
         }
@@ -362,24 +385,24 @@ impl TieredStorageEngine {
 
     fn calculate_crc32(record: &Record) -> u32 {
         let mut hasher = crc32fast::Hasher::new();
-        
+
         // Hash the record value
         hasher.update(&record.value);
-        
+
         // Hash the key if present
         if let Some(ref key) = record.key {
             hasher.update(key);
         }
-        
+
         // Hash headers
         for header in &record.headers {
             hasher.update(header.key.as_bytes());
             hasher.update(&header.value);
         }
-        
+
         // Hash timestamp as bytes
         hasher.update(&record.timestamp.to_le_bytes());
-        
+
         hasher.finalize()
     }
 
@@ -431,7 +454,10 @@ impl TieredStorageEngine {
                         .cache_read(&cache_key, object_data.clone())
                         .await?;
 
-                    let segment = self.upload_manager.download_segment(&segment.object_key).await?;
+                    let segment = self
+                        .upload_manager
+                        .download_segment(&segment.object_key)
+                        .await?;
                     let wal_records = bincode::deserialize::<Vec<WalRecord>>(&segment.data)?;
                     let records: Vec<Record> = wal_records.into_iter().map(|r| r.record).collect();
                     return Ok(records);
@@ -451,14 +477,19 @@ impl TieredStorageEngine {
         // Check if segment is already being uploaded to prevent race conditions
         let segments = self.metadata_store.get_segments(&topic_partition);
         let already_uploading = segments.iter().any(|s| {
-            s.start_offset == start_offset && 
-            matches!(s.status, SegmentStatus::Uploading | SegmentStatus::InObjectStore)
+            s.start_offset == start_offset
+                && matches!(
+                    s.status,
+                    SegmentStatus::Uploading | SegmentStatus::InObjectStore
+                )
         });
 
         if already_uploading {
             tracing::debug!(
                 "Segment {}-{} for topic {} already processed, skipping manual upload",
-                start_offset, end_offset, topic_partition.topic
+                start_offset,
+                end_offset,
+                topic_partition.topic
             );
             return Ok(());
         }
@@ -471,15 +502,19 @@ impl TieredStorageEngine {
             size_bytes: 0,
             status: SegmentStatus::Uploading,
         };
-        self.metadata_store.add_segment(topic_partition.clone(), temp_metadata);
+        self.metadata_store
+            .add_segment(topic_partition.clone(), temp_metadata);
 
         // Use efficient bounded read instead of reading everything and filtering
         // This prevents OOM when uploading small segments from large WALs
         let relevant_records = self.wal.read_range(start_offset, end_offset).await?;
 
         if relevant_records.is_empty() {
-            tracing::debug!("No records found for segment {}-{}, skipping upload", 
-                start_offset, end_offset);
+            tracing::debug!(
+                "No records found for segment {}-{}, skipping upload",
+                start_offset,
+                end_offset
+            );
             return Ok(());
         }
 
@@ -509,11 +544,18 @@ impl TieredStorageEngine {
                     status: SegmentStatus::InObjectStore,
                 };
 
-                self.metadata_store.add_segment(topic_partition.clone(), final_metadata);
-                self.compaction_manager.schedule_compaction(topic_partition.clone()).await?;
-                
-                tracing::info!("Successfully uploaded segment {}-{} for topic {}", 
-                    start_offset, end_offset, topic_partition.topic);
+                self.metadata_store
+                    .add_segment(topic_partition.clone(), final_metadata);
+                self.compaction_manager
+                    .schedule_compaction(topic_partition.clone())
+                    .await?;
+
+                tracing::info!(
+                    "Successfully uploaded segment {}-{} for topic {}",
+                    start_offset,
+                    end_offset,
+                    topic_partition.topic
+                );
             }
             Err(e) => {
                 // Update with failure status
@@ -522,9 +564,14 @@ impl TieredStorageEngine {
                     start_offset,
                     SegmentStatus::Failed(e.to_string()),
                 )?;
-                
-                tracing::error!("Failed to upload segment {}-{} for topic {}: {}", 
-                    start_offset, end_offset, topic_partition.topic, e);
+
+                tracing::error!(
+                    "Failed to upload segment {}-{} for topic {}: {}",
+                    start_offset,
+                    end_offset,
+                    topic_partition.topic,
+                    e
+                );
                 return Err(e);
             }
         }
@@ -540,8 +587,8 @@ impl TieredStorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{DirectIOWal, AlignedBufferPool, LocalObjectStorage, UploadManagerImpl};
-    use crate::config::{WalConfig, CacheConfig, ObjectStorageConfig, StorageType};
+    use crate::config::{CacheConfig, ObjectStorageConfig, StorageType, WalConfig};
+    use crate::storage::{AlignedBufferPool, DirectIOWal, LocalObjectStorage, UploadManagerImpl};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -577,19 +624,19 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
         let cache_manager = Arc::new(CacheManager::new(&cache_config));
-        let object_storage = Arc::new(
-            LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap()
-        ) as Arc<dyn ObjectStorage>;
-        let upload_manager = Arc::new(UploadManagerImpl::new(object_storage.clone(), storage_config)) as Arc<dyn UploadManager>;
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap())
+                as Arc<dyn ObjectStorage>;
+        let upload_manager = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            storage_config,
+        )) as Arc<dyn UploadManager>;
 
-        let storage_engine = TieredStorageEngine::new(
-            wal,
-            cache_manager,
-            object_storage,
-            upload_manager,
-        );
+        let storage_engine =
+            TieredStorageEngine::new(wal, cache_manager, object_storage, upload_manager);
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -651,20 +698,20 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
         let cache_manager = Arc::new(CacheManager::new(&cache_config));
-        let object_storage = Arc::new(
-            LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap()
-        ) as Arc<dyn ObjectStorage>;
-        let upload_manager = Arc::new(UploadManagerImpl::new(object_storage.clone(), storage_config)) as Arc<dyn UploadManager>;
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap())
+                as Arc<dyn ObjectStorage>;
+        let upload_manager = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            storage_config,
+        )) as Arc<dyn UploadManager>;
 
         // The creation of TieredStorageEngine should set up upload coordination without panicking
-        let storage_engine = TieredStorageEngine::new(
-            wal,
-            cache_manager,
-            object_storage,
-            upload_manager,
-        );
+        let storage_engine =
+            TieredStorageEngine::new(wal, cache_manager, object_storage, upload_manager);
 
         // Test that multiple concurrent upload attempts don't cause panics
         let topic_partition = TopicPartition {
@@ -679,7 +726,7 @@ mod tests {
 
         // All should complete without panic (though they may skip due to no records)
         let _ = upload1.await;
-        let _ = upload2.await; 
+        let _ = upload2.await;
         let _ = upload3.await;
 
         // If we get here without panicking, the race condition prevention is working
@@ -689,11 +736,11 @@ mod tests {
     #[tokio::test]
     async fn test_streaming_compaction_prevents_oom() {
         let temp_dir = TempDir::new().unwrap();
-        let object_storage = Arc::new(
-            LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap()
-        ) as Arc<dyn ObjectStorage>;
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap())
+                as Arc<dyn ObjectStorage>;
         let metadata_store = Arc::new(MetadataStore::new());
-        
+
         let compaction_manager = CompactionManagerImpl::new(object_storage.clone(), metadata_store);
 
         // Create large test segments (but not actually large to avoid test slowness)
@@ -710,16 +757,28 @@ mod tests {
         let segment_data_3 = vec![0xCCu8; 200 * 1024]; // 200KB
 
         // Put test segments into object storage
-        object_storage.put(&segment_keys[0], Bytes::from(segment_data_1.clone())).await.unwrap();
-        object_storage.put(&segment_keys[1], Bytes::from(segment_data_2.clone())).await.unwrap();
-        object_storage.put(&segment_keys[2], Bytes::from(segment_data_3.clone())).await.unwrap();
+        object_storage
+            .put(&segment_keys[0], Bytes::from(segment_data_1.clone()))
+            .await
+            .unwrap();
+        object_storage
+            .put(&segment_keys[1], Bytes::from(segment_data_2.clone()))
+            .await
+            .unwrap();
+        object_storage
+            .put(&segment_keys[2], Bytes::from(segment_data_3.clone()))
+            .await
+            .unwrap();
 
         // Perform streaming compaction
-        let compacted_key = compaction_manager.compact_segments(segment_keys.clone()).await.unwrap();
+        let compacted_key = compaction_manager
+            .compact_segments(segment_keys.clone())
+            .await
+            .unwrap();
 
         // Verify the compacted segment exists and contains all data
         assert!(object_storage.exists(&compacted_key).await.unwrap());
-        
+
         let compacted_data = object_storage.get(&compacted_key).await.unwrap();
         let expected_size = segment_data_1.len() + segment_data_2.len() + segment_data_3.len();
         assert_eq!(compacted_data.len(), expected_size);
@@ -739,11 +798,11 @@ mod tests {
         // This test verifies that compaction processes data in chunks
         // without loading entire segments into memory
         let temp_dir = TempDir::new().unwrap();
-        let object_storage = Arc::new(
-            LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap()
-        ) as Arc<dyn ObjectStorage>;
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap())
+                as Arc<dyn ObjectStorage>;
         let metadata_store = Arc::new(MetadataStore::new());
-        
+
         let compaction_manager = CompactionManagerImpl::new(object_storage.clone(), metadata_store);
 
         // Create segments with repeating patterns to verify correctness
@@ -757,18 +816,27 @@ mod tests {
         for i in 0..1000 {
             segment_1_data.extend_from_slice(&(i as u32).to_le_bytes());
         }
-        
+
         let mut segment_2_data = Vec::new();
         for i in 1000..2000 {
             segment_2_data.extend_from_slice(&(i as u32).to_le_bytes());
         }
 
         // Put segments into storage
-        object_storage.put(&segment_keys[0], Bytes::from(segment_1_data.clone())).await.unwrap();
-        object_storage.put(&segment_keys[1], Bytes::from(segment_2_data.clone())).await.unwrap();
+        object_storage
+            .put(&segment_keys[0], Bytes::from(segment_1_data.clone()))
+            .await
+            .unwrap();
+        object_storage
+            .put(&segment_keys[1], Bytes::from(segment_2_data.clone()))
+            .await
+            .unwrap();
 
         // Perform compaction
-        let compacted_key = compaction_manager.compact_segments(segment_keys.clone()).await.unwrap();
+        let compacted_key = compaction_manager
+            .compact_segments(segment_keys.clone())
+            .await
+            .unwrap();
 
         // Verify the result
         let compacted_data = object_storage.get(&compacted_key).await.unwrap();
@@ -812,19 +880,19 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
         let cache_manager = Arc::new(CacheManager::new(&cache_config));
-        let object_storage = Arc::new(
-            LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap()
-        ) as Arc<dyn ObjectStorage>;
-        let upload_manager = Arc::new(UploadManagerImpl::new(object_storage.clone(), storage_config)) as Arc<dyn UploadManager>;
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().join("storage")).unwrap())
+                as Arc<dyn ObjectStorage>;
+        let upload_manager = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            storage_config,
+        )) as Arc<dyn UploadManager>;
 
-        let storage_engine = TieredStorageEngine::new(
-            wal.clone(),
-            cache_manager,
-            object_storage,
-            upload_manager,
-        );
+        let storage_engine =
+            TieredStorageEngine::new(wal.clone(), cache_manager, object_storage, upload_manager);
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -847,19 +915,23 @@ mod tests {
         }
 
         // Test uploading a small segment from a large WAL
-        // This should use read_range(start_offset, end_offset) instead of 
+        // This should use read_range(start_offset, end_offset) instead of
         // reading everything from offset 0 and filtering
         let result = storage_engine
             .upload_segment(topic_partition.clone(), 10, 15)
             .await;
 
         // Should succeed without reading the entire WAL
-        assert!(result.is_ok(), "Segment upload should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Segment upload should succeed: {:?}",
+            result
+        );
 
         // Verify that the efficient read_range method is being used
         // by checking that the upload completed without error
         // (the old method would have been much slower and more memory intensive)
-        
+
         // For this test, we mainly care that the method completes successfully
         // using the new efficient read_range approach rather than the old inefficient approach
         println!("Segment upload completed successfully using efficient read_range method");

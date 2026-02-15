@@ -418,7 +418,9 @@ impl AdminClient {
 
     /// Helper to build request with authentication
     fn request(&self, method: reqwest::Method, path: &str) -> Result<RequestBuilder> {
-        let url = self.base_url.join(path)
+        let url = self
+            .base_url
+            .join(path)
             .map_err(|e| ClientError::InvalidConfig(format!("Invalid URL path: {}", e)))?;
 
         let mut req = self.http_client.request(method, url);
@@ -444,15 +446,20 @@ impl AdminClient {
         // Check status code
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(ClientError::Broker(format!("HTTP {}: {}", status, error_text)));
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ClientError::Broker(format!(
+                "HTTP {}: {}",
+                status, error_text
+            )));
         }
 
         // Parse JSON response
-        let api_response: ApiResponse<T> = response
-            .json()
-            .await
-            .map_err(|e| ClientError::Deserialization(format!("Failed to parse response: {}", e)))?;
+        let api_response: ApiResponse<T> = response.json().await.map_err(|e| {
+            ClientError::Deserialization(format!("Failed to parse response: {}", e))
+        })?;
 
         Ok(api_response)
     }
@@ -468,7 +475,9 @@ impl AdminClient {
             .map_err(|e| ClientError::Connection(format!("Health check failed: {}", e)))?
             .json()
             .await
-            .map_err(|e| ClientError::Deserialization(format!("Failed to parse health response: {}", e)))?;
+            .map_err(|e| {
+                ClientError::Deserialization(format!("Failed to parse health response: {}", e))
+            })?;
 
         Ok(response)
     }
@@ -480,11 +489,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     /// List all brokers in the cluster
@@ -494,11 +507,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     // ==================== Topic Management ====================
@@ -510,27 +527,36 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     /// Create a new topic
     pub async fn create_topic(&self, request: CreateTopicRequest) -> Result<String> {
-        let req = self.request(reqwest::Method::POST, "/api/v1/topics")?
+        let req = self
+            .request(reqwest::Method::POST, "/api/v1/topics")?
             .json(&request);
 
         let response = self.execute::<String>(req).await?;
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     /// Delete a topic
@@ -542,11 +568,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     /// Get topic details
@@ -558,29 +588,38 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     // ==================== Security - CA Management ====================
 
     /// Generate a new Certificate Authority
     pub async fn generate_ca(&self, request: GenerateCaRequest) -> Result<CaInfo> {
-        let req = self.request(reqwest::Method::POST, "/api/v1/security/ca/generate")?
+        let req = self
+            .request(reqwest::Method::POST, "/api/v1/security/ca/generate")?
             .json(&request);
 
         let response = self.execute::<CaInfo>(req).await?;
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// List all Certificate Authorities
@@ -591,11 +630,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Get CA information by ID
@@ -607,11 +650,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Delete a Certificate Authority
@@ -623,33 +670,48 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     // ==================== Security - Certificate Management ====================
 
     /// Issue a new certificate
-    pub async fn issue_certificate(&self, request: IssueCertificateRequest) -> Result<CertificateDetail> {
-        let req = self.request(reqwest::Method::POST, "/api/v1/security/certificates/issue")?
+    pub async fn issue_certificate(
+        &self,
+        request: IssueCertificateRequest,
+    ) -> Result<CertificateDetail> {
+        let req = self
+            .request(reqwest::Method::POST, "/api/v1/security/certificates/issue")?
             .json(&request);
 
         let response = self.execute::<CertificateDetail>(req).await?;
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// List certificates with optional filters
-    pub async fn list_certificates(&self, filters: Option<HashMap<String, String>>) -> Result<Vec<CertificateListItem>> {
+    pub async fn list_certificates(
+        &self,
+        filters: Option<HashMap<String, String>>,
+    ) -> Result<Vec<CertificateListItem>> {
         let mut req = self.request(reqwest::Method::GET, "/api/v1/security/certificates")?;
 
         if let Some(filters) = filters {
@@ -660,11 +722,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Get certificate details by ID
@@ -676,28 +742,39 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Revoke a certificate
-    pub async fn revoke_certificate(&self, cert_id: &str, request: RevokeCertificateRequest) -> Result<String> {
+    pub async fn revoke_certificate(
+        &self,
+        cert_id: &str,
+        request: RevokeCertificateRequest,
+    ) -> Result<String> {
         let path = format!("/api/v1/security/certificates/revoke/{}", cert_id);
-        let req = self.request(reqwest::Method::POST, &path)?
-            .json(&request);
+        let req = self.request(reqwest::Method::POST, &path)?.json(&request);
 
         let response = self.execute::<String>(req).await?;
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Renew a certificate
@@ -709,11 +786,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Get certificate status
@@ -725,11 +806,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     /// Get certificate chain
@@ -741,33 +826,45 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::CertificateManagement(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::CertificateManagement("No data in response".to_string()))
     }
 
     // ==================== Security - ACL Management ====================
 
     /// Create a new ACL rule
     pub async fn create_acl_rule(&self, request: CreateAclRuleRequest) -> Result<AclRuleResponse> {
-        let req = self.request(reqwest::Method::POST, "/api/v1/security/acl/rules")?
+        let req = self
+            .request(reqwest::Method::POST, "/api/v1/security/acl/rules")?
             .json(&request);
 
         let response = self.execute::<AclRuleResponse>(req).await?;
 
         if !response.success {
             return Err(ClientError::AclOperation(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
     }
 
     /// List ACL rules with optional filters
-    pub async fn list_acl_rules(&self, filters: Option<HashMap<String, String>>) -> Result<Vec<AclRuleResponse>> {
+    pub async fn list_acl_rules(
+        &self,
+        filters: Option<HashMap<String, String>>,
+    ) -> Result<Vec<AclRuleResponse>> {
         let mut req = self.request(reqwest::Method::GET, "/api/v1/security/acl/rules")?;
 
         if let Some(filters) = filters {
@@ -778,11 +875,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::AclOperation(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
     }
 
     /// Delete an ACL rule
@@ -794,45 +895,62 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::AclOperation(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
     }
 
     /// Evaluate ACL permissions
-    pub async fn evaluate_acl(&self, request: AclEvaluationRequest) -> Result<AclEvaluationResponse> {
-        let req = self.request(reqwest::Method::POST, "/api/v1/security/acl/evaluate")?
+    pub async fn evaluate_acl(
+        &self,
+        request: AclEvaluationRequest,
+    ) -> Result<AclEvaluationResponse> {
+        let req = self
+            .request(reqwest::Method::POST, "/api/v1/security/acl/evaluate")?
             .json(&request);
 
         let response = self.execute::<AclEvaluationResponse>(req).await?;
 
         if !response.success {
             return Err(ClientError::AclOperation(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::AclOperation("No data in response".to_string()))
     }
 
     // ==================== Security - Audit Logs ====================
 
     /// Get audit logs with optional filters
     pub async fn get_audit_logs(&self, request: AuditLogRequest) -> Result<AuditLogResponse> {
-        let req = self.request(reqwest::Method::GET, "/api/v1/security/audit/logs")?
+        let req = self
+            .request(reqwest::Method::GET, "/api/v1/security/audit/logs")?
             .json(&request);
 
         let response = self.execute::<AuditLogResponse>(req).await?;
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 
     /// Get audit trail for a specific principal
@@ -844,11 +962,15 @@ impl AdminClient {
 
         if !response.success {
             return Err(ClientError::Broker(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
-        response.data.ok_or_else(|| ClientError::Broker("No data in response".to_string()))
+        response
+            .data
+            .ok_or_else(|| ClientError::Broker("No data in response".to_string()))
     }
 }
 
@@ -972,9 +1094,10 @@ mod tests {
             principal: "user@example.com".to_string(),
             resource: "topic.events.*".to_string(),
             operation: "read".to_string(),
-            context: Some(HashMap::from([
-                ("source_ip".to_string(), "192.168.1.100".to_string()),
-            ])),
+            context: Some(HashMap::from([(
+                "source_ip".to_string(),
+                "192.168.1.100".to_string(),
+            )])),
         };
 
         let json = serde_json::to_string(&request).unwrap();

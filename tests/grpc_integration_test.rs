@@ -1,10 +1,10 @@
 //! Simplified end-to-end integration tests for gRPC protobuf services
-//! 
+//!
 //! This test suite covers basic protobuf message structure testing
 //! and focuses on verifying that the generated protobuf code compiles and works correctly.
 
-use rustmq::proto::{broker, controller, common};
 use chrono::Utc;
+use rustmq::proto::{broker, common, controller};
 
 /// Simple test helper to create request metadata
 fn create_test_metadata() -> common::RequestMetadata {
@@ -57,7 +57,7 @@ fn create_test_record(offset: u64) -> common::WalRecord {
 #[tokio::test]
 async fn test_replication_request_structure() {
     // Test complete replication workflow message structures
-    
+
     let records = vec![
         create_test_record(0),
         create_test_record(1),
@@ -183,8 +183,8 @@ async fn test_heartbeat_response_structure() {
         follower_cpu_usage: 25.0,
         follower_memory_usage: 50.0,
         follower_disk_usage_bytes: 30 * 1024 * 1024 * 1024, // 30GB
-        follower_network_in_bytes: 10 * 1024 * 1024, // 10MB/s
-        follower_network_out_bytes: 5 * 1024 * 1024, // 5MB/s
+        follower_network_in_bytes: 10 * 1024 * 1024,        // 10MB/s
+        follower_network_out_bytes: 5 * 1024 * 1024,        // 5MB/s
         supported_compression: vec!["lz4".to_string(), "zstd".to_string()],
         max_batch_size_bytes: 1024 * 1024, // 1MB
     };
@@ -198,7 +198,7 @@ async fn test_heartbeat_response_structure() {
 #[tokio::test]
 async fn test_controller_broker_coordination() {
     // Test the protocol flow between controller and broker services
-    
+
     // Controller assigns partition to broker
     let assignment_request = broker::AssignPartitionRequest {
         topic_partition: Some(create_test_topic_partition()),
@@ -234,7 +234,7 @@ async fn test_controller_broker_coordination() {
 #[tokio::test]
 async fn test_error_handling_structures() {
     // Test error handling message structures
-    
+
     let error_response = broker::ReplicateDataResponse {
         success: false,
         error_code: 1001,
@@ -277,7 +277,7 @@ async fn test_error_handling_structures() {
 #[tokio::test]
 async fn test_compression_types() {
     // Test different compression types in replication
-    
+
     let compression_types = vec![
         common::CompressionType::None,
         common::CompressionType::Lz4,
@@ -286,7 +286,7 @@ async fn test_compression_types() {
 
     for compression_type in compression_types {
         let records = vec![create_test_record(0)];
-        
+
         let compressed_request = broker::ReplicateDataRequest {
             leader_epoch: 1,
             topic_partition: Some(create_test_topic_partition()),
@@ -310,7 +310,7 @@ async fn test_compression_types() {
 #[tokio::test]
 async fn test_metadata_consistency() {
     // Test metadata propagation and consistency across services
-    
+
     let rich_metadata = common::RequestMetadata {
         client_id: "integration-test-client".to_string(),
         correlation_id: "consistency-corr-123".to_string(),
@@ -340,7 +340,7 @@ async fn test_metadata_consistency() {
 #[tokio::test]
 async fn test_leadership_transfer_protocol() {
     // Test leadership transfer coordination between services
-    
+
     let transfer_request = broker::TransferLeadershipRequest {
         topic_partition: Some(create_test_topic_partition()),
         current_leader_id: "current-leader".to_string(),

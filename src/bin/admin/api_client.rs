@@ -1,14 +1,14 @@
-use rustmq::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use bytes::Bytes;
+use chrono::{DateTime, Utc};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
-use http_body_util::{BodyExt, Empty, Full};
-use bytes::Bytes;
+use rustmq::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error};
-use chrono::{DateTime, Utc};
 
 /// HTTP client for communicating with the Admin REST API
 pub struct AdminApiClient {
@@ -60,7 +60,11 @@ impl AdminApiClient {
     }
 
     /// Make a GET request with query parameters
-    pub async fn get_with_query<T>(&self, path: &str, query: &HashMap<String, String>) -> Result<ApiResponse<T>>
+    pub async fn get_with_query<T>(
+        &self,
+        path: &str,
+        query: &HashMap<String, String>,
+    ) -> Result<ApiResponse<T>>
     where
         T: for<'de> Deserialize<'de>,
     {
@@ -69,14 +73,15 @@ impl AdminApiClient {
             .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
             .collect::<Vec<_>>()
             .join("&");
-            
+
         let full_path = if query_string.is_empty() {
             path.to_string()
         } else {
             format!("{}?{}", path, query_string)
         };
-        
-        self.make_request::<(), T>(Method::GET, &full_path, None).await
+
+        self.make_request::<(), T>(Method::GET, &full_path, None)
+            .await
     }
 
     /// Make a POST request to the API
@@ -105,7 +110,12 @@ impl AdminApiClient {
         self.make_request::<(), T>(Method::DELETE, path, None).await
     }
 
-    async fn make_request<T, R>(&self, method: Method, path: &str, body: Option<&T>) -> Result<ApiResponse<R>>
+    async fn make_request<T, R>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&T>,
+    ) -> Result<ApiResponse<R>>
     where
         T: Serialize,
         R: for<'de> Deserialize<'de>,
@@ -131,12 +141,17 @@ impl AdminApiClient {
         let response = tokio::time::timeout(self.timeout, self.client.request(request))
             .await
             .map_err(|_| rustmq::error::RustMqError::Timeout("Request timeout".to_string()))?
-            .map_err(|e| rustmq::error::RustMqError::Network(format!("HTTP client error: {}", e)))?;
+            .map_err(|e| {
+                rustmq::error::RustMqError::Network(format!("HTTP client error: {}", e))
+            })?;
 
         self.handle_response(response).await
     }
 
-    async fn handle_response<R>(&self, response: Response<hyper::body::Incoming>) -> Result<ApiResponse<R>>
+    async fn handle_response<R>(
+        &self,
+        response: Response<hyper::body::Incoming>,
+    ) -> Result<ApiResponse<R>>
     where
         R: for<'de> Deserialize<'de>,
     {
@@ -148,7 +163,7 @@ impl AdminApiClient {
         // Collect response body
         let body_bytes = response.into_body().collect().await?.to_bytes();
         let body_str = String::from_utf8_lossy(&body_bytes);
-        
+
         debug!("Response body: {}", body_str);
 
         match status {
@@ -173,14 +188,14 @@ impl AdminApiClient {
                         .and_then(|v| v.to_str().ok())
                         .and_then(|v| v.parse().ok()),
                 };
-                
-                Err(rustmq::error::RustMqError::RateLimitExceeded { 
+
+                Err(rustmq::error::RustMqError::RateLimitExceeded {
                     principal: format!(
                         "Rate limit exceeded. Retry after: {}s, Limit: {}, Remaining: {}",
                         rate_limit_info.retry_after.unwrap_or(60),
                         rate_limit_info.limit.unwrap_or(0),
                         rate_limit_info.remaining.unwrap_or(0)
-                    )
+                    ),
                 })
             }
             StatusCode::NOT_FOUND => {
@@ -203,12 +218,12 @@ impl AdminApiClient {
                     });
                 Ok(error_response)
             }
-            StatusCode::UNAUTHORIZED => {
-                Err(rustmq::error::RustMqError::AuthenticationFailed("Unauthorized".to_string()))
-            }
-            StatusCode::FORBIDDEN => {
-                Err(rustmq::error::RustMqError::AuthorizationFailed("Forbidden".to_string()))
-            }
+            StatusCode::UNAUTHORIZED => Err(rustmq::error::RustMqError::AuthenticationFailed(
+                "Unauthorized".to_string(),
+            )),
+            StatusCode::FORBIDDEN => Err(rustmq::error::RustMqError::AuthorizationFailed(
+                "Forbidden".to_string(),
+            )),
             StatusCode::INTERNAL_SERVER_ERROR => {
                 let error_response: ApiResponse<R> = serde_json::from_str(&body_str)
                     .unwrap_or_else(|_| ApiResponse {

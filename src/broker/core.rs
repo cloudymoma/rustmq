@@ -1,14 +1,14 @@
+use async_trait::async_trait;
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use async_trait::async_trait;
-use bytes::Bytes;
 
-use crate::error::{RustMqError, Result};
-use crate::types::*;
-use crate::storage::traits::{WriteAheadLog, ObjectStorage, Cache};
-use crate::replication::traits::ReplicationManager;
+use crate::error::{Result, RustMqError};
 use crate::network::traits::NetworkHandler;
+use crate::replication::traits::ReplicationManager;
+use crate::storage::traits::{Cache, ObjectStorage, WriteAheadLog};
+use crate::types::*;
 use smallvec::SmallVec;
 
 /// High-level message broker core that orchestrates produce/consume operations
@@ -43,10 +43,10 @@ pub struct PartitionMetadata {
 pub trait Producer {
     /// Send a single record to a topic-partition
     async fn send(&self, record: ProduceRecord) -> Result<ProduceResult>;
-    
+
     /// Send a batch of records to a topic-partition
     async fn send_batch(&self, records: Vec<ProduceRecord>) -> Result<Vec<ProduceResult>>;
-    
+
     /// Flush any pending records
     async fn flush(&self) -> Result<()>;
 }
@@ -56,13 +56,13 @@ pub trait Producer {
 pub trait Consumer {
     /// Subscribe to topics
     async fn subscribe(&mut self, topics: Vec<TopicName>) -> Result<()>;
-    
+
     /// Poll for records with timeout
     async fn poll(&mut self, timeout_ms: u32) -> Result<Vec<ConsumeRecord>>;
-    
+
     /// Commit offsets
     async fn commit_offsets(&mut self, offsets: HashMap<TopicPartition, Offset>) -> Result<()>;
-    
+
     /// Seek to specific offset
     async fn seek(&mut self, topic_partition: TopicPartition, offset: Offset) -> Result<()>;
 }
@@ -74,7 +74,7 @@ pub struct ProduceRecord {
     pub partition: Option<PartitionId>,
     pub key: Option<Vec<u8>>,
     pub value: Vec<u8>,
-    pub headers: Headers,  // SmallVec<[Header; 4]> - avoids heap alloc
+    pub headers: Headers, // SmallVec<[Header; 4]> - avoids heap alloc
     pub acks: AcknowledgmentLevel,
     pub timeout_ms: u32,
 }
@@ -92,9 +92,9 @@ pub struct ProduceResult {
 pub struct ConsumeRecord {
     pub topic_partition: TopicPartition,
     pub offset: Offset,
-    pub key: Option<Bytes>,     // Changed from Vec<u8> for zero-copy
-    pub value: Bytes,            // Changed from Vec<u8> for zero-copy
-    pub headers: Headers,        // SmallVec<[Header; 4]> - avoids heap alloc
+    pub key: Option<Bytes>, // Changed from Vec<u8> for zero-copy
+    pub value: Bytes,       // Changed from Vec<u8> for zero-copy
+    pub headers: Headers,   // SmallVec<[Header; 4]> - avoids heap alloc
     pub timestamp: i64,
 }
 
@@ -143,7 +143,10 @@ where
     }
 
     /// Create a new consumer instance
-    pub fn create_consumer(self: &Arc<Self>, consumer_group: String) -> MessageConsumer<W, O, C, R, N> {
+    pub fn create_consumer(
+        self: &Arc<Self>,
+        consumer_group: String,
+    ) -> MessageConsumer<W, O, C, R, N> {
         MessageConsumer::new(Arc::clone(self), consumer_group)
     }
 
@@ -234,16 +237,12 @@ where
             AcknowledgmentLevel::Majority | AcknowledgmentLevel::All => {
                 // Wait for replication (pass by reference - no cloning!)
                 for record in &wal_records {
-                    self.replication_manager
-                        .replicate_record(record)
-                        .await?;
+                    self.replication_manager.replicate_record(record).await?;
                 }
             }
             AcknowledgmentLevel::Custom(_n) => {
                 for record in &wal_records {
-                    self.replication_manager
-                        .replicate_record(record)
-                        .await?;
+                    self.replication_manager.replicate_record(record).await?;
                 }
             }
         }
@@ -276,11 +275,7 @@ where
         }
 
         // Try WAL for recent records
-        match self
-            .wal
-            .read(fetch_offset, max_bytes as usize)
-            .await
-        {
+        match self.wal.read(fetch_offset, max_bytes as usize).await {
             Ok(wal_records) => {
                 let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
                 return Ok(records);
@@ -327,7 +322,7 @@ where
 {
     fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>) -> Self {
         Self {
-            core,  // Just store the Arc, no cloning needed!
+            core, // Just store the Arc, no cloning needed!
         }
     }
 }
@@ -349,9 +344,9 @@ where
         };
 
         let wal_record = Record::with_headers(
-            record.key.map(Bytes::from),      // Convert Vec<u8> to Bytes
-            Bytes::from(record.value),        // Convert Vec<u8> to Bytes
-            record.headers,                    // SmallVec directly (no conversion)
+            record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
+            Bytes::from(record.value),   // Convert Vec<u8> to Bytes
+            record.headers,              // SmallVec directly (no conversion)
             chrono::Utc::now().timestamp_millis(),
         );
 
@@ -382,9 +377,9 @@ where
             };
 
             let wal_record = Record::with_headers(
-                record.key.map(Bytes::from),      // Convert Vec<u8> to Bytes
-                Bytes::from(record.value),        // Convert Vec<u8> to Bytes
-                record.headers,                    // SmallVec directly (no conversion)
+                record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
+                Bytes::from(record.value),   // Convert Vec<u8> to Bytes
+                record.headers,              // SmallVec directly (no conversion)
                 chrono::Utc::now().timestamp_millis(),
             );
 
@@ -445,7 +440,7 @@ where
 {
     fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>, consumer_group: String) -> Self {
         Self {
-            core,  // Just store the Arc, no cloning needed!
+            core, // Just store the Arc, no cloning needed!
             consumer_group,
             subscribed_topics: Vec::new(),
             partition_offsets: HashMap::new(),
@@ -491,9 +486,9 @@ where
                         records.push(ConsumeRecord {
                             topic_partition: topic_partition.clone(),
                             offset: *current_offset + i as u64,
-                            key: record.key,          // Zero-copy: Bytes directly
-                            value: record.value,      // Zero-copy: Bytes directly
-                            headers: record.headers,  // SmallVec directly
+                            key: record.key,         // Zero-copy: Bytes directly
+                            value: record.value,     // Zero-copy: Bytes directly
+                            headers: record.headers, // SmallVec directly
                             timestamp: record.timestamp,
                         });
                     }
@@ -620,7 +615,11 @@ mod tests {
             Ok(bytes::Bytes::new())
         }
 
-        async fn get_range(&self, _key: &str, _range: std::ops::Range<u64>) -> Result<bytes::Bytes> {
+        async fn get_range(
+            &self,
+            _key: &str,
+            _range: std::ops::Range<u64>,
+        ) -> Result<bytes::Bytes> {
             Ok(bytes::Bytes::new())
         }
 
@@ -636,11 +635,17 @@ mod tests {
             Ok(false)
         }
 
-        async fn open_read_stream(&self, _key: &str) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        async fn open_read_stream(
+            &self,
+            _key: &str,
+        ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
             Err(RustMqError::NotFound("mock".to_string()))
         }
 
-        async fn open_write_stream(&self, _key: &str) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
+        async fn open_write_stream(
+            &self,
+            _key: &str,
+        ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
             Err(RustMqError::NotFound("mock".to_string()))
         }
     }
@@ -666,7 +671,7 @@ mod tests {
         async fn size(&self) -> Result<usize> {
             Ok(0)
         }
-        
+
         fn as_any(&self) -> Option<&dyn std::any::Any> {
             Some(self)
         }
@@ -744,7 +749,9 @@ mod tests {
             replicas: vec!["broker-1".to_string()],
             in_sync_replicas: vec!["broker-1".to_string()],
         };
-        core.add_partition(topic_partition.clone(), metadata).await.unwrap();
+        core.add_partition(topic_partition.clone(), metadata)
+            .await
+            .unwrap();
 
         let producer = core.create_producer();
 
@@ -783,7 +790,10 @@ mod tests {
         ));
 
         let mut consumer = core.create_consumer("test-group".to_string());
-        consumer.subscribe(vec!["test-topic".to_string()]).await.unwrap();
+        consumer
+            .subscribe(vec!["test-topic".to_string()])
+            .await
+            .unwrap();
 
         // Poll should return empty when no records
         let records = consumer.poll(1000).await.unwrap();

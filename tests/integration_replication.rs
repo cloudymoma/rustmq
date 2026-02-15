@@ -1,13 +1,13 @@
-use rustmq::replication::{ReplicationManager, FollowerReplicationHandler};
+use bytes::Bytes;
+use rustmq::config::{ReplicationConfig, WalConfig};
 use rustmq::replication::manager::MockReplicationRpcClient;
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
-use rustmq::storage::{DirectIOWal, AlignedBufferPool};
-use rustmq::config::{ReplicationConfig, WalConfig};
+use rustmq::replication::{FollowerReplicationHandler, ReplicationManager};
+use rustmq::storage::{AlignedBufferPool, DirectIOWal};
 use rustmq::types::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::time::{timeout, Duration};
-use bytes::Bytes;
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_replication_manager_basic_replication() {
@@ -73,7 +73,10 @@ async fn test_replication_manager_basic_replication() {
     assert!(matches!(result.durability, DurabilityLevel::Durable));
 
     // Test follower management
-    replication_manager.add_follower("broker-4".to_string()).await.unwrap();
+    replication_manager
+        .add_follower("broker-4".to_string())
+        .await
+        .unwrap();
     let states = replication_manager.get_follower_states().await.unwrap();
     assert!(states.len() >= 1); // Should have at least the newly added follower
 
@@ -255,7 +258,10 @@ async fn test_follower_replication_handler_epoch_validation() {
         leader_id: "leader-1".to_string(),
     };
 
-    let response = handler.handle_replicate_data(current_request).await.unwrap();
+    let response = handler
+        .handle_replicate_data(current_request)
+        .await
+        .unwrap();
     assert!(response.success);
 
     // Test rejecting stale epoch
@@ -323,7 +329,7 @@ async fn test_follower_heartbeat_handling() {
 
     let result = handler.handle_heartbeat(heartbeat).await;
     assert!(result.is_ok());
-    
+
     let follower_state = result.unwrap();
     assert_eq!(follower_state.broker_id, "follower-1");
 
@@ -363,10 +369,7 @@ async fn test_replication_timeout_handling() {
         heartbeat_timeout_ms: 30000,
     };
 
-    let replica_set = vec![
-        "broker-1".to_string(),
-        "broker-2".to_string(),
-    ];
+    let replica_set = vec!["broker-1".to_string(), "broker-2".to_string()];
 
     let topic_partition = TopicPartition {
         topic: "test-topic".to_string(),
@@ -399,9 +402,10 @@ async fn test_replication_timeout_handling() {
 
     let result = timeout(
         Duration::from_millis(500),
-        replication_manager.replicate_record(&record)
-    ).await;
-    
+        replication_manager.replicate_record(&record),
+    )
+    .await;
+
     assert!(result.is_ok(), "Replication should complete within timeout");
     let replication_result = result.unwrap().unwrap();
     assert_eq!(replication_result.offset, 0);
@@ -527,15 +531,24 @@ async fn test_replication_follower_state_updates() {
     );
 
     // Add and remove followers
-    replication_manager.add_follower("broker-4".to_string()).await.unwrap();
-    replication_manager.add_follower("broker-5".to_string()).await.unwrap();
+    replication_manager
+        .add_follower("broker-4".to_string())
+        .await
+        .unwrap();
+    replication_manager
+        .add_follower("broker-5".to_string())
+        .await
+        .unwrap();
 
     let states = replication_manager.get_follower_states().await.unwrap();
     let initial_count = states.len();
     assert!(initial_count >= 2);
 
     // Remove a follower
-    replication_manager.remove_follower("broker-4".to_string()).await.unwrap();
+    replication_manager
+        .remove_follower("broker-4".to_string())
+        .await
+        .unwrap();
 
     let states = replication_manager.get_follower_states().await.unwrap();
     assert_eq!(states.len(), initial_count - 1);

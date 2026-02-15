@@ -12,11 +12,11 @@
 
 use crate::error::RustMqError;
 use crate::security::auth::{AuthenticationManager, AuthorizationManager};
-use crate::security::tls::{TlsConfig, CertificateManager};
 use crate::security::metrics::SecurityMetrics;
+use crate::security::tls::{CertificateManager, TlsConfig};
 use crate::security::{
-    AclConfig, AuthenticationHealthMetrics, AuthorizationHealthMetrics,
-    CertificateHealthMetrics, TlsHealthStatus, SecurityStorageMetrics,
+    AclConfig, AuthenticationHealthMetrics, AuthorizationHealthMetrics, CertificateHealthMetrics,
+    SecurityStorageMetrics, TlsHealthStatus,
 };
 use std::sync::Arc;
 
@@ -149,7 +149,10 @@ impl CertificateFacade {
     }
 
     /// Check for certificates expiring soon
-    pub async fn check_expiring_certificates(&self, days_threshold: u32) -> Result<Vec<String>, RustMqError> {
+    pub async fn check_expiring_certificates(
+        &self,
+        days_threshold: u32,
+    ) -> Result<Vec<String>, RustMqError> {
         // In production, this would query the certificate store
         // For now, return empty list
         Ok(vec![])

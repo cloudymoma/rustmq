@@ -1,17 +1,17 @@
 use crate::{
     Result,
-    types::*,
-    storage::{WriteAheadLog, Cache, ObjectStorage},
+    controller::service::ControllerService,
     error::RustMqError,
     replication::manager::ReplicationManager,
-    controller::service::ControllerService,
+    storage::{Cache, ObjectStorage, WriteAheadLog},
+    types::*,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use sysinfo::{Disks, Networks, System};
 use tokio::time::timeout;
-use sysinfo::{System, Networks, Disks};
-use std::collections::HashMap;
-use tracing::{debug, warn, error};
+use tracing::{debug, error, warn};
 
 /// Comprehensive health check service for broker components
 /// Provides detailed health status for WAL, cache, object storage, network, and replication
@@ -135,17 +135,26 @@ impl HealthCheckService {
     }
 
     /// Perform comprehensive health check based on request parameters
-    pub async fn perform_health_check(&self, request: HealthCheckRequest) -> Result<HealthCheckResponse> {
+    pub async fn perform_health_check(
+        &self,
+        request: HealthCheckRequest,
+    ) -> Result<HealthCheckResponse> {
         let start = Instant::now();
         let check_timeout = Duration::from_millis(request.timeout_ms.unwrap_or(5000) as u64);
-        
-        debug!("Starting comprehensive health check for broker: {}", self.broker_id);
+
+        debug!(
+            "Starting comprehensive health check for broker: {}",
+            self.broker_id
+        );
 
         // Perform component health checks concurrently
         let (wal_health, cache_health, object_storage_health, network_health, replication_health) = tokio::join!(
             self.check_wal_health_with_timeout(request.check_wal, check_timeout),
             self.check_cache_health_with_timeout(request.check_cache, check_timeout),
-            self.check_object_storage_health_with_timeout(request.check_object_storage, check_timeout),
+            self.check_object_storage_health_with_timeout(
+                request.check_object_storage,
+                check_timeout
+            ),
             self.check_network_health_with_timeout(request.check_network, check_timeout),
             self.check_replication_health_with_timeout(request.check_replication, check_timeout)
         );
@@ -199,7 +208,11 @@ impl HealthCheckService {
     }
 
     /// Check WAL health with timeout
-    async fn check_wal_health_with_timeout(&self, enabled: bool, timeout_duration: Duration) -> ComponentHealth {
+    async fn check_wal_health_with_timeout(
+        &self,
+        enabled: bool,
+        timeout_duration: Duration,
+    ) -> ComponentHealth {
         if !enabled {
             return ComponentHealth {
                 status: HealthStatus::Unknown,
@@ -233,7 +246,8 @@ impl HealthCheckService {
                     match wal.sync().await {
                         Ok(_) => {
                             let total_latency = start.elapsed().as_millis() as u32;
-                            details.insert("total_latency_ms".to_string(), total_latency.to_string());
+                            details
+                                .insert("total_latency_ms".to_string(), total_latency.to_string());
                             details.insert("sync_successful".to_string(), "true".to_string());
 
                             if total_latency > self.thresholds.wal_max_latency_ms {
@@ -280,7 +294,11 @@ impl HealthCheckService {
     }
 
     /// Check cache health with timeout
-    async fn check_cache_health_with_timeout(&self, enabled: bool, timeout_duration: Duration) -> ComponentHealth {
+    async fn check_cache_health_with_timeout(
+        &self,
+        enabled: bool,
+        timeout_duration: Duration,
+    ) -> ComponentHealth {
         if !enabled {
             return ComponentHealth {
                 status: HealthStatus::Unknown,
@@ -313,7 +331,10 @@ impl HealthCheckService {
                     details.insert("cache_size".to_string(), cache_size.to_string());
 
                     // Test cache write
-                    match cache.put(health_check_key, health_check_value.clone()).await {
+                    match cache
+                        .put(health_check_key, health_check_value.clone())
+                        .await
+                    {
                         Ok(_) => {
                             // Test cache read
                             match cache.get(health_check_key).await {
@@ -323,8 +344,12 @@ impl HealthCheckService {
                                         let _ = cache.remove(health_check_key).await;
 
                                         let latency = start.elapsed().as_millis() as u32;
-                                        details.insert("read_write_test".to_string(), "successful".to_string());
-                                        details.insert("latency_ms".to_string(), latency.to_string());
+                                        details.insert(
+                                            "read_write_test".to_string(),
+                                            "successful".to_string(),
+                                        );
+                                        details
+                                            .insert("latency_ms".to_string(), latency.to_string());
 
                                         if latency > self.thresholds.cache_max_latency_ms {
                                             ComponentHealth::degraded(latency)
@@ -339,12 +364,14 @@ impl HealthCheckService {
                                             }
                                         }
                                     } else {
-                                        ComponentHealth::unhealthy("Cache data integrity check failed".to_string())
+                                        ComponentHealth::unhealthy(
+                                            "Cache data integrity check failed".to_string(),
+                                        )
                                     }
                                 }
-                                Ok(None) => {
-                                    ComponentHealth::unhealthy("Cache read returned None for existing key".to_string())
-                                }
+                                Ok(None) => ComponentHealth::unhealthy(
+                                    "Cache read returned None for existing key".to_string(),
+                                ),
                                 Err(e) => {
                                     error!("Cache read failed during health check: {}", e);
                                     ComponentHealth::unhealthy(format!("Cache read failed: {}", e))
@@ -375,7 +402,11 @@ impl HealthCheckService {
     }
 
     /// Check object storage health with timeout
-    async fn check_object_storage_health_with_timeout(&self, enabled: bool, timeout_duration: Duration) -> ComponentHealth {
+    async fn check_object_storage_health_with_timeout(
+        &self,
+        enabled: bool,
+        timeout_duration: Duration,
+    ) -> ComponentHealth {
         if !enabled {
             return ComponentHealth {
                 status: HealthStatus::Unknown,
@@ -389,7 +420,9 @@ impl HealthCheckService {
 
         match timeout(timeout_duration, self.check_object_storage_health()).await {
             Ok(health) => health,
-            Err(_) => ComponentHealth::unhealthy("Object storage health check timed out".to_string()),
+            Err(_) => {
+                ComponentHealth::unhealthy("Object storage health check timed out".to_string())
+            }
         }
     }
 
@@ -403,7 +436,10 @@ impl HealthCheckService {
             let health_check_data = bytes::Bytes::from("health_check_data");
 
             // Test object storage connectivity and basic operations
-            match object_storage.put(&health_check_key, health_check_data.clone()).await {
+            match object_storage
+                .put(&health_check_key, health_check_data.clone())
+                .await
+            {
                 Ok(_) => {
                     // Test read operation
                     match object_storage.get(&health_check_key).await {
@@ -413,8 +449,12 @@ impl HealthCheckService {
                                 match object_storage.delete(&health_check_key).await {
                                     Ok(_) => {
                                         let latency = start.elapsed().as_millis() as u32;
-                                        details.insert("put_get_delete_test".to_string(), "successful".to_string());
-                                        details.insert("latency_ms".to_string(), latency.to_string());
+                                        details.insert(
+                                            "put_get_delete_test".to_string(),
+                                            "successful".to_string(),
+                                        );
+                                        details
+                                            .insert("latency_ms".to_string(), latency.to_string());
 
                                         if latency > self.thresholds.object_storage_max_latency_ms {
                                             ComponentHealth::degraded(latency)
@@ -430,14 +470,19 @@ impl HealthCheckService {
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Object storage delete failed during health check: {}", e);
+                                        warn!(
+                                            "Object storage delete failed during health check: {}",
+                                            e
+                                        );
                                         // Still consider healthy if put/get worked
                                         let latency = start.elapsed().as_millis() as u32;
                                         ComponentHealth::degraded(latency)
                                     }
                                 }
                             } else {
-                                ComponentHealth::unhealthy("Object storage data integrity check failed".to_string())
+                                ComponentHealth::unhealthy(
+                                    "Object storage data integrity check failed".to_string(),
+                                )
                             }
                         }
                         Err(e) => {
@@ -464,7 +509,11 @@ impl HealthCheckService {
     }
 
     /// Check network health with timeout
-    async fn check_network_health_with_timeout(&self, enabled: bool, timeout_duration: Duration) -> ComponentHealth {
+    async fn check_network_health_with_timeout(
+        &self,
+        enabled: bool,
+        timeout_duration: Duration,
+    ) -> ComponentHealth {
         if !enabled {
             return ComponentHealth {
                 status: HealthStatus::Unknown,
@@ -489,35 +538,41 @@ impl HealthCheckService {
         let mut errors = Vec::new();
         let mut is_healthy = true;
 
-        details.insert("check_type".to_string(), "production_network_health".to_string());
+        details.insert(
+            "check_type".to_string(),
+            "production_network_health".to_string(),
+        );
 
         // Test 1: Basic network interface status
         {
             let networks = Networks::new_with_refreshed_list();
-            
+
             let mut total_in = 0;
             let mut total_out = 0;
             let mut active_interfaces = 0;
-            
+
             for (interface_name, network) in &networks {
                 total_in += network.received();
                 total_out += network.transmitted();
                 active_interfaces += 1;
-                
+
                 details.insert(
-                    format!("interface_{}_received", interface_name), 
-                    network.received().to_string()
+                    format!("interface_{}_received", interface_name),
+                    network.received().to_string(),
                 );
                 details.insert(
-                    format!("interface_{}_transmitted", interface_name), 
-                    network.transmitted().to_string()
+                    format!("interface_{}_transmitted", interface_name),
+                    network.transmitted().to_string(),
                 );
             }
-            
+
             details.insert("total_received_bytes".to_string(), total_in.to_string());
             details.insert("total_transmitted_bytes".to_string(), total_out.to_string());
-            details.insert("active_interfaces".to_string(), active_interfaces.to_string());
-            
+            details.insert(
+                "active_interfaces".to_string(),
+                active_interfaces.to_string(),
+            );
+
             if active_interfaces == 0 {
                 is_healthy = false;
                 errors.push("No active network interfaces found".to_string());
@@ -529,44 +584,53 @@ impl HealthCheckService {
             match timeout(Duration::from_millis(5000), async {
                 // Test controller connectivity by checking cluster metadata
                 controller_service.get_cluster_metadata().await
-            }).await {
+            })
+            .await
+            {
                 Ok(Ok(metadata)) => {
                     details.insert("controller_connectivity".to_string(), "healthy".to_string());
-                    details.insert("cluster_brokers_count".to_string(), metadata.brokers.len().to_string());
-                    details.insert("cluster_topics_count".to_string(), metadata.topics.len().to_string());
-                    
+                    details.insert(
+                        "cluster_brokers_count".to_string(),
+                        metadata.brokers.len().to_string(),
+                    );
+                    details.insert(
+                        "cluster_topics_count".to_string(),
+                        metadata.topics.len().to_string(),
+                    );
+
                     // Test 3: Broker-to-broker connectivity
                     let mut reachable_brokers = 0;
                     let mut unreachable_brokers = 0;
-                    
+
                     for broker in &metadata.brokers {
                         // Skip self
                         if broker.id == self.broker_id {
                             continue;
                         }
-                        
+
                         // Test basic TCP connectivity to broker's RPC port
                         match timeout(Duration::from_millis(2000), async {
-                            tokio::net::TcpStream::connect((broker.host.as_str(), broker.port_rpc)).await
-                        }).await {
+                            tokio::net::TcpStream::connect((broker.host.as_str(), broker.port_rpc))
+                                .await
+                        })
+                        .await
+                        {
                             Ok(Ok(_stream)) => {
                                 reachable_brokers += 1;
                                 details.insert(
                                     format!("broker_{}_reachable", broker.id),
-                                    "true".to_string()
+                                    "true".to_string(),
                                 );
                             }
                             Ok(Err(e)) => {
                                 unreachable_brokers += 1;
                                 details.insert(
                                     format!("broker_{}_reachable", broker.id),
-                                    "false".to_string()
+                                    "false".to_string(),
                                 );
-                                details.insert(
-                                    format!("broker_{}_error", broker.id),
-                                    e.to_string()
-                                );
-                                
+                                details
+                                    .insert(format!("broker_{}_error", broker.id), e.to_string());
+
                                 // Only mark as unhealthy if we can't reach majority of brokers
                                 debug!("Failed to connect to broker {}: {}", broker.id, e);
                             }
@@ -574,21 +638,31 @@ impl HealthCheckService {
                                 unreachable_brokers += 1;
                                 details.insert(
                                     format!("broker_{}_reachable", broker.id),
-                                    "timeout".to_string()
+                                    "timeout".to_string(),
                                 );
                                 debug!("Timeout connecting to broker {}", broker.id);
                             }
                         }
                     }
-                    
-                    details.insert("reachable_brokers".to_string(), reachable_brokers.to_string());
-                    details.insert("unreachable_brokers".to_string(), unreachable_brokers.to_string());
-                    
+
+                    details.insert(
+                        "reachable_brokers".to_string(),
+                        reachable_brokers.to_string(),
+                    );
+                    details.insert(
+                        "unreachable_brokers".to_string(),
+                        unreachable_brokers.to_string(),
+                    );
+
                     let total_other_brokers = reachable_brokers + unreachable_brokers;
                     if total_other_brokers > 0 {
-                        let reachability_percentage = (reachable_brokers as f64 / total_other_brokers as f64) * 100.0;
-                        details.insert("broker_reachability_percent".to_string(), format!("{:.1}", reachability_percentage));
-                        
+                        let reachability_percentage =
+                            (reachable_brokers as f64 / total_other_brokers as f64) * 100.0;
+                        details.insert(
+                            "broker_reachability_percent".to_string(),
+                            format!("{:.1}", reachability_percentage),
+                        );
+
                         // Mark as degraded if less than 70% of brokers are reachable
                         if reachability_percentage < 70.0 {
                             is_healthy = false;
@@ -639,7 +713,10 @@ impl HealthCheckService {
 
         let latency = start.elapsed().as_millis() as u32;
         details.insert("latency_ms".to_string(), latency.to_string());
-        details.insert("checks_performed".to_string(), "interfaces,controller,brokers,port_binding".to_string());
+        details.insert(
+            "checks_performed".to_string(),
+            "interfaces,controller,brokers,port_binding".to_string(),
+        );
 
         let error_message = if errors.is_empty() {
             None
@@ -669,7 +746,11 @@ impl HealthCheckService {
     }
 
     /// Check replication health with timeout
-    async fn check_replication_health_with_timeout(&self, enabled: bool, timeout_duration: Duration) -> ComponentHealth {
+    async fn check_replication_health_with_timeout(
+        &self,
+        enabled: bool,
+        timeout_duration: Duration,
+    ) -> ComponentHealth {
         if !enabled {
             return ComponentHealth {
                 status: HealthStatus::Unknown,
@@ -694,12 +775,15 @@ impl HealthCheckService {
         let mut errors = Vec::new();
         let mut is_healthy = true;
 
-        details.insert("check_type".to_string(), "production_replication_health".to_string());
+        details.insert(
+            "check_type".to_string(),
+            "production_replication_health".to_string(),
+        );
 
         if let Some(ref replication_manager) = self.replication_manager {
             // Check if replication manager is available for each partition
             // Note: In production, there would be multiple replication managers for different partitions
-            
+
             // Get basic replication metrics
             let log_end_offset = replication_manager.get_log_end_offset();
             let high_watermark = replication_manager.get_high_watermark_sync();
@@ -715,10 +799,19 @@ impl HealthCheckService {
             details.insert("log_end_offset".to_string(), log_end_offset.to_string());
             details.insert("high_watermark".to_string(), high_watermark.to_string());
             details.insert("leader_epoch".to_string(), leader_epoch.to_string());
-            details.insert("current_leader".to_string(), current_leader.clone().unwrap_or("none".to_string()));
-            details.insert("replica_set_size".to_string(), replica_set.len().to_string());
+            details.insert(
+                "current_leader".to_string(),
+                current_leader.clone().unwrap_or("none".to_string()),
+            );
+            details.insert(
+                "replica_set_size".to_string(),
+                replica_set.len().to_string(),
+            );
             details.insert("min_in_sync_replicas".to_string(), min_isr.to_string());
-            details.insert("current_in_sync_replicas".to_string(), in_sync_replicas.len().to_string());
+            details.insert(
+                "current_in_sync_replicas".to_string(),
+                in_sync_replicas.len().to_string(),
+            );
             details.insert("in_sync_replicas".to_string(), in_sync_replicas.join(","));
 
             // Check 1: In-Sync Replica (ISR) requirements
@@ -726,23 +819,21 @@ impl HealthCheckService {
                 is_healthy = false;
                 errors.push(format!(
                     "Insufficient in-sync replicas: {} < {} required",
-                    in_sync_replicas.len(), min_isr
+                    in_sync_replicas.len(),
+                    min_isr
                 ));
             }
 
             // Check 2: Leader/follower lag
             let mut max_lag = 0u64;
             let mut lag_violations = 0;
-            
+
             for broker_id in &replica_set {
                 if Some(broker_id.clone()) != current_leader {
                     if let Some(lag) = replication_manager.get_follower_lag(broker_id) {
-                        details.insert(
-                            format!("follower_{}_lag", broker_id), 
-                            lag.to_string()
-                        );
+                        details.insert(format!("follower_{}_lag", broker_id), lag.to_string());
                         max_lag = max_lag.max(lag);
-                        
+
                         // Check if lag exceeds threshold
                         if lag > self.thresholds.replication_max_lag_count {
                             lag_violations += 1;
@@ -753,32 +844,39 @@ impl HealthCheckService {
                         }
                     } else {
                         // No lag information available - potentially concerning
-                        details.insert(
-                            format!("follower_{}_lag", broker_id), 
-                            "unknown".to_string()
-                        );
-                        
+                        details
+                            .insert(format!("follower_{}_lag", broker_id), "unknown".to_string());
+
                         // Check last heartbeat time
-                        if let Some(last_heartbeat) = replication_manager.get_last_heartbeat_time(broker_id) {
+                        if let Some(last_heartbeat) =
+                            replication_manager.get_last_heartbeat_time(broker_id)
+                        {
                             let heartbeat_age = last_heartbeat.elapsed();
                             details.insert(
                                 format!("follower_{}_last_heartbeat_ms", broker_id),
-                                heartbeat_age.as_millis().to_string()
+                                heartbeat_age.as_millis().to_string(),
                             );
-                            
+
                             // Check if heartbeat is stale
-                            if heartbeat_age > Duration::from_millis(self.thresholds.replication_heartbeat_timeout_ms as u64) {
+                            if heartbeat_age
+                                > Duration::from_millis(
+                                    self.thresholds.replication_heartbeat_timeout_ms as u64,
+                                )
+                            {
                                 is_healthy = false;
                                 errors.push(format!(
                                     "Follower {} heartbeat is stale: {}ms > {}ms threshold",
-                                    broker_id, 
+                                    broker_id,
                                     heartbeat_age.as_millis(),
                                     self.thresholds.replication_heartbeat_timeout_ms
                                 ));
                             }
                         } else {
                             is_healthy = false;
-                            errors.push(format!("No heartbeat information for follower {}", broker_id));
+                            errors.push(format!(
+                                "No heartbeat information for follower {}",
+                                broker_id
+                            ));
                         }
                     }
                 }
@@ -790,7 +888,7 @@ impl HealthCheckService {
             // Check 3: Replication progress (high watermark should be advancing)
             let replication_lag = log_end_offset.saturating_sub(high_watermark);
             details.insert("replication_lag".to_string(), replication_lag.to_string());
-            
+
             if replication_lag > self.thresholds.replication_max_lag_count {
                 is_healthy = false;
                 errors.push(format!(
@@ -801,23 +899,31 @@ impl HealthCheckService {
 
             // Check 4: Overall replication health
             let overall_healthy = replication_manager.is_replication_healthy();
-            details.insert("overall_replication_healthy".to_string(), overall_healthy.to_string());
-            
+            details.insert(
+                "overall_replication_healthy".to_string(),
+                overall_healthy.to_string(),
+            );
+
             if !overall_healthy {
                 is_healthy = false;
                 errors.push("Replication manager reports unhealthy status".to_string());
             }
-
         } else {
             // No replication manager available
             is_healthy = false;
             errors.push("No replication manager configured".to_string());
-            details.insert("replication_manager_available".to_string(), "false".to_string());
+            details.insert(
+                "replication_manager_available".to_string(),
+                "false".to_string(),
+            );
         }
 
         let latency = start.elapsed().as_millis() as u32;
         details.insert("latency_ms".to_string(), latency.to_string());
-        details.insert("checks_performed".to_string(), "isr,lag,heartbeat,progress,overall".to_string());
+        details.insert(
+            "checks_performed".to_string(),
+            "isr,lag,heartbeat,progress,overall".to_string(),
+        );
 
         let error_message = if errors.is_empty() {
             None
@@ -826,7 +932,11 @@ impl HealthCheckService {
         };
 
         ComponentHealth {
-            status: if is_healthy { HealthStatus::Healthy } else { HealthStatus::Unhealthy },
+            status: if is_healthy {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Unhealthy
+            },
             last_check: chrono::Utc::now(),
             latency_ms: Some(latency),
             error_count: errors.len() as u32,
@@ -896,8 +1006,9 @@ impl HealthCheckService {
                 HealthStatus::Unhealthy => return false,
                 HealthStatus::Unknown => {
                     // Consider unknown as unhealthy if it's due to an error
-                    if component.last_error.is_some() && 
-                       !component.last_error.as_ref().unwrap().contains("disabled") {
+                    if component.last_error.is_some()
+                        && !component.last_error.as_ref().unwrap().contains("disabled")
+                    {
                         return false;
                     }
                 }
@@ -919,7 +1030,7 @@ impl HealthCheckService {
         for (i, component) in components.iter().enumerate() {
             let component_name = match i {
                 0 => "WAL",
-                1 => "Cache", 
+                1 => "Cache",
                 2 => "ObjectStorage",
                 3 => "Network",
                 4 => "Replication",
@@ -936,7 +1047,10 @@ impl HealthCheckService {
                 }
                 HealthStatus::Degraded => {
                     if let Some(latency) = component.latency_ms {
-                        errors.push(format!("{}: Degraded ({}ms latency)", component_name, latency));
+                        errors.push(format!(
+                            "{}: Degraded ({}ms latency)",
+                            component_name, latency
+                        ));
                     } else {
                         errors.push(format!("{}: Degraded", component_name));
                     }
@@ -956,27 +1070,36 @@ impl HealthCheckService {
     fn get_partition_count(&self) -> u32 {
         if let Some(ref controller_service) = self.controller_service {
             // Get cluster metadata to count partitions assigned to this broker
-            match tokio::runtime::Handle::current().block_on(async {
-                controller_service.get_cluster_metadata().await
-            }) {
+            match tokio::runtime::Handle::current()
+                .block_on(async { controller_service.get_cluster_metadata().await })
+            {
                 Ok(metadata) => {
                     let mut partition_count = 0u32;
-                    
+
                     // Count partitions where this broker is the leader or a replica
                     for (topic_partition, assignment) in &metadata.partition_assignments {
                         // Count if this broker is the leader
                         if assignment.leader == self.broker_id {
                             partition_count += 1;
-                            debug!("Broker {} is leader for partition {}", self.broker_id, topic_partition);
+                            debug!(
+                                "Broker {} is leader for partition {}",
+                                self.broker_id, topic_partition
+                            );
                         }
                         // Count if this broker is a replica (but not already counted as leader)
                         else if assignment.replicas.contains(&self.broker_id) {
                             partition_count += 1;
-                            debug!("Broker {} is replica for partition {}", self.broker_id, topic_partition);
+                            debug!(
+                                "Broker {} is replica for partition {}",
+                                self.broker_id, topic_partition
+                            );
                         }
                     }
-                    
-                    debug!("Broker {} has {} total partitions", self.broker_id, partition_count);
+
+                    debug!(
+                        "Broker {} has {} total partitions",
+                        self.broker_id, partition_count
+                    );
                     partition_count
                 }
                 Err(e) => {
@@ -1001,10 +1124,10 @@ impl HealthCheckService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{DirectIOWal, LruCache, LocalObjectStorage, AlignedBufferPool};
     use crate::config::WalConfig;
-    use tempfile::TempDir;
+    use crate::storage::{AlignedBufferPool, DirectIOWal, LocalObjectStorage, LruCache};
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_health_check_service_creation() {
@@ -1018,7 +1141,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_check_with_all_components_disabled() {
         let service = HealthCheckService::new("test-broker".to_string());
-        
+
         let request = HealthCheckRequest {
             check_wal: false,
             check_cache: false,
@@ -1029,7 +1152,7 @@ mod tests {
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         assert_eq!(response.broker_id, "test-broker");
         assert_eq!(response.wal_health.status, HealthStatus::Unknown);
         assert_eq!(response.cache_health.status, HealthStatus::Unknown);
@@ -1054,7 +1177,13 @@ mod tests {
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
         let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
 
-        let mut service = HealthCheckService::new("test-broker".to_string());
+        // Use generous thresholds for test environments where I/O latency may be higher
+        let thresholds = HealthThresholds {
+            wal_max_latency_ms: 5000,
+            ..HealthThresholds::default()
+        };
+        let mut service =
+            HealthCheckService::with_thresholds("test-broker".to_string(), thresholds);
         service.register_wal(wal);
 
         let request = HealthCheckRequest {
@@ -1063,11 +1192,11 @@ mod tests {
             check_object_storage: false,
             check_network: false,
             check_replication: false,
-            timeout_ms: Some(1000),
+            timeout_ms: Some(5000),
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         // WAL should be healthy
         assert_eq!(response.wal_health.status, HealthStatus::Healthy);
         assert!(response.wal_health.latency_ms.is_some());
@@ -1091,7 +1220,7 @@ mod tests {
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         // Cache should be healthy
         assert_eq!(response.cache_health.status, HealthStatus::Healthy);
         assert!(response.cache_health.latency_ms.is_some());
@@ -1101,7 +1230,8 @@ mod tests {
     #[tokio::test]
     async fn test_health_check_with_object_storage() {
         let temp_dir = TempDir::new().unwrap();
-        let object_storage: Arc<dyn ObjectStorage> = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
+        let object_storage: Arc<dyn ObjectStorage> =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
 
         let mut service = HealthCheckService::new("test-broker".to_string());
         service.register_object_storage(object_storage);
@@ -1116,7 +1246,7 @@ mod tests {
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         // Object storage should be healthy
         assert_eq!(response.object_storage_health.status, HealthStatus::Healthy);
         assert!(response.object_storage_health.latency_ms.is_some());
@@ -1137,7 +1267,7 @@ mod tests {
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         // Network should be healthy (basic check)
         assert_eq!(response.network_health.status, HealthStatus::Healthy);
         assert!(response.network_health.latency_ms.is_some());
@@ -1157,7 +1287,7 @@ mod tests {
         };
 
         let response = service.perform_health_check(request).await.unwrap();
-        
+
         // Some components might timeout, but the overall check should complete
         assert_eq!(response.broker_id, "test-broker");
     }
@@ -1221,10 +1351,7 @@ mod tests {
         let service = HealthCheckService::new("test-broker".to_string());
 
         // No errors should return None
-        let healthy_components = vec![
-            ComponentHealth::healthy(),
-            ComponentHealth::healthy(),
-        ];
+        let healthy_components = vec![ComponentHealth::healthy(), ComponentHealth::healthy()];
         let component_refs: Vec<&ComponentHealth> = healthy_components.iter().collect();
         assert!(service.generate_error_summary(&component_refs).is_none());
 

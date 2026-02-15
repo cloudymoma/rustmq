@@ -1,8 +1,8 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use rustmq::storage::{cache::CacheManager, traits::Cache};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rustmq::config::CacheConfig;
 #[cfg(feature = "moka-cache")]
 use rustmq::config::EvictionPolicy;
+use rustmq::storage::{cache::CacheManager, traits::Cache};
 use tokio::runtime::Runtime;
 
 // Helper function to create a cache config
@@ -34,11 +34,13 @@ fn bench_cache_creation_with_runtime(c: &mut Criterion) {
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         let config = create_cache_config(1024);
-        b.iter(|| {
-            CacheManager::new(&config)
-        });
+        b.iter(|| CacheManager::new(&config));
     });
 }
 
-criterion_group!(benches, bench_cache_creation_no_runtime, bench_cache_creation_with_runtime);
+criterion_group!(
+    benches,
+    bench_cache_creation_no_runtime,
+    bench_cache_creation_with_runtime
+);
 criterion_main!(benches);

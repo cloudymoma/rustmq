@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rustmq::types::{Record, Header, Headers};
 use bytes::Bytes;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use rustmq::types::{Header, Headers, Record};
 
 /// Quick benchmark for header memory patterns
 fn quick_bench(c: &mut Criterion) {
@@ -10,7 +10,9 @@ fn quick_bench(c: &mut Criterion) {
             let headers: Headers = vec![
                 Header::new("h1".to_string(), vec![1]),
                 Header::new("h2".to_string(), vec![2]),
-            ].into_iter().collect();
+            ]
+            .into_iter()
+            .collect();
             black_box(headers)
         });
     });

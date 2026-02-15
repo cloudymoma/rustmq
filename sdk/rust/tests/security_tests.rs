@@ -1,10 +1,9 @@
 //! Security integration tests for RustMQ Rust SDK
 
 use rustmq_client::{
-    ClientConfig, TlsConfig, TlsMode, AuthConfig, AuthMethod, SecurityConfig,
-    SecurityManager, SecurityContext, CertificateValidationConfig,
-    PrincipalExtractionConfig, AclClientConfig, CertificateClientConfig,
-    ClientError, Connection,
+    AclClientConfig, AuthConfig, AuthMethod, CertificateClientConfig, CertificateValidationConfig,
+    ClientConfig, ClientError, Connection, PrincipalExtractionConfig, SecurityConfig,
+    SecurityContext, SecurityManager, TlsConfig, TlsMode,
 };
 use std::collections::HashMap;
 use std::sync::Once;
@@ -51,7 +50,7 @@ async fn test_auth_config_builders() {
         "client-key".to_string(),
         Some("server.example.com".to_string()),
     );
-    
+
     assert_eq!(mtls_config.method, AuthMethod::Mtls);
     assert!(mtls_config.requires_tls());
     assert!(mtls_config.supports_acl());
@@ -59,17 +58,14 @@ async fn test_auth_config_builders() {
 
     // Test token authentication config
     let token_config = AuthConfig::token_config("jwt-token".to_string());
-    
+
     assert_eq!(token_config.method, AuthMethod::Token);
     assert_eq!(token_config.token, Some("jwt-token".to_string()));
     assert!(token_config.requires_tls());
 
     // Test SASL PLAIN authentication config
-    let sasl_config = AuthConfig::sasl_plain_config(
-        "username".to_string(),
-        "password".to_string(),
-    );
-    
+    let sasl_config = AuthConfig::sasl_plain_config("username".to_string(), "password".to_string());
+
     assert_eq!(sasl_config.method, AuthMethod::SaslPlain);
     assert_eq!(sasl_config.username, Some("username".to_string()));
     assert_eq!(sasl_config.password, Some("password".to_string()));
@@ -85,7 +81,7 @@ async fn test_tls_config_builders() {
         Some("client-key".to_string()),
         "server.example.com".to_string(),
     );
-    
+
     assert_eq!(secure_config.mode, TlsMode::MutualAuth);
     assert!(secure_config.is_enabled());
     assert!(secure_config.requires_client_cert());
@@ -96,7 +92,7 @@ async fn test_tls_config_builders() {
 
     // Test insecure development config
     let insecure_config = TlsConfig::insecure_config();
-    
+
     assert_eq!(insecure_config.mode, TlsMode::ServerAuth);
     assert!(insecure_config.is_enabled());
     assert!(!insecure_config.requires_client_cert());
@@ -130,11 +126,11 @@ async fn test_security_manager_creation() {
 
     let manager = security_manager.unwrap();
     let metrics = manager.metrics();
-    
+
     // Check initial metrics
     let auth_stats = metrics.get_auth_stats();
     assert!(auth_stats.is_empty());
-    
+
     let (cache_hits, cache_misses) = metrics.get_acl_cache_stats();
     assert_eq!(cache_hits, 0);
     assert_eq!(cache_misses, 0);
@@ -160,29 +156,35 @@ async fn test_certificate_info_extraction() {
     };
 
     assert_eq!(cert_info.subject, "CN=test-user,O=Example Corp");
-    assert_eq!(cert_info.attributes.get("CN"), Some(&"test-user".to_string()));
-    assert_eq!(cert_info.attributes.get("O"), Some(&"Example Corp".to_string()));
+    assert_eq!(
+        cert_info.attributes.get("CN"),
+        Some(&"test-user".to_string())
+    );
+    assert_eq!(
+        cert_info.attributes.get("O"),
+        Some(&"Example Corp".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_permission_set_operations() {
     let mut permissions = rustmq_client::PermissionSet::default();
-    
+
     // Add some permissions
     permissions.read_topics.push("logs.*".to_string());
     permissions.write_topics.push("events.*".to_string());
     permissions.admin_operations.push("cluster.*".to_string());
-    
+
     // Test read permissions
     assert!(permissions.can_read_topic("logs.info"));
     assert!(permissions.can_read_topic("logs.error"));
     assert!(!permissions.can_read_topic("events.user"));
-    
+
     // Test write permissions
     assert!(permissions.can_write_topic("events.user"));
     assert!(permissions.can_write_topic("events.system"));
     assert!(!permissions.can_write_topic("logs.info"));
-    
+
     // Test admin permissions
     assert!(permissions.can_admin("cluster.health"));
     assert!(permissions.can_admin("cluster.scale"));
@@ -192,7 +194,7 @@ async fn test_permission_set_operations() {
 #[tokio::test]
 async fn test_client_config_with_security() {
     let mut client_config = ClientConfig::default();
-    
+
     // Add TLS configuration
     client_config.tls_config = Some(TlsConfig::secure_config(
         "ca-cert".to_string(),
@@ -200,7 +202,7 @@ async fn test_client_config_with_security() {
         Some("client-key".to_string()),
         "localhost".to_string(),
     ));
-    
+
     // Add authentication configuration
     client_config.auth = Some(AuthConfig::mtls_config(
         "ca-cert".to_string(),
@@ -208,15 +210,15 @@ async fn test_client_config_with_security() {
         "client-key".to_string(),
         Some("localhost".to_string()),
     ));
-    
+
     // Verify configuration
     assert!(client_config.tls_config.is_some());
     assert!(client_config.auth.is_some());
-    
+
     let tls_config = client_config.tls_config.as_ref().unwrap();
     assert!(tls_config.is_enabled());
     assert!(tls_config.requires_client_cert());
-    
+
     let auth_config = client_config.auth.as_ref().unwrap();
     assert_eq!(auth_config.method, AuthMethod::Mtls);
     assert!(auth_config.requires_tls());
@@ -229,17 +231,17 @@ async fn test_error_categorization() {
     let auth_error = ClientError::AuthorizationDenied("Access denied".to_string());
     assert_eq!(auth_error.category(), "authorization");
     assert!(!auth_error.is_retryable());
-    
+
     let cert_error = ClientError::InvalidCertificate {
         reason: "Expired certificate".to_string(),
     };
     assert_eq!(cert_error.category(), "certificate");
     assert!(!cert_error.is_retryable());
-    
+
     let principal_error = ClientError::PrincipalExtraction("No CN found".to_string());
     assert_eq!(principal_error.category(), "principal");
     assert!(!principal_error.is_retryable());
-    
+
     let unsupported_auth = ClientError::UnsupportedAuthMethod {
         method: "custom".to_string(),
     };
@@ -250,27 +252,27 @@ async fn test_error_categorization() {
 #[tokio::test]
 async fn test_connection_security_methods() {
     // Test connection security configuration validation without network connections
-    
+
     let client_config = ClientConfig {
         brokers: vec!["localhost:9092".to_string()],
         tls_config: Some(TlsConfig::default()),
         auth: Some(AuthConfig::default()),
         ..Default::default()
     };
-    
+
     // Verify security configuration properties
     assert!(client_config.tls_config.is_some());
     assert!(client_config.auth.is_some());
-    
+
     let tls_config = client_config.tls_config.as_ref().unwrap();
     assert_eq!(tls_config.mode, TlsMode::Disabled); // Default TLS is disabled
     assert!(!tls_config.is_enabled());
-    
+
     let auth_config = client_config.auth.as_ref().unwrap();
     assert_eq!(auth_config.method, AuthMethod::None); // Default auth is None
     assert!(!auth_config.requires_tls());
     assert!(!auth_config.supports_acl());
-    
+
     // Test enabled security configuration
     let secure_config = ClientConfig {
         brokers: vec!["localhost:9092".to_string()],
@@ -288,17 +290,17 @@ async fn test_connection_security_methods() {
         )),
         ..Default::default()
     };
-    
+
     // Verify enabled security configuration properties
     let secure_tls = secure_config.tls_config.as_ref().unwrap();
     assert!(secure_tls.is_enabled());
     assert!(secure_tls.requires_client_cert());
-    
+
     let secure_auth = secure_config.auth.as_ref().unwrap();
     assert_eq!(secure_auth.method, AuthMethod::Mtls);
     assert!(secure_auth.requires_tls());
     assert!(secure_auth.supports_acl());
-    
+
     // Note: Actual connection creation requires a running broker
     // This test validates security configuration structure and validation logic
 }
@@ -307,15 +309,15 @@ async fn test_connection_security_methods() {
 fn test_pattern_matching() {
     // Test the pattern matching helper function used in permissions
     use rustmq_client::security::matches_pattern;
-    
+
     // Wildcard patterns
     assert!(matches_pattern("any-topic", "*"));
     assert!(matches_pattern("logs.info", "logs.*"));
     assert!(matches_pattern("user.admin", "*.admin"));
-    
+
     // Exact matches
     assert!(matches_pattern("exact-topic", "exact-topic"));
-    
+
     // Non-matches
     assert!(!matches_pattern("logs.info", "events.*"));
     assert!(!matches_pattern("user.admin", "logs.*"));
@@ -325,22 +327,22 @@ fn test_pattern_matching() {
 #[tokio::test]
 async fn test_security_metrics() {
     let metrics = rustmq_client::SecurityMetrics::default();
-    
+
     // Record some authentication attempts
     metrics.record_authentication("mtls", true);
     metrics.record_authentication("mtls", false);
     metrics.record_authentication("token", true);
-    
+
     // Record some cache operations
     metrics.record_acl_cache_hit();
     metrics.record_acl_cache_hit();
     metrics.record_acl_cache_miss();
-    
+
     // Check statistics
     let auth_stats = metrics.get_auth_stats();
     assert_eq!(auth_stats.get("mtls"), Some(&(2, 1))); // 2 attempts, 1 success
     assert_eq!(auth_stats.get("token"), Some(&(1, 1))); // 1 attempt, 1 success
-    
+
     let (cache_hits, cache_misses) = metrics.get_acl_cache_stats();
     assert_eq!(cache_hits, 2);
     assert_eq!(cache_misses, 1);
@@ -353,18 +355,18 @@ async fn test_configuration_defaults() {
     assert_eq!(tls_config.mode, TlsMode::Disabled);
     assert!(!tls_config.is_enabled());
     assert!(!tls_config.requires_client_cert());
-    
+
     let auth_config = AuthConfig::default();
     assert_eq!(auth_config.method, AuthMethod::None);
     assert!(!auth_config.requires_tls());
     assert!(!auth_config.supports_acl());
-    
+
     let security_config = SecurityConfig::default();
     assert!(!security_config.enabled);
     assert!(security_config.principal_extraction.use_common_name);
     assert!(security_config.acl.enabled);
     assert!(!security_config.certificate_management.auto_renew);
-    
+
     let client_config = ClientConfig::default();
     assert!(!client_config.enable_tls); // Deprecated field
     assert!(client_config.tls_config.is_some());

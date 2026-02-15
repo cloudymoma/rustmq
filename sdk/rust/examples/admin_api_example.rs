@@ -8,9 +8,8 @@
 //! Run with: cargo run --example admin_api_example
 
 use rustmq_client::admin::{
-    AdminClient, AdminConfig, CreateTopicRequest, GenerateCaRequest,
-    IssueCertificateRequest, CreateAclRuleRequest, AclEvaluationRequest,
-    AuditLogRequest,
+    AclEvaluationRequest, AdminClient, AdminConfig, AuditLogRequest, CreateAclRuleRequest,
+    CreateTopicRequest, GenerateCaRequest, IssueCertificateRequest,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -58,7 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Healthy: {}\n", status.healthy);
 
             for broker in &status.brokers {
-                println!("  Broker: {} ({}:{})", broker.id, broker.host, broker.port_quic);
+                println!(
+                    "  Broker: {} ({}:{})",
+                    broker.id, broker.host, broker.port_quic
+                );
                 println!("    Online: {}", broker.online);
                 println!("    Rack: {}\n", broker.rack_id);
             }
@@ -71,8 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(brokers) => {
             println!("✓ Brokers ({})", brokers.len());
             for broker in brokers {
-                println!("  - {} @ {}:{} ({})",
-                    broker.id, broker.host, broker.port_quic,
+                println!(
+                    "  - {} @ {}:{} ({})",
+                    broker.id,
+                    broker.host,
+                    broker.port_quic,
                     if broker.online { "online" } else { "offline" }
                 );
             }
@@ -89,7 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(topics) => {
             println!("✓ Topics ({})", topics.len());
             for topic in &topics {
-                println!("  - {} (partitions: {}, replication: {})",
+                println!(
+                    "  - {} (partitions: {}, replication: {})",
                     topic.name, topic.partitions, topic.replication_factor
                 );
             }
@@ -103,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "admin-test-topic".to_string(),
         partitions: 3,
         replication_factor: 2,
-        retention_ms: Some(86400000), // 24 hours
+        retention_ms: Some(86400000),    // 24 hours
         segment_bytes: Some(1073741824), // 1 GB
         compression_type: Some("lz4".to_string()),
     };
@@ -121,7 +127,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Partitions: {}", topic.partitions);
             println!("  Replication Factor: {}", topic.replication_factor);
             println!("  Created: {}", topic.created_at);
-            println!("  Partition Assignments: {}\n", topic.partition_assignments.len());
+            println!(
+                "  Partition Assignments: {}\n",
+                topic.partition_assignments.len()
+            );
         }
         Err(e) => println!("✗ Describe topic failed: {}\n", e),
     }
@@ -180,7 +189,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 organization: Some("Example Org".to_string()),
                 role: Some("broker".to_string()),
                 validity_days: Some(90),
-                key_usage: Some(vec!["digitalSignature".to_string(), "keyEncipherment".to_string()]),
+                key_usage: Some(vec![
+                    "digitalSignature".to_string(),
+                    "keyEncipherment".to_string(),
+                ]),
                 extended_key_usage: Some(vec!["serverAuth".to_string(), "clientAuth".to_string()]),
             };
 
@@ -226,9 +238,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         resource_type: "topic".to_string(),
         operation: "read".to_string(),
         effect: "allow".to_string(),
-        conditions: Some(HashMap::from([
-            ("source_ip".to_string(), "192.168.1.0/24".to_string()),
-        ])),
+        conditions: Some(HashMap::from([(
+            "source_ip".to_string(),
+            "192.168.1.0/24".to_string(),
+        )])),
     };
 
     match client.create_acl_rule(acl_req).await {
@@ -249,7 +262,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(rules) => {
             println!("✓ ACL Rules ({})", rules.len());
             for rule in rules.iter().take(5) {
-                println!("  - {} {} on {}",
+                println!(
+                    "  - {} {} on {}",
                     rule.principal, rule.operation, rule.resource_pattern
                 );
             }
@@ -266,9 +280,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         principal: "user@example.com".to_string(),
         resource: "topic.events.payments".to_string(),
         operation: "read".to_string(),
-        context: Some(HashMap::from([
-            ("source_ip".to_string(), "192.168.1.100".to_string()),
-        ])),
+        context: Some(HashMap::from([(
+            "source_ip".to_string(),
+            "192.168.1.100".to_string(),
+        )])),
     };
 
     match client.evaluate_acl(eval_req).await {
@@ -299,8 +314,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(logs) => {
             println!("✓ Audit Logs ({})", logs.total_count);
             for entry in logs.events.iter().take(5) {
-                println!("  [{} {}] {} - {}",
-                    entry.timestamp, entry.event_type,
+                println!(
+                    "  [{} {}] {} - {}",
+                    entry.timestamp,
+                    entry.event_type,
                     entry.principal.as_ref().unwrap_or(&"N/A".to_string()),
                     entry.result
                 );
@@ -318,8 +335,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(entries) => {
             println!("✓ Audit trail for user@example.com ({})", entries.len());
             for entry in entries.iter().take(3) {
-                println!("  [{} {}] {} on {:?}",
-                    entry.timestamp, entry.event_type,
+                println!(
+                    "  [{} {}] {} on {:?}",
+                    entry.timestamp,
+                    entry.event_type,
                     entry.operation.as_ref().unwrap_or(&"N/A".to_string()),
                     entry.resource
                 );

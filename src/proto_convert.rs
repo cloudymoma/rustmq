@@ -1,17 +1,17 @@
 //! Type conversion layer between internal RustMQ types and protobuf types
-//! 
+//!
 //! This module provides comprehensive bidirectional conversion implementations
 //! between existing Rust types in `types.rs` and the generated protobuf types.
 //! All conversions are designed to be zero-copy where possible and maintain
 //! semantic correctness.
 
 use crate::{
-    types as internal,
-    proto::{common, broker},
     error::RustMqError,
+    proto::{broker, common},
+    types as internal,
 };
-use prost_types::Timestamp;
 use chrono::{DateTime, Utc};
+use prost_types::Timestamp;
 
 /// Result type for conversion operations
 pub type ConversionResult<T> = Result<T, ConversionError>;
@@ -21,13 +21,13 @@ pub type ConversionResult<T> = Result<T, ConversionError>;
 pub enum ConversionError {
     #[error("Missing required field: {field}")]
     MissingField { field: String },
-    
+
     #[error("Invalid timestamp: {error}")]
     InvalidTimestamp { error: String },
-    
+
     #[error("Invalid enum value: {value} for enum {enum_name}")]
     InvalidEnumValue { value: i32, enum_name: String },
-    
+
     #[error("Invalid data format: {message}")]
     InvalidFormat { message: String },
 }
@@ -60,13 +60,13 @@ impl From<common::TopicPartition> for internal::TopicPartition {
 
 impl TryFrom<internal::Record> for common::Record {
     type Error = ConversionError;
-    
+
     fn try_from(record: internal::Record) -> ConversionResult<Self> {
         let timestamp = timestamp_to_proto(record.timestamp)?;
-        
+
         Ok(Self {
             key: record.key.unwrap_or_default(), // Zero-copy: Bytes -> Bytes (for protobuf)
-            value: record.value, // Zero-copy: Bytes -> Bytes (for protobuf)
+            value: record.value,                 // Zero-copy: Bytes -> Bytes (for protobuf)
             headers: record.headers.into_iter().map(Into::into).collect(),
             timestamp: Some(timestamp),
         })
@@ -75,15 +75,20 @@ impl TryFrom<internal::Record> for common::Record {
 
 impl TryFrom<common::Record> for internal::Record {
     type Error = ConversionError;
-    
+
     fn try_from(record: common::Record) -> ConversionResult<Self> {
-        let timestamp = record.timestamp
+        let timestamp = record
+            .timestamp
             .map(timestamp_from_proto)
             .transpose()?
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-            
+
         Ok(Self {
-            key: if record.key.is_empty() { None } else { Some(record.key) }, // Zero-copy: Bytes from protobuf
+            key: if record.key.is_empty() {
+                None
+            } else {
+                Some(record.key)
+            }, // Zero-copy: Bytes from protobuf
             value: record.value, // Zero-copy: Bytes from protobuf (no allocation!)
             headers: record.headers.into_iter().map(Into::into).collect(),
             timestamp,
@@ -115,7 +120,7 @@ impl From<common::Header> for internal::Header {
 
 impl TryFrom<internal::WalRecord> for common::WalRecord {
     type Error = ConversionError;
-    
+
     fn try_from(wal_record: internal::WalRecord) -> ConversionResult<Self> {
         Ok(Self {
             topic_partition: Some(wal_record.topic_partition.into()),
@@ -129,18 +134,21 @@ impl TryFrom<internal::WalRecord> for common::WalRecord {
 
 impl TryFrom<common::WalRecord> for internal::WalRecord {
     type Error = ConversionError;
-    
+
     fn try_from(wal_record: common::WalRecord) -> ConversionResult<Self> {
-        let topic_partition = wal_record.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition =
+            wal_record
+                .topic_partition
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "topic_partition".to_string(),
+                })?;
+
+        let record = wal_record
+            .record
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "record".to_string(),
             })?;
-            
-        let record = wal_record.record
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "record".to_string() 
-            })?;
-            
+
         Ok(Self {
             topic_partition: topic_partition.into(),
             offset: wal_record.offset,
@@ -156,7 +164,7 @@ impl TryFrom<common::WalRecord> for internal::WalRecord {
 
 impl TryFrom<internal::BrokerInfo> for common::BrokerInfo {
     type Error = ConversionError;
-    
+
     fn try_from(broker: internal::BrokerInfo) -> ConversionResult<Self> {
         Ok(Self {
             id: broker.id,
@@ -165,14 +173,14 @@ impl TryFrom<internal::BrokerInfo> for common::BrokerInfo {
             port_rpc: broker.port_rpc as u32,
             rack_id: broker.rack_id,
             status: common::BrokerStatus::Online as i32, // Default status
-            version: 1, // Default version
+            version: 1,                                  // Default version
         })
     }
 }
 
 impl TryFrom<common::BrokerInfo> for internal::BrokerInfo {
     type Error = ConversionError;
-    
+
     fn try_from(broker: common::BrokerInfo) -> ConversionResult<Self> {
         Ok(Self {
             id: broker.id,
@@ -256,16 +264,16 @@ impl From<common::CompressionType> for internal::CompressionType {
 
 impl TryFrom<internal::FollowerState> for common::FollowerState {
     type Error = ConversionError;
-    
+
     fn try_from(state: internal::FollowerState) -> ConversionResult<Self> {
         let last_heartbeat = Some(timestamp_to_proto(state.last_heartbeat.timestamp_millis())?);
-        
+
         Ok(Self {
             broker_id: state.broker_id,
             last_known_offset: state.last_known_offset,
             last_heartbeat,
             lag: state.lag,
-            lag_time_ms: 0, // Not tracked in internal type
+            lag_time_ms: 0,            // Not tracked in internal type
             in_sync: state.lag < 1000, // Heuristic: in sync if lag < 1000 messages
         })
     }
@@ -273,14 +281,15 @@ impl TryFrom<internal::FollowerState> for common::FollowerState {
 
 impl TryFrom<common::FollowerState> for internal::FollowerState {
     type Error = ConversionError;
-    
+
     fn try_from(state: common::FollowerState) -> ConversionResult<Self> {
-        let last_heartbeat = state.last_heartbeat
+        let last_heartbeat = state
+            .last_heartbeat
             .map(timestamp_from_proto)
             .transpose()?
             .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now()))
             .unwrap_or_else(|| Utc::now());
-            
+
         Ok(Self {
             broker_id: state.broker_id,
             last_known_offset: state.last_known_offset,
@@ -296,20 +305,18 @@ impl TryFrom<common::FollowerState> for internal::FollowerState {
 
 impl TryFrom<internal::ReplicateDataRequest> for broker::ReplicateDataRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: internal::ReplicateDataRequest) -> ConversionResult<Self> {
-        let records: Result<Vec<_>, _> = req.records.into_iter()
-            .map(|r| r.try_into())
-            .collect();
-        
+        let records: Result<Vec<_>, _> = req.records.into_iter().map(|r| r.try_into()).collect();
+
         Ok(Self {
             leader_epoch: req.leader_epoch,
             topic_partition: Some(req.topic_partition.into()),
             records: records?,
             leader_id: req.leader_id,
             leader_high_watermark: 0, // Not available in internal type
-            request_id: 0, // Generate unique ID in real implementation
-            metadata: None, // Not available in internal type
+            request_id: 0,            // Generate unique ID in real implementation
+            metadata: None,           // Not available in internal type
             batch_base_offset: 0,
             batch_record_count: 0,
             batch_size_bytes: 0,
@@ -320,17 +327,16 @@ impl TryFrom<internal::ReplicateDataRequest> for broker::ReplicateDataRequest {
 
 impl TryFrom<broker::ReplicateDataRequest> for internal::ReplicateDataRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: broker::ReplicateDataRequest) -> ConversionResult<Self> {
-        let topic_partition = req.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition = req
+            .topic_partition
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "topic_partition".to_string(),
             })?;
-        
-        let records: Result<Vec<_>, _> = req.records.into_iter()
-            .map(|r| r.try_into())
-            .collect();
-        
+
+        let records: Result<Vec<_>, _> = req.records.into_iter().map(|r| r.try_into()).collect();
+
         Ok(Self {
             leader_epoch: req.leader_epoch,
             topic_partition: topic_partition.into(),
@@ -342,12 +348,10 @@ impl TryFrom<broker::ReplicateDataRequest> for internal::ReplicateDataRequest {
 
 impl TryFrom<internal::ReplicateDataResponse> for broker::ReplicateDataResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: internal::ReplicateDataResponse) -> ConversionResult<Self> {
-        let follower_state = resp.follower_state
-            .map(|s| s.try_into())
-            .transpose()?;
-        
+        let follower_state = resp.follower_state.map(|s| s.try_into()).transpose()?;
+
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
@@ -365,19 +369,17 @@ impl TryFrom<internal::ReplicateDataResponse> for broker::ReplicateDataResponse 
 
 impl TryFrom<broker::ReplicateDataResponse> for internal::ReplicateDataResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: broker::ReplicateDataResponse) -> ConversionResult<Self> {
-        let follower_state = resp.follower_state
-            .map(|s| s.try_into())
-            .transpose()?;
-        
+        let follower_state = resp.follower_state.map(|s| s.try_into()).transpose()?;
+
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
-            error_message: if resp.error_message.is_empty() { 
-                None 
-            } else { 
-                Some(resp.error_message) 
+            error_message: if resp.error_message.is_empty() {
+                None
+            } else {
+                Some(resp.error_message)
             },
             follower_state,
         })
@@ -390,7 +392,7 @@ impl TryFrom<broker::ReplicateDataResponse> for internal::ReplicateDataResponse 
 
 impl TryFrom<internal::HeartbeatRequest> for broker::HeartbeatRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: internal::HeartbeatRequest) -> ConversionResult<Self> {
         Ok(Self {
             leader_epoch: req.leader_epoch,
@@ -409,13 +411,14 @@ impl TryFrom<internal::HeartbeatRequest> for broker::HeartbeatRequest {
 
 impl TryFrom<broker::HeartbeatRequest> for internal::HeartbeatRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: broker::HeartbeatRequest) -> ConversionResult<Self> {
-        let topic_partition = req.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition = req
+            .topic_partition
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "topic_partition".to_string(),
             })?;
-        
+
         Ok(Self {
             leader_epoch: req.leader_epoch,
             leader_id: req.leader_id,
@@ -427,12 +430,10 @@ impl TryFrom<broker::HeartbeatRequest> for internal::HeartbeatRequest {
 
 impl TryFrom<internal::HeartbeatResponse> for broker::HeartbeatResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: internal::HeartbeatResponse) -> ConversionResult<Self> {
-        let follower_state = resp.follower_state
-            .map(|s| s.try_into())
-            .transpose()?;
-        
+        let follower_state = resp.follower_state.map(|s| s.try_into()).transpose()?;
+
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
@@ -452,19 +453,17 @@ impl TryFrom<internal::HeartbeatResponse> for broker::HeartbeatResponse {
 
 impl TryFrom<broker::HeartbeatResponse> for internal::HeartbeatResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: broker::HeartbeatResponse) -> ConversionResult<Self> {
-        let follower_state = resp.follower_state
-            .map(|s| s.try_into())
-            .transpose()?;
-        
+        let follower_state = resp.follower_state.map(|s| s.try_into()).transpose()?;
+
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
-            error_message: if resp.error_message.is_empty() { 
-                None 
-            } else { 
-                Some(resp.error_message) 
+            error_message: if resp.error_message.is_empty() {
+                None
+            } else {
+                Some(resp.error_message)
             },
             follower_state,
         })
@@ -477,7 +476,7 @@ impl TryFrom<broker::HeartbeatResponse> for internal::HeartbeatResponse {
 
 impl TryFrom<internal::AssignPartitionRequest> for broker::AssignPartitionRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: internal::AssignPartitionRequest) -> ConversionResult<Self> {
         Ok(Self {
             topic_partition: Some(req.topic_partition.into()),
@@ -499,13 +498,14 @@ impl TryFrom<internal::AssignPartitionRequest> for broker::AssignPartitionReques
 
 impl TryFrom<broker::AssignPartitionRequest> for internal::AssignPartitionRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: broker::AssignPartitionRequest) -> ConversionResult<Self> {
-        let topic_partition = req.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition = req
+            .topic_partition
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "topic_partition".to_string(),
             })?;
-        
+
         Ok(Self {
             topic_partition: topic_partition.into(),
             replica_set: req.replica_set,
@@ -518,7 +518,7 @@ impl TryFrom<broker::AssignPartitionRequest> for internal::AssignPartitionReques
 
 impl TryFrom<internal::AssignPartitionResponse> for broker::AssignPartitionResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: internal::AssignPartitionResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
@@ -537,15 +537,15 @@ impl TryFrom<internal::AssignPartitionResponse> for broker::AssignPartitionRespo
 
 impl TryFrom<broker::AssignPartitionResponse> for internal::AssignPartitionResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: broker::AssignPartitionResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
-            error_message: if resp.error_message.is_empty() { 
-                None 
-            } else { 
-                Some(resp.error_message) 
+            error_message: if resp.error_message.is_empty() {
+                None
+            } else {
+                Some(resp.error_message)
             },
         })
     }
@@ -553,7 +553,7 @@ impl TryFrom<broker::AssignPartitionResponse> for internal::AssignPartitionRespo
 
 impl TryFrom<internal::RemovePartitionRequest> for broker::RemovePartitionRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: internal::RemovePartitionRequest) -> ConversionResult<Self> {
         Ok(Self {
             topic_partition: Some(req.topic_partition.into()),
@@ -571,13 +571,14 @@ impl TryFrom<internal::RemovePartitionRequest> for broker::RemovePartitionReques
 
 impl TryFrom<broker::RemovePartitionRequest> for internal::RemovePartitionRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: broker::RemovePartitionRequest) -> ConversionResult<Self> {
-        let topic_partition = req.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition = req
+            .topic_partition
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "topic_partition".to_string(),
             })?;
-        
+
         Ok(Self {
             topic_partition: topic_partition.into(),
             controller_id: req.controller_id,
@@ -587,7 +588,7 @@ impl TryFrom<broker::RemovePartitionRequest> for internal::RemovePartitionReques
 
 impl TryFrom<internal::RemovePartitionResponse> for broker::RemovePartitionResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: internal::RemovePartitionResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
@@ -606,15 +607,15 @@ impl TryFrom<internal::RemovePartitionResponse> for broker::RemovePartitionRespo
 
 impl TryFrom<broker::RemovePartitionResponse> for internal::RemovePartitionResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: broker::RemovePartitionResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
-            error_message: if resp.error_message.is_empty() { 
-                None 
-            } else { 
-                Some(resp.error_message) 
+            error_message: if resp.error_message.is_empty() {
+                None
+            } else {
+                Some(resp.error_message)
             },
         })
     }
@@ -626,7 +627,7 @@ impl TryFrom<broker::RemovePartitionResponse> for internal::RemovePartitionRespo
 
 impl TryFrom<internal::TransferLeadershipRequest> for broker::TransferLeadershipRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: internal::TransferLeadershipRequest) -> ConversionResult<Self> {
         Ok(Self {
             topic_partition: Some(req.topic_partition.into()),
@@ -645,13 +646,14 @@ impl TryFrom<internal::TransferLeadershipRequest> for broker::TransferLeadership
 
 impl TryFrom<broker::TransferLeadershipRequest> for internal::TransferLeadershipRequest {
     type Error = ConversionError;
-    
+
     fn try_from(req: broker::TransferLeadershipRequest) -> ConversionResult<Self> {
-        let topic_partition = req.topic_partition
-            .ok_or_else(|| ConversionError::MissingField { 
-                field: "topic_partition".to_string() 
+        let topic_partition = req
+            .topic_partition
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "topic_partition".to_string(),
             })?;
-        
+
         Ok(Self {
             topic_partition: topic_partition.into(),
             current_leader_id: req.current_leader_id,
@@ -663,7 +665,7 @@ impl TryFrom<broker::TransferLeadershipRequest> for internal::TransferLeadership
 
 impl TryFrom<internal::TransferLeadershipResponse> for broker::TransferLeadershipResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: internal::TransferLeadershipResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
@@ -681,20 +683,20 @@ impl TryFrom<internal::TransferLeadershipResponse> for broker::TransferLeadershi
 
 impl TryFrom<broker::TransferLeadershipResponse> for internal::TransferLeadershipResponse {
     type Error = ConversionError;
-    
+
     fn try_from(resp: broker::TransferLeadershipResponse) -> ConversionResult<Self> {
         Ok(Self {
             success: resp.success,
             error_code: resp.error_code,
-            error_message: if resp.error_message.is_empty() { 
-                None 
-            } else { 
-                Some(resp.error_message) 
+            error_message: if resp.error_message.is_empty() {
+                None
+            } else {
+                Some(resp.error_message)
             },
-            new_leader_epoch: if resp.new_leader_epoch == 0 { 
-                None 
-            } else { 
-                Some(resp.new_leader_epoch) 
+            new_leader_epoch: if resp.new_leader_epoch == 0 {
+                None
+            } else {
+                Some(resp.new_leader_epoch)
             },
         })
     }
@@ -708,11 +710,8 @@ impl TryFrom<broker::TransferLeadershipResponse> for internal::TransferLeadershi
 fn timestamp_to_proto(millis: i64) -> ConversionResult<Timestamp> {
     let seconds = millis / 1000;
     let nanos = ((millis % 1000) * 1_000_000) as i32;
-    
-    Ok(Timestamp {
-        seconds,
-        nanos,
-    })
+
+    Ok(Timestamp { seconds, nanos })
 }
 
 /// Convert protobuf Timestamp to Unix timestamp milliseconds
@@ -728,7 +727,7 @@ fn timestamp_from_proto(timestamp: Timestamp) -> ConversionResult<i64> {
 /// Map internal RustMqError to protobuf error code
 pub fn error_to_code(error: &RustMqError) -> u32 {
     use common::ErrorCode;
-    
+
     match error {
         RustMqError::Io(_) => ErrorCode::InternalError as u32,
         RustMqError::Serialization(_) => ErrorCode::InvalidEncoding as u32,
@@ -771,7 +770,7 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::ObjectNotFound(_) => ErrorCode::ObjectNotFound as u32,
         RustMqError::Transport(_) => ErrorCode::InternalError as u32,
         RustMqError::InvalidUri(_) => ErrorCode::InvalidParameter as u32,
-        
+
         // Security-related errors
         RustMqError::AuthenticationFailed(_) => ErrorCode::PermissionDenied as u32,
         RustMqError::AuthorizationFailed(_) => ErrorCode::PermissionDenied as u32,
@@ -784,7 +783,7 @@ pub fn error_to_code(error: &RustMqError) -> u32 {
         RustMqError::AclEvaluation(_) => ErrorCode::InternalError as u32,
         RustMqError::Timeout(_) => ErrorCode::InternalError as u32,
         RustMqError::Internal(_) => ErrorCode::InternalError as u32,
-        
+
         // Missing security-related error patterns
         RustMqError::AuthorizationDenied { .. } => ErrorCode::PermissionDenied as u32,
         RustMqError::CertificateNotFound { .. } => ErrorCode::ResourceNotFound as u32,
@@ -862,8 +861,14 @@ pub fn topic_partition_to_proto(tp: &internal::TopicPartition) -> common::TopicP
 
 /// Convert internal WalRecord to proto WalRecord
 pub fn wal_record_to_proto(record: &internal::WalRecord) -> crate::Result<common::WalRecord> {
-    let proto_record: common::Record = record.record.clone().try_into()
-        .map_err(|e: ConversionError| RustMqError::Storage(format!("Failed to convert record: {}", e)))?;
+    let proto_record: common::Record =
+        record
+            .record
+            .clone()
+            .try_into()
+            .map_err(|e: ConversionError| {
+                RustMqError::Storage(format!("Failed to convert record: {}", e))
+            })?;
 
     Ok(common::WalRecord {
         topic_partition: Some(topic_partition_to_proto(&record.topic_partition)),
@@ -875,13 +880,15 @@ pub fn wal_record_to_proto(record: &internal::WalRecord) -> crate::Result<common
 }
 
 /// Convert proto FollowerState to internal FollowerState
-pub fn follower_state_from_proto(state: &common::FollowerState) -> crate::Result<internal::FollowerState> {
+pub fn follower_state_from_proto(
+    state: &common::FollowerState,
+) -> crate::Result<internal::FollowerState> {
     // Parse last_heartbeat timestamp
     let last_heartbeat = if let Some(ref ts) = state.last_heartbeat {
-        let millis = timestamp_from_proto(ts.clone())
-            .map_err(|e: ConversionError| RustMqError::Storage(format!("Failed to convert timestamp: {}", e)))?;
-        chrono::DateTime::from_timestamp_millis(millis)
-            .unwrap_or_else(chrono::Utc::now)
+        let millis = timestamp_from_proto(ts.clone()).map_err(|e: ConversionError| {
+            RustMqError::Storage(format!("Failed to convert timestamp: {}", e))
+        })?;
+        chrono::DateTime::from_timestamp_millis(millis).unwrap_or_else(chrono::Utc::now)
     } else {
         chrono::Utc::now()
     };
@@ -905,11 +912,11 @@ mod tests {
             topic: "test-topic".to_string(),
             partition: 42,
         };
-        
+
         let proto_tp: common::TopicPartition = internal_tp.clone().into();
         assert_eq!(proto_tp.topic, "test-topic");
         assert_eq!(proto_tp.partition, 42);
-        
+
         let back_to_internal: internal::TopicPartition = proto_tp.into();
         assert_eq!(back_to_internal, internal_tp);
     }
@@ -925,16 +932,22 @@ mod tests {
             )],
             Utc::now().timestamp_millis(),
         );
-        
+
         let proto_record: common::Record = internal_record.clone().try_into().unwrap();
         assert_eq!(proto_record.key, b"test-key".to_vec());
         assert_eq!(proto_record.value, b"test-value".to_vec());
         assert_eq!(proto_record.headers.len(), 1);
         assert!(proto_record.timestamp.is_some());
-        
+
         let back_to_internal: internal::Record = proto_record.try_into().unwrap();
-        assert_eq!(back_to_internal.key, Some(bytes::Bytes::from(b"test-key".to_vec())));
-        assert_eq!(back_to_internal.value, bytes::Bytes::from(b"test-value".to_vec()));
+        assert_eq!(
+            back_to_internal.key,
+            Some(bytes::Bytes::from(b"test-key".to_vec()))
+        );
+        assert_eq!(
+            back_to_internal.value,
+            bytes::Bytes::from(b"test-value".to_vec())
+        );
         assert_eq!(back_to_internal.headers.len(), 1);
     }
 
@@ -954,13 +967,13 @@ mod tests {
             ),
             crc32: 123456,
         };
-        
+
         let proto_wal: common::WalRecord = internal_wal.clone().try_into().unwrap();
         assert!(proto_wal.topic_partition.is_some());
         assert_eq!(proto_wal.offset, 1000);
         assert!(proto_wal.record.is_some());
         assert_eq!(proto_wal.crc32, 123456);
-        
+
         let back_to_internal: internal::WalRecord = proto_wal.try_into().unwrap();
         assert_eq!(back_to_internal.topic_partition.topic, "test");
         assert_eq!(back_to_internal.offset, 1000);
@@ -973,17 +986,21 @@ mod tests {
             error_to_code(&RustMqError::TopicNotFound("test".to_string())),
             common::ErrorCode::TopicNotFound as u32
         );
-        
+
         assert_eq!(
-            error_to_code(&RustMqError::StaleLeaderEpoch { 
-                request_epoch: 1, 
-                current_epoch: 2 
+            error_to_code(&RustMqError::StaleLeaderEpoch {
+                request_epoch: 1,
+                current_epoch: 2
             }),
             common::ErrorCode::StaleLeaderEpoch as u32
         );
-        
-        assert!(error_is_retryable(&RustMqError::Timeout("test timeout".to_string())));
-        assert!(!error_is_retryable(&RustMqError::TopicNotFound("test".to_string())));
+
+        assert!(error_is_retryable(&RustMqError::Timeout(
+            "test timeout".to_string()
+        )));
+        assert!(!error_is_retryable(&RustMqError::TopicNotFound(
+            "test".to_string()
+        )));
     }
 
     #[test]
@@ -991,7 +1008,7 @@ mod tests {
         let now_millis = Utc::now().timestamp_millis();
         let proto_ts = timestamp_to_proto(now_millis).unwrap();
         let back_to_millis = timestamp_from_proto(proto_ts).unwrap();
-        
+
         // Allow for some rounding error in nanosecond conversion
         assert!((back_to_millis - now_millis).abs() <= 1);
     }
@@ -1004,7 +1021,7 @@ mod tests {
             internal::AcknowledgmentLevel::Majority,
             internal::AcknowledgmentLevel::All,
         ];
-        
+
         for level in levels {
             let proto_level: common::AcknowledgmentLevel = level.clone().into();
             let back_to_internal: internal::AcknowledgmentLevel = proto_level.into();
@@ -1013,7 +1030,10 @@ mod tests {
                 internal::AcknowledgmentLevel::Custom(_) => {
                     matches!(back_to_internal, internal::AcknowledgmentLevel::Custom(3));
                 }
-                _ => assert_eq!(std::mem::discriminant(&back_to_internal), std::mem::discriminant(&level)),
+                _ => assert_eq!(
+                    std::mem::discriminant(&back_to_internal),
+                    std::mem::discriminant(&level)
+                ),
             }
         }
     }
@@ -1025,11 +1045,14 @@ mod tests {
             internal::CompressionType::Lz4,
             internal::CompressionType::Zstd,
         ];
-        
+
         for compression_type in types {
             let proto_type: common::CompressionType = compression_type.clone().into();
             let back_to_internal: internal::CompressionType = proto_type.into();
-            assert_eq!(std::mem::discriminant(&back_to_internal), std::mem::discriminant(&compression_type));
+            assert_eq!(
+                std::mem::discriminant(&back_to_internal),
+                std::mem::discriminant(&compression_type)
+            );
         }
     }
 }

@@ -17,14 +17,14 @@ use crate::error::{Result, RustMqError};
 use crate::security::SecurityMetrics;
 use crate::security::auth::{AclKey, Permission};
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::time::{Instant, Duration};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
 use ahash::AHasher;
+use dashmap::DashMap;
 use parking_lot::Mutex;
 
 /// DashMap-based L2 authorization cache
@@ -62,7 +62,7 @@ struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            max_entries: 100_000, // 100K entries
+            max_entries: 100_000,                // 100K entries
             entry_ttl: Duration::from_secs(300), // 5 minutes
         }
     }
@@ -217,7 +217,8 @@ impl LockFreeAuthCache {
         let mut removed = 0;
 
         // Collect expired keys
-        let expired_keys: Vec<u64> = self.cache
+        let expired_keys: Vec<u64> = self
+            .cache
             .iter()
             .filter(|entry| entry.value().is_expired())
             .map(|entry| *entry.key())

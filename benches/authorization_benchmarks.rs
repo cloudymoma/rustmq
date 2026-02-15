@@ -3,12 +3,12 @@
 //! This module focuses on detailed authorization performance testing,
 //! including cache hierarchy, permission evaluation, and ACL rule processing.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use std::time::Duration;
-use std::sync::Arc;
-use tokio::runtime::Runtime;
-use rustmq::security::auth::{AuthorizationManager, AclKey, Permission};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use rustmq::security::auth::{AclKey, AuthorizationManager, Permission};
 use rustmq::security::{AclConfig, SecurityMetrics};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::runtime::Runtime;
 
 /// Generate ACL keys for benchmarking
 fn generate_acl_key_batch(count: usize) -> Vec<AclKey> {
@@ -38,53 +38,59 @@ async fn setup_authorization_manager() -> Arc<AuthorizationManager> {
         enable_audit_logging: false,
         negative_cache_enabled: true,
     };
-    
+
     let metrics = Arc::new(SecurityMetrics::new().unwrap());
-    Arc::new(AuthorizationManager::new(config, metrics, None).await.unwrap())
+    Arc::new(
+        AuthorizationManager::new(config, metrics, None)
+            .await
+            .unwrap(),
+    )
 }
 
 /// Basic authorization performance tests
 fn authorization_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("authorization");
     group.measurement_time(Duration::from_secs(10));
-    
+
     let rt = Runtime::new().unwrap();
     let auth_mgr = rt.block_on(setup_authorization_manager());
     let connection_cache = auth_mgr.create_connection_cache();
-    
+
     // Simple permission check using the actual API
     group.bench_function("simple_permission", |b| {
         let principal = Arc::from("user1");
-        
+
         b.to_async(&rt).iter(|| async {
-            let result = auth_mgr.check_permission(
-                &connection_cache,
-                &principal,
-                "topic:test",
-                Permission::Read
-            ).await;
+            let result = auth_mgr
+                .check_permission(
+                    &connection_cache,
+                    &principal,
+                    "topic:test",
+                    Permission::Read,
+                )
+                .await;
             black_box(result)
         });
     });
-    
+
     // String interning performance
     group.bench_function("string_interning", |b| {
         let strings = vec![
             "user_frequent",
-            "topic_common", 
+            "topic_common",
             "admin_user",
             "service_account",
         ];
-        
+
         let mut string_iter = strings.iter().cycle();
-        
+
         b.iter(|| {
             let s = string_iter.next().unwrap();
             let interned = auth_mgr.intern_string(s);
             black_box(interned)
         });
     });
-    
+
     // Cache statistics tracking
     group.bench_function("cache_stats", |b| {
         b.iter(|| {
@@ -92,15 +98,21 @@ fn authorization_benchmarks(c: &mut Criterion) {
             black_box(stats)
         });
     });
-    
+
     // More string interning patterns
     group.bench_function("varied_string_patterns", |b| {
         let patterns = vec![
-            "user_{}", "topic_{}", "admin_{}", "service_{}",
-            "role_{}", "group_{}", "tenant_{}", "app_{}",
+            "user_{}",
+            "topic_{}",
+            "admin_{}",
+            "service_{}",
+            "role_{}",
+            "group_{}",
+            "tenant_{}",
+            "app_{}",
         ];
         let mut counter = 0;
-        
+
         b.iter(|| {
             for pattern in &patterns {
                 let s = pattern.replace("{}", &counter.to_string());
@@ -110,18 +122,18 @@ fn authorization_benchmarks(c: &mut Criterion) {
             counter += 1;
         });
     });
-    
+
     // Permission invalidation
     group.bench_function("principal_invalidation", |b| {
         let principals = ["user1", "user2", "admin", "service"];
-        
+
         b.to_async(&rt).iter(|| async {
             let principal = &principals[rand::random::<usize>() % principals.len()];
             let result = auth_mgr.invalidate_principal(principal).await;
             black_box(result)
         });
     });
-    
+
     group.finish();
 }
 
@@ -129,10 +141,10 @@ fn authorization_benchmarks(c: &mut Criterion) {
 fn connection_cache_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("connection_cache");
     group.measurement_time(Duration::from_secs(5));
-    
+
     let rt = Runtime::new().unwrap();
     let auth_mgr = rt.block_on(setup_authorization_manager());
-    
+
     // Cache creation performance
     group.bench_function("cache_creation", |b| {
         b.iter(|| {
@@ -140,7 +152,7 @@ fn connection_cache_benchmarks(c: &mut Criterion) {
             black_box(cache)
         });
     });
-    
+
     // Cache operations
     for cache_size in [100, 500, 1000].iter() {
         group.bench_with_input(
@@ -149,14 +161,14 @@ fn connection_cache_benchmarks(c: &mut Criterion) {
             |b, &size| {
                 let cache = auth_mgr.create_connection_cache();
                 let keys = generate_acl_key_batch(size);
-                
+
                 // Pre-populate cache
                 for (i, key) in keys.iter().enumerate() {
                     cache.insert(key.clone(), i % 2 == 0);
                 }
-                
+
                 let mut key_iter = keys.iter().cycle();
-                
+
                 b.iter(|| {
                     let key = key_iter.next().unwrap();
                     let result = cache.get(key);
@@ -165,7 +177,7 @@ fn connection_cache_benchmarks(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -175,7 +187,7 @@ criterion_group! {
     config = Criterion::default()
         .significance_level(0.05)
         .noise_threshold(0.03);
-    targets = 
+    targets =
         authorization_benchmarks,
         connection_cache_benchmarks
 }

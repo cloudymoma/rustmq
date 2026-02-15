@@ -1,7 +1,7 @@
 // Buffer Pool Performance Benchmarks
 // Validates the expected 30-40% allocation overhead reduction from buffer pooling
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rustmq::storage::{AlignedBufferPool, BufferPool};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -37,24 +37,28 @@ fn bench_concurrent_network_pool(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_network_pool");
 
     for num_tasks in [10, 50, 100, 500].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(num_tasks), num_tasks, |b, &num_tasks| {
-            b.iter(|| {
-                rt.block_on(async {
-                    let mut handles = vec![];
-                    for _ in 0..num_tasks {
-                        let pool_clone = pool.clone();
-                        handles.push(tokio::spawn(async move {
-                            let buffer = pool_clone.get_aligned_buffer(8192).unwrap();
-                            tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
-                            pool_clone.return_buffer(buffer);
-                        }));
-                    }
-                    for handle in handles {
-                        handle.await.unwrap();
-                    }
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_tasks),
+            num_tasks,
+            |b, &num_tasks| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let mut handles = vec![];
+                        for _ in 0..num_tasks {
+                            let pool_clone = pool.clone();
+                            handles.push(tokio::spawn(async move {
+                                let buffer = pool_clone.get_aligned_buffer(8192).unwrap();
+                                tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
+                                pool_clone.return_buffer(buffer);
+                            }));
+                        }
+                        for handle in handles {
+                            handle.await.unwrap();
+                        }
+                    });
                 });
-            });
-        });
+            },
+        );
     }
     group.finish();
 }

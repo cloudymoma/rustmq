@@ -1,12 +1,12 @@
 use crate::{Result, config::ScalingConfig, types::*};
+use async_trait::async_trait;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::{RwLock as AsyncRwLock, Semaphore};
 use tokio::time::{Duration, Instant};
 use uuid::Uuid;
-use async_trait::async_trait;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use parking_lot::RwLock;
 
 /// Controller service that manages cluster-wide coordination including decommissioning slots
 /// Implements basic Raft consensus for cluster metadata management
@@ -112,7 +112,11 @@ pub struct PartitionAssignment {
 #[async_trait]
 pub trait RaftRpc: Send + Sync {
     async fn request_vote(&self, node_id: &str, request: VoteRequest) -> Result<VoteResponse>;
-    async fn append_entries(&self, node_id: &str, request: AppendEntriesRequest) -> Result<AppendEntriesResponse>;
+    async fn append_entries(
+        &self,
+        node_id: &str,
+        request: AppendEntriesRequest,
+    ) -> Result<AppendEntriesResponse>;
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -252,7 +256,9 @@ impl MetadataManager {
     pub async fn create_topic(&self, topic_info: TopicInfo) -> Result<()> {
         let mut topics = self.topics.write().await;
         if topics.contains_key(&topic_info.name) {
-            return Err(crate::error::RustMqError::TopicAlreadyExists(topic_info.name));
+            return Err(crate::error::RustMqError::TopicAlreadyExists(
+                topic_info.name,
+            ));
         }
         topics.insert(topic_info.name.clone(), topic_info);
         Ok(())
@@ -261,9 +267,11 @@ impl MetadataManager {
     pub async fn delete_topic(&self, topic_name: &str) -> Result<()> {
         let mut topics = self.topics.write().await;
         if topics.remove(topic_name).is_none() {
-            return Err(crate::error::RustMqError::TopicNotFound(topic_name.to_string()));
+            return Err(crate::error::RustMqError::TopicNotFound(
+                topic_name.to_string(),
+            ));
         }
-        
+
         // Remove partition assignments for this topic
         let mut assignments = self.partition_assignments.write().await;
         assignments.retain(|tp, _| tp.topic != topic_name);
@@ -294,7 +302,11 @@ impl MetadataManager {
         brokers.values().cloned().collect()
     }
 
-    pub async fn assign_partition(&self, partition: TopicPartition, assignment: PartitionAssignment) -> Result<()> {
+    pub async fn assign_partition(
+        &self,
+        partition: TopicPartition,
+        assignment: PartitionAssignment,
+    ) -> Result<()> {
         let mut assignments = self.partition_assignments.write().await;
         assignments.insert(partition, assignment);
         Ok(())
@@ -308,19 +320,19 @@ impl MetadataManager {
 
 impl ControllerService {
     pub fn new(node_id: String, peers: Vec<String>, scaling_config: ScalingConfig) -> Self {
-        let decommission_manager = Arc::new(
-            DecommissionSlotManager::new(scaling_config.max_concurrent_decommissions)
-        );
-        
+        let decommission_manager = Arc::new(DecommissionSlotManager::new(
+            scaling_config.max_concurrent_decommissions,
+        ));
+
         // Start background cleanup task for expired decommission slots
         let cleanup_manager = decommission_manager.clone();
         tokio::spawn(async move {
             cleanup_manager.start_cleanup_task().await;
         });
-        
+
         let raft_state = Arc::new(RaftState::new(node_id.clone(), peers));
         let metadata_manager = Arc::new(MetadataManager::new());
-        
+
         Self {
             decommission_manager,
             scaling_config: Arc::new(AsyncRwLock::new(scaling_config)),
@@ -391,7 +403,7 @@ impl ControllerService {
             partitions: request.partitions,
             replication_factor: request.replication_factor,
             config: request.config.unwrap_or_else(|| TopicConfig {
-                retention_ms: Some(86400000), // 1 day default
+                retention_ms: Some(86400000),    // 1 day default
                 segment_bytes: Some(1073741824), // 1GB default
                 compression_type: Some("lz4".to_string()),
             }),
@@ -406,7 +418,9 @@ impl ControllerService {
                 if brokers.len() < request.replication_factor as usize {
                     return Ok(CreateTopicResponse {
                         success: false,
-                        error_message: Some("Not enough brokers for replication factor".to_string()),
+                        error_message: Some(
+                            "Not enough brokers for replication factor".to_string(),
+                        ),
                         leader_hint: self.raft_state.get_current_leader(),
                     });
                 }
@@ -415,7 +429,7 @@ impl ControllerService {
                 for partition_id in 0..request.partitions {
                     let start_broker = (partition_id as usize) % brokers.len();
                     let mut replicas = Vec::new();
-                    
+
                     for i in 0..request.replication_factor as usize {
                         let broker_idx = (start_broker + i) % brokers.len();
                         replicas.push(brokers[broker_idx].id.clone());
@@ -433,7 +447,9 @@ impl ControllerService {
                         partition: partition_id,
                     };
 
-                    self.metadata_manager.assign_partition(partition, assignment).await?;
+                    self.metadata_manager
+                        .assign_partition(partition, assignment)
+                        .await?;
                 }
 
                 Ok(CreateTopicResponse {
@@ -504,35 +520,36 @@ impl ControllerService {
         let new_term = self.raft_state.increment_term();
         self.raft_state.vote_for(Some(self.node_id.clone()));
         self.raft_state.set_leader(false);
-        
+
         tracing::info!("Starting election for term {}", new_term);
-        
+
         let votes = 1; // Vote for self
         let last_log_index = self.raft_state.get_last_log_index().await;
         let last_log_term = self.raft_state.get_last_log_term().await;
-        
+
         let _vote_request = VoteRequest {
             term: new_term,
             candidate_id: self.node_id.clone(),
             last_log_index,
             last_log_term,
         };
-        
+
         // In a full implementation, would send vote requests to all peers
         // For now, assume we win if we're the only node or simplified majority
         let total_nodes = self.raft_state.peers.len() + 1; // Including self
         let majority = (total_nodes / 2) + 1;
-        
+
         if votes >= majority {
             self.raft_state.set_leader(true);
-            self.raft_state.set_current_leader(Some(self.node_id.clone()));
+            self.raft_state
+                .set_current_leader(Some(self.node_id.clone()));
             tracing::info!("Won election for term {}", new_term);
-            
+
             // Start sending heartbeats
             self.start_heartbeat_timer().await;
             return Ok(true);
         }
-        
+
         Ok(false)
     }
 
@@ -540,19 +557,19 @@ impl ControllerService {
     async fn start_heartbeat_timer(&self) {
         let raft_state = self.raft_state.clone();
         let _node_id = self.node_id.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(150)); // 150ms heartbeat
-            
+
             while raft_state.is_leader() {
                 interval.tick().await;
-                
+
                 let current_term = raft_state.get_current_term();
                 let _commit_index = raft_state.commit_index.load(Ordering::SeqCst);
-                
+
                 // In a full implementation, would send heartbeats to all followers
                 tracing::debug!("Sending heartbeat for term {}", current_term);
-                
+
                 // Simplified heartbeat - just log
                 // Real implementation would send AppendEntries RPC to followers
             }
@@ -562,7 +579,7 @@ impl ControllerService {
     /// Handle vote request (Raft RPC)
     pub async fn handle_vote_request(&self, request: VoteRequest) -> Result<VoteResponse> {
         let current_term = self.raft_state.get_current_term();
-        
+
         // If term is outdated, reject
         if request.term < current_term {
             return Ok(VoteResponse {
@@ -570,26 +587,27 @@ impl ControllerService {
                 vote_granted: false,
             });
         }
-        
+
         // If term is newer, update our term
         if request.term > current_term {
             self.raft_state.update_term(request.term);
             self.raft_state.vote_for(None);
             self.raft_state.set_leader(false);
         }
-        
+
         // Check if we can vote for this candidate
         let voted_for = self.raft_state.get_voted_for();
         let can_vote = voted_for.is_none() || voted_for == Some(request.candidate_id.clone());
-        
+
         if can_vote {
             // Check log consistency (simplified)
             let last_log_index = self.raft_state.get_last_log_index().await;
             let last_log_term = self.raft_state.get_last_log_term().await;
-            
-            let log_ok = request.last_log_term > last_log_term || 
-                        (request.last_log_term == last_log_term && request.last_log_index >= last_log_index);
-            
+
+            let log_ok = request.last_log_term > last_log_term
+                || (request.last_log_term == last_log_term
+                    && request.last_log_index >= last_log_index);
+
             if log_ok {
                 self.raft_state.vote_for(Some(request.candidate_id));
                 return Ok(VoteResponse {
@@ -598,7 +616,7 @@ impl ControllerService {
                 });
             }
         }
-        
+
         Ok(VoteResponse {
             term: self.raft_state.get_current_term(),
             vote_granted: false,
@@ -606,9 +624,12 @@ impl ControllerService {
     }
 
     /// Handle append entries request (Raft RPC)
-    pub async fn handle_append_entries(&self, request: AppendEntriesRequest) -> Result<AppendEntriesResponse> {
+    pub async fn handle_append_entries(
+        &self,
+        request: AppendEntriesRequest,
+    ) -> Result<AppendEntriesResponse> {
         let current_term = self.raft_state.get_current_term();
-        
+
         // If term is outdated, reject
         if request.term < current_term {
             return Ok(AppendEntriesResponse {
@@ -617,17 +638,17 @@ impl ControllerService {
                 match_index: None,
             });
         }
-        
+
         // If term is newer or equal, accept leader
         if request.term >= current_term {
             self.raft_state.update_term(request.term);
             self.raft_state.set_leader(false);
             self.raft_state.set_current_leader(Some(request.leader_id));
         }
-        
+
         // Simplified append entries - just accept
         // Real implementation would check log consistency
-        
+
         Ok(AppendEntriesResponse {
             term: request.term,
             success: true,
@@ -743,7 +764,11 @@ impl RaftRpc for MockRaftRpc {
         })
     }
 
-    async fn append_entries(&self, _node_id: &str, request: AppendEntriesRequest) -> Result<AppendEntriesResponse> {
+    async fn append_entries(
+        &self,
+        _node_id: &str,
+        request: AppendEntriesRequest,
+    ) -> Result<AppendEntriesResponse> {
         // Mock implementation - always succeeds
         Ok(AppendEntriesResponse {
             term: request.term,
@@ -772,9 +797,10 @@ impl DecommissionSlotManager {
         {
             let active = self.active_decommissions.read().await;
             if active.values().any(|slot| slot.broker_id == broker_id) {
-                return Err(crate::error::RustMqError::InvalidOperation(
-                    format!("Broker {} is already being decommissioned", broker_id),
-                ));
+                return Err(crate::error::RustMqError::InvalidOperation(format!(
+                    "Broker {} is already being decommissioned",
+                    broker_id
+                )));
             }
         }
 
@@ -830,10 +856,12 @@ impl DecommissionSlotManager {
     pub async fn release_slot(&self, operation_id: &str) -> Result<()> {
         let slot = {
             let mut active = self.active_decommissions.write().await;
-            active.remove(operation_id)
-                .ok_or_else(|| crate::error::RustMqError::NotFound(
-                    format!("Decommission operation {} not found", operation_id)
-                ))?
+            active.remove(operation_id).ok_or_else(|| {
+                crate::error::RustMqError::NotFound(format!(
+                    "Decommission operation {} not found",
+                    operation_id
+                ))
+            })?
         };
 
         // Release the semaphore permit
@@ -862,18 +890,16 @@ impl DecommissionSlotManager {
         };
 
         if current_active > new_max {
-            return Err(crate::error::RustMqError::InvalidOperation(
-                format!(
-                    "Cannot reduce limit to {} while {} decommissions are active",
-                    new_max, current_active
-                )
-            ));
+            return Err(crate::error::RustMqError::InvalidOperation(format!(
+                "Cannot reduce limit to {} while {} decommissions are active",
+                new_max, current_active
+            )));
         }
 
         // Calculate the difference and adjust semaphore permits
         let current_available = self.decommission_slots.available_permits();
         let current_max = current_available + current_active;
-        
+
         if new_max > current_max {
             // Increase permits
             self.decommission_slots.add_permits(new_max - current_max);
@@ -883,9 +909,12 @@ impl DecommissionSlotManager {
             for _ in 0..permits_to_remove {
                 self.decommission_slots
                     .try_acquire()
-                    .map_err(|_| crate::error::RustMqError::InvalidOperation(
-                        "Cannot reduce decommission limit while operations are active".to_string()
-                    ))?
+                    .map_err(|_| {
+                        crate::error::RustMqError::InvalidOperation(
+                            "Cannot reduce decommission limit while operations are active"
+                                .to_string(),
+                        )
+                    })?
                     .forget();
             }
         }
@@ -905,13 +934,13 @@ impl DecommissionSlotManager {
         let decommission_slots = self.decommission_slots.clone();
 
         let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
-        
+
         loop {
             interval.tick().await;
-            
+
             let now = Instant::now();
             let mut expired_slots = Vec::new();
-            
+
             // Find expired slots
             {
                 let active = active_decommissions.read().await;
@@ -921,7 +950,7 @@ impl DecommissionSlotManager {
                     }
                 }
             }
-            
+
             // Remove expired slots and release semaphore permits
             if !expired_slots.is_empty() {
                 let mut active = active_decommissions.write().await;
@@ -929,7 +958,7 @@ impl DecommissionSlotManager {
                     if let Some(slot) = active.remove(operation_id) {
                         // Release the semaphore permit
                         decommission_slots.add_permits(1);
-                        
+
                         tracing::warn!(
                             "Auto-expired decommission slot for broker {} (operation: {}, expired after 1 hour)",
                             slot.broker_id,
@@ -1057,12 +1086,15 @@ mod tests {
         assert_eq!(status[0].broker_id, "broker-1");
 
         // Release slot
-        controller.release_decommission_slot(&result.operation_id).await.unwrap();
+        controller
+            .release_decommission_slot(&result.operation_id)
+            .await
+            .unwrap();
 
         // Check status again
         let status = controller.get_decommission_status().await.unwrap();
         assert_eq!(status.len(), 0);
-        
+
         // Test Raft info
         let raft_info = controller.get_raft_info();
         assert_eq!(raft_info.node_id, "controller-1");
@@ -1106,8 +1138,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_decommission_slot_timeout_integration() {
-        use tokio::time::{timeout, Duration as TokioDuration};
-        
+        use tokio::time::{Duration as TokioDuration, timeout};
+
         let scaling_config = ScalingConfig {
             max_concurrent_additions: 3,
             max_concurrent_decommissions: 1,
@@ -1155,15 +1187,18 @@ mod tests {
 
         // Initially not a leader
         assert!(!controller.raft_state.is_leader());
-        
+
         // Start election
         let won = controller.start_election().await.unwrap();
         assert!(won);
-        
+
         // Should now be leader
         assert!(controller.raft_state.is_leader());
         assert_eq!(controller.raft_state.get_current_term(), 1);
-        assert_eq!(controller.raft_state.get_current_leader(), Some("controller-1".to_string()));
+        assert_eq!(
+            controller.raft_state.get_current_leader(),
+            Some("controller-1".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1181,7 +1216,7 @@ mod tests {
 
         // Become leader first
         controller.start_election().await.unwrap();
-        
+
         // Add some brokers
         let broker1 = BrokerInfo {
             id: "broker-1".to_string(),
@@ -1190,7 +1225,7 @@ mod tests {
             port_rpc: 9093,
             rack_id: "rack-1".to_string(),
         };
-        
+
         let broker2 = BrokerInfo {
             id: "broker-2".to_string(),
             host: "localhost".to_string(),
@@ -1198,7 +1233,7 @@ mod tests {
             port_rpc: 9193,
             rack_id: "rack-1".to_string(),
         };
-        
+
         controller.register_broker(broker1).await.unwrap();
         controller.register_broker(broker2).await.unwrap();
 
@@ -1209,25 +1244,25 @@ mod tests {
             replication_factor: 2,
             config: None,
         };
-        
+
         let response = controller.create_topic(create_request).await.unwrap();
         assert!(response.success);
-        
+
         // Verify topic exists
         let metadata = controller.get_cluster_metadata().await.unwrap();
         assert_eq!(metadata.topics.len(), 1);
         assert_eq!(metadata.topics[0].name, "test-topic");
         assert_eq!(metadata.topics[0].partitions, 3);
         assert_eq!(metadata.partition_assignments.len(), 3); // 3 partitions
-        
+
         // Delete the topic
         let delete_request = DeleteTopicRequest {
             name: "test-topic".to_string(),
         };
-        
+
         let response = controller.delete_topic(delete_request).await.unwrap();
         assert!(response.success);
-        
+
         // Verify topic is gone
         let metadata = controller.get_cluster_metadata().await.unwrap();
         assert_eq!(metadata.topics.len(), 0);
@@ -1254,14 +1289,14 @@ mod tests {
             last_log_index: 0,
             last_log_term: 0,
         };
-        
+
         let response = controller.handle_vote_request(vote_request).await.unwrap();
         assert!(response.vote_granted);
         assert_eq!(response.term, 5);
-        
+
         // Our term should be updated
         assert_eq!(controller.raft_state.get_current_term(), 5);
-        
+
         // Test another vote request with same term from different candidate
         let vote_request2 = VoteRequest {
             term: 5,
@@ -1269,7 +1304,7 @@ mod tests {
             last_log_index: 0,
             last_log_term: 0,
         };
-        
+
         let response2 = controller.handle_vote_request(vote_request2).await.unwrap();
         assert!(!response2.vote_granted); // Already voted for controller-2
     }
@@ -1296,13 +1331,19 @@ mod tests {
             entries: vec![],
             leader_commit: 0,
         };
-        
-        let response = controller.handle_append_entries(append_request).await.unwrap();
+
+        let response = controller
+            .handle_append_entries(append_request)
+            .await
+            .unwrap();
         assert!(response.success);
         assert_eq!(response.term, 3);
-        
+
         // Should recognize controller-2 as leader
-        assert_eq!(controller.raft_state.get_current_leader(), Some("controller-2".to_string()));
+        assert_eq!(
+            controller.raft_state.get_current_leader(),
+            Some("controller-2".to_string())
+        );
         assert!(!controller.raft_state.is_leader());
     }
 }

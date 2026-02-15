@@ -4,9 +4,8 @@
 //! with the RustMQ Rust SDK.
 
 use rustmq_client::{
-    ClientConfig, TlsConfig, AuthConfig, ProducerConfig, 
-    RustMqClient, Message, MessageBuilder,
-    Result,
+    AuthConfig, ClientConfig, Message, MessageBuilder, ProducerConfig, Result, RustMqClient,
+    TlsConfig,
 };
 use std::time::Duration;
 use tokio;
@@ -19,13 +18,10 @@ async fn main() -> Result<()> {
     let tls_config = TlsConfig::secure_config(
         // CA certificate (replace with your CA certificate)
         include_str!("../../../certs/ca.pem").to_string(),
-        
         // Client certificate (replace with your client certificate)
         Some(include_str!("../../../certs/client.pem").to_string()),
-        
         // Client private key (replace with your client private key)
         Some(include_str!("../../../certs/client.key").to_string()),
-        
         // Server name for SNI
         "localhost".to_string(),
     );
@@ -50,18 +46,21 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating secure RustMQ client with mTLS authentication...");
-    
+
     // Create client
     let client = RustMqClient::new(client_config).await?;
-    
+
     // Verify security is enabled
     if let Some(connection) = client.get_connection().await {
         if connection.is_security_enabled() {
             println!("✓ Security is enabled");
-            
+
             if let Some(security_context) = connection.get_security_context().await {
-                println!("✓ Authenticated as principal: {}", security_context.principal);
-                
+                println!(
+                    "✓ Authenticated as principal: {}",
+                    security_context.principal
+                );
+
                 if let Some(cert_info) = &security_context.certificate_info {
                     println!("✓ Certificate subject: {}", cert_info.subject);
                     println!("✓ Certificate issuer: {}", cert_info.issuer);
@@ -82,17 +81,20 @@ async fn main() -> Result<()> {
     };
 
     println!("Creating secure producer...");
-    
+
     // Create producer
     let producer = client.create_producer("secure-topic").await?;
 
     println!("Sending secure messages...");
-    
+
     // Send messages with security context
     for i in 0..10 {
         let message = MessageBuilder::new()
             .key(format!("key-{}", i))
-            .payload(format!("Secure message {} from mTLS authenticated client", i))
+            .payload(format!(
+                "Secure message {} from mTLS authenticated client",
+                i
+            ))
             .header("source", "secure-producer-example")
             .header("timestamp", &chrono::Utc::now().to_rfc3339())
             .build()
@@ -100,8 +102,10 @@ async fn main() -> Result<()> {
 
         match producer.send(message).await {
             Ok(metadata) => {
-                println!("✓ Message {} sent successfully - Partition: {}, Offset: {}", 
-                    i, metadata.partition, metadata.offset);
+                println!(
+                    "✓ Message {} sent successfully - Partition: {}, Offset: {}",
+                    i, metadata.partition, metadata.offset
+                );
             }
             Err(e) => {
                 eprintln!("✗ Failed to send message {}: {}", i, e);
@@ -111,9 +115,9 @@ async fn main() -> Result<()> {
 
     // Flush any remaining messages
     producer.flush().await?;
-    
+
     println!("All messages sent successfully!");
-    
+
     // Demonstrate security context refresh
     if let Some(connection) = client.get_connection().await {
         println!("Refreshing security context...");
@@ -123,4 +127,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

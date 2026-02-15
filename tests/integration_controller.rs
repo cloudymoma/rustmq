@@ -1,7 +1,9 @@
-use rustmq::controller::service::{ControllerService, CreateTopicRequest, DeleteTopicRequest, TopicConfig};
 use rustmq::config::ScalingConfig;
+use rustmq::controller::service::{
+    ControllerService, CreateTopicRequest, DeleteTopicRequest, TopicConfig,
+};
 use rustmq::types::*;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_controller_decommission_slot_management() {
@@ -21,7 +23,7 @@ async fn test_controller_decommission_slot_management() {
         .acquire_decommission_slot("broker-1".to_string(), "admin-1".to_string())
         .await
         .unwrap();
-    
+
     assert!(!result1.operation_id.is_empty());
     assert!(!result1.slot_token.is_empty());
 
@@ -30,14 +32,14 @@ async fn test_controller_decommission_slot_management() {
         .acquire_decommission_slot("broker-2".to_string(), "admin-1".to_string())
         .await
         .unwrap();
-    
+
     assert!(!result2.operation_id.is_empty());
 
     // Test that third slot fails (limit reached)
     let result3 = controller
         .acquire_decommission_slot("broker-3".to_string(), "admin-1".to_string())
         .await;
-    
+
     assert!(result3.is_err());
 
     // Test status retrieval
@@ -45,8 +47,11 @@ async fn test_controller_decommission_slot_management() {
     assert_eq!(status.len(), 2);
 
     // Test slot release
-    controller.release_decommission_slot(&result1.operation_id).await.unwrap();
-    
+    controller
+        .release_decommission_slot(&result1.operation_id)
+        .await
+        .unwrap();
+
     let status = controller.get_decommission_status().await.unwrap();
     assert_eq!(status.len(), 1);
 
@@ -55,7 +60,7 @@ async fn test_controller_decommission_slot_management() {
         .acquire_decommission_slot("broker-4".to_string(), "admin-1".to_string())
         .await
         .unwrap();
-    
+
     assert!(!result4.operation_id.is_empty());
 }
 
@@ -82,7 +87,7 @@ async fn test_controller_duplicate_broker_prevention() {
     let result2 = controller
         .acquire_decommission_slot("broker-1".to_string(), "admin-2".to_string())
         .await;
-    
+
     assert!(result2.is_err());
 }
 
@@ -140,7 +145,7 @@ async fn test_controller_topic_management() {
         port_rpc: 9093,
         rack_id: "rack-1".to_string(),
     };
-    
+
     let broker2 = BrokerInfo {
         id: "broker-2".to_string(),
         host: "localhost".to_string(),
@@ -148,7 +153,7 @@ async fn test_controller_topic_management() {
         port_rpc: 9193,
         rack_id: "rack-1".to_string(),
     };
-    
+
     controller.register_broker(broker1).await.unwrap();
     controller.register_broker(broker2).await.unwrap();
 
@@ -163,7 +168,7 @@ async fn test_controller_topic_management() {
             compression_type: Some("lz4".to_string()),
         }),
     };
-    
+
     let response = controller.create_topic(create_request).await.unwrap();
     assert!(response.success);
     assert!(response.error_message.is_none());
@@ -180,7 +185,7 @@ async fn test_controller_topic_management() {
     let delete_request = DeleteTopicRequest {
         name: "test-topic".to_string(),
     };
-    
+
     let response = controller.delete_topic(delete_request).await.unwrap();
     assert!(response.success);
 
@@ -210,7 +215,7 @@ async fn test_controller_non_leader_operations() {
         replication_factor: 2,
         config: None,
     };
-    
+
     let response = controller.create_topic(create_request).await.unwrap();
     assert!(!response.success);
     assert!(response.error_message.unwrap().contains("Not the leader"));
@@ -237,7 +242,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
     };
-    
+
     let result = controller.update_scaling_config(new_config).await;
     assert!(result.is_ok());
 
@@ -249,7 +254,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
     };
-    
+
     let result = controller.update_scaling_config(invalid_config).await;
     assert!(result.is_err());
 
@@ -261,7 +266,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
     };
-    
+
     let result = controller.update_scaling_config(invalid_config2).await;
     assert!(result.is_err());
 }
@@ -285,10 +290,7 @@ async fn test_controller_concurrent_operations() {
         let controller_clone = controller.clone();
         tasks.push(tokio::spawn(async move {
             controller_clone
-                .acquire_decommission_slot(
-                    format!("broker-{}", i),
-                    format!("admin-{}", i),
-                )
+                .acquire_decommission_slot(format!("broker-{}", i), format!("admin-{}", i))
                 .await
         }));
     }
@@ -332,7 +334,7 @@ async fn test_controller_metadata_consistency() {
         port_rpc: 9093,
         rack_id: "rack-1".to_string(),
     };
-    
+
     controller.register_broker(broker).await.unwrap();
 
     let metadata1 = controller.get_cluster_metadata().await.unwrap();

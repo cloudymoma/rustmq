@@ -4,9 +4,9 @@
 //! This breaks the circular dependency between security and controller modules
 //! by implementing the abstraction defined in the security module.
 
+use crate::controller::service::ControllerService;
 use crate::error::Result;
 use crate::security::acl::RaftOperations;
-use crate::controller::service::ControllerService;
 use async_trait::async_trait;
 use std::sync::Arc;
 

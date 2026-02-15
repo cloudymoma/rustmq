@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
-pub mod upgrade;
 pub mod kubernetes;
+pub mod upgrade;
 
-pub use upgrade::*;
 pub use kubernetes::*;
+pub use upgrade::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpgradeStatus {

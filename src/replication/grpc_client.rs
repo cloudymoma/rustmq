@@ -14,19 +14,15 @@
 // Status: PRODUCTION IMPLEMENTATION (not mock)
 
 use crate::{
-    Result,
-    RustMqError,
+    Result, RustMqError, proto::broker, proto_convert, replication::manager::ReplicationRpcClient,
     types as internal,
-    proto::broker,
-    proto_convert,
-    replication::manager::ReplicationRpcClient,
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
-use tracing::{debug, warn, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Configuration for gRPC replication client
 #[derive(Clone, Debug)]
@@ -68,7 +64,11 @@ pub struct BrokerEndpoint {
 
 impl BrokerEndpoint {
     pub fn new(broker_id: internal::BrokerId, host: String, port: u16) -> Self {
-        Self { broker_id, host, port }
+        Self {
+            broker_id,
+            host,
+            port,
+        }
     }
 
     /// Get the gRPC endpoint URL
@@ -118,7 +118,11 @@ impl GrpcReplicationRpcClient {
     /// - Partition assignment changes
     pub fn register_broker(&self, endpoint: BrokerEndpoint) {
         let broker_id = endpoint.broker_id.clone();
-        debug!("Registering broker endpoint: {} -> {}", broker_id, endpoint.url());
+        debug!(
+            "Registering broker endpoint: {} -> {}",
+            broker_id,
+            endpoint.url()
+        );
         self.endpoints.insert(broker_id, endpoint);
     }
 
@@ -140,16 +144,18 @@ impl GrpcReplicationRpcClient {
         }
 
         // Slow path: create new connection
-        let endpoint_entry = self.endpoints.get(broker_id)
-            .ok_or_else(|| RustMqError::NotFound(
-                format!("No endpoint registered for broker: {}", broker_id)
-            ))?;
+        let endpoint_entry = self.endpoints.get(broker_id).ok_or_else(|| {
+            RustMqError::NotFound(format!("No endpoint registered for broker: {}", broker_id))
+        })?;
 
         let endpoint_info = endpoint_entry.value().clone();
         drop(endpoint_entry); // Release read lock
 
-        info!("Creating new gRPC connection to broker: {} at {}",
-              broker_id, endpoint_info.url());
+        info!(
+            "Creating new gRPC connection to broker: {} at {}",
+            broker_id,
+            endpoint_info.url()
+        );
 
         // Configure tonic endpoint with timeouts and keep-alive
         let endpoint = Endpoint::from_shared(endpoint_info.url())
@@ -160,8 +166,9 @@ impl GrpcReplicationRpcClient {
             .connect_timeout(Duration::from_secs(5));
 
         // Establish connection
-        let channel = endpoint.connect().await
-            .map_err(|e| RustMqError::Network(format!("Failed to connect to {}: {}", broker_id, e)))?;
+        let channel = endpoint.connect().await.map_err(|e| {
+            RustMqError::Network(format!("Failed to connect to {}: {}", broker_id, e))
+        })?;
 
         // Cache connection for reuse
         self.connections.insert(broker_id.clone(), channel.clone());
@@ -170,8 +177,10 @@ impl GrpcReplicationRpcClient {
     }
 
     /// Create a gRPC client stub for a broker
-    async fn get_client(&self, broker_id: &internal::BrokerId)
-        -> Result<broker::broker_replication_service_client::BrokerReplicationServiceClient<Channel>>
+    async fn get_client(
+        &self,
+        broker_id: &internal::BrokerId,
+    ) -> Result<broker::broker_replication_service_client::BrokerReplicationServiceClient<Channel>>
     {
         let channel = self.get_or_create_channel(broker_id).await?;
         Ok(broker::broker_replication_service_client::BrokerReplicationServiceClient::new(channel))
@@ -180,7 +189,11 @@ impl GrpcReplicationRpcClient {
     /// Execute an RPC with automatic retry logic
     ///
     /// Retries transient failures (network errors, timeouts) with exponential backoff
-    async fn execute_with_retry<F, Fut, T>(&self, broker_id: &internal::BrokerId, operation: F) -> Result<T>
+    async fn execute_with_retry<F, Fut, T>(
+        &self,
+        broker_id: &internal::BrokerId,
+        operation: F,
+    ) -> Result<T>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
@@ -198,19 +211,28 @@ impl GrpcReplicationRpcClient {
                 }
                 Err(e) => {
                     // Check if error is retryable
-                    let is_retryable = matches!(e,
-                        RustMqError::Network(_) |
-                        RustMqError::OperationTimeout
-                    );
+                    let is_retryable =
+                        matches!(e, RustMqError::Network(_) | RustMqError::OperationTimeout);
 
                     if !is_retryable || attempt >= self.config.max_retries {
-                        error!("RPC to {} failed (attempt {}/{}): {}",
-                               broker_id, attempt + 1, self.config.max_retries + 1, e);
+                        error!(
+                            "RPC to {} failed (attempt {}/{}): {}",
+                            broker_id,
+                            attempt + 1,
+                            self.config.max_retries + 1,
+                            e
+                        );
                         return Err(e);
                     }
 
-                    warn!("RPC to {} failed (attempt {}/{}), retrying in {:?}: {}",
-                          broker_id, attempt + 1, self.config.max_retries + 1, backoff, e);
+                    warn!(
+                        "RPC to {} failed (attempt {}/{}), retrying in {:?}: {}",
+                        broker_id,
+                        attempt + 1,
+                        self.config.max_retries + 1,
+                        backoff,
+                        e
+                    );
 
                     // Store error for potential final return
                     last_error = Some(e);
@@ -228,23 +250,33 @@ impl GrpcReplicationRpcClient {
         }
 
         // All retries exhausted
-        Err(last_error.unwrap_or_else(||
-            RustMqError::Timeout(format!("All {} retry attempts failed for broker {}",
-                                        self.config.max_retries, broker_id))
-        ))
+        Err(last_error.unwrap_or_else(|| {
+            RustMqError::Timeout(format!(
+                "All {} retry attempts failed for broker {}",
+                self.config.max_retries, broker_id
+            ))
+        }))
     }
 
     /// Convert tonic Status to RustMqError
     fn status_to_error(status: tonic::Status) -> RustMqError {
         match status.code() {
             tonic::Code::NotFound => RustMqError::NotFound(status.message().to_string()),
-            tonic::Code::PermissionDenied => RustMqError::PermissionDenied(status.message().to_string()),
-            tonic::Code::InvalidArgument => RustMqError::InvalidOperation(status.message().to_string()),
+            tonic::Code::PermissionDenied => {
+                RustMqError::PermissionDenied(status.message().to_string())
+            }
+            tonic::Code::InvalidArgument => {
+                RustMqError::InvalidOperation(status.message().to_string())
+            }
             tonic::Code::DeadlineExceeded => RustMqError::Timeout(status.message().to_string()),
-            tonic::Code::ResourceExhausted => RustMqError::ResourceExhausted(status.message().to_string()),
+            tonic::Code::ResourceExhausted => {
+                RustMqError::ResourceExhausted(status.message().to_string())
+            }
             tonic::Code::FailedPrecondition => {
                 // Check if it's a stale leader epoch error
-                if status.message().contains("StaleLeaderEpoch") || status.message().contains("stale leader") {
+                if status.message().contains("StaleLeaderEpoch")
+                    || status.message().contains("stale leader")
+                {
                     RustMqError::StaleLeaderEpoch {
                         current_epoch: 0, // Would be parsed from message in production
                         request_epoch: 0,
@@ -256,7 +288,11 @@ impl GrpcReplicationRpcClient {
                 }
             }
             tonic::Code::Unavailable => RustMqError::Network(status.message().to_string()),
-            _ => RustMqError::Network(format!("gRPC error: {} - {}", status.code(), status.message())),
+            _ => RustMqError::Network(format!(
+                "gRPC error: {} - {}",
+                status.code(),
+                status.message()
+            )),
         }
     }
 }
@@ -269,10 +305,13 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
     async fn replicate_data(
         &self,
         broker_id: &internal::BrokerId,
-        request: internal::ReplicateDataRequest
+        request: internal::ReplicateDataRequest,
     ) -> Result<internal::ReplicateDataResponse> {
-        debug!("Replicating data to broker {}: {} records",
-               broker_id, request.records.len());
+        debug!(
+            "Replicating data to broker {}: {} records",
+            broker_id,
+            request.records.len()
+        );
 
         // Execute with retry logic
         self.execute_with_retry(broker_id, || async {
@@ -282,14 +321,18 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
             // Convert internal request to proto request
             let proto_request = broker::ReplicateDataRequest {
                 leader_epoch: request.leader_epoch,
-                topic_partition: Some(proto_convert::topic_partition_to_proto(&request.topic_partition)),
-                records: request.records.iter()
+                topic_partition: Some(proto_convert::topic_partition_to_proto(
+                    &request.topic_partition,
+                )),
+                records: request
+                    .records
+                    .iter()
                     .map(|r| proto_convert::wal_record_to_proto(r))
                     .collect::<Result<Vec<_>>>()?,
                 leader_id: request.leader_id.clone(),
                 leader_high_watermark: 0, // Would be included in production
-                request_id: 0, // Would generate unique ID in production
-                metadata: None, // Would include metadata in production
+                request_id: 0,            // Would generate unique ID in production
+                metadata: None,           // Would include metadata in production
                 batch_base_offset: request.records.first().map(|r| r.offset).unwrap_or(0),
                 batch_record_count: request.records.len() as u32,
                 batch_size_bytes: request.records.iter().map(|r| r.size() as u64).sum(),
@@ -299,10 +342,15 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
             // Execute gRPC call with timeout
             let response = tokio::time::timeout(
                 self.config.timeout,
-                client.replicate_data(tonic::Request::new(proto_request))
+                client.replicate_data(tonic::Request::new(proto_request)),
             )
             .await
-            .map_err(|_| RustMqError::Timeout(format!("Replication to {} timed out after {:?}", broker_id, self.config.timeout)))?
+            .map_err(|_| {
+                RustMqError::Timeout(format!(
+                    "Replication to {} timed out after {:?}",
+                    broker_id, self.config.timeout
+                ))
+            })?
             .map_err(Self::status_to_error)?;
 
             // Convert proto response to internal response
@@ -323,7 +371,8 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
                 },
                 follower_state,
             })
-        }).await
+        })
+        .await
     }
 
     /// Send heartbeat to a follower broker
@@ -332,7 +381,7 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
     async fn send_heartbeat(
         &self,
         broker_id: &internal::BrokerId,
-        request: internal::HeartbeatRequest
+        request: internal::HeartbeatRequest,
     ) -> Result<internal::HeartbeatResponse> {
         debug!("Sending heartbeat to broker {}", broker_id);
 
@@ -345,20 +394,22 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
             let proto_request = broker::HeartbeatRequest {
                 leader_epoch: request.leader_epoch,
                 leader_id: request.leader_id.clone(),
-                topic_partition: Some(proto_convert::topic_partition_to_proto(&request.topic_partition)),
+                topic_partition: Some(proto_convert::topic_partition_to_proto(
+                    &request.topic_partition,
+                )),
                 high_watermark: request.high_watermark,
                 metadata: None, // Would include metadata in production
                 leader_log_end_offset: request.high_watermark, // Use high watermark as log end offset
-                in_sync_replicas: vec![], // Would populate in production
-                heartbeat_interval_ms: 1000, // Default 1 second
-                leader_messages_per_second: 0, // Would track in production
-                leader_bytes_per_second: 0, // Would track in production
+                in_sync_replicas: vec![],                      // Would populate in production
+                heartbeat_interval_ms: 1000,                   // Default 1 second
+                leader_messages_per_second: 0,                 // Would track in production
+                leader_bytes_per_second: 0,                    // Would track in production
             };
 
             // Execute gRPC call with timeout
             let response = tokio::time::timeout(
                 self.config.timeout,
-                client.send_heartbeat(tonic::Request::new(proto_request))
+                client.send_heartbeat(tonic::Request::new(proto_request)),
             )
             .await
             .map_err(|_| RustMqError::OperationTimeout)?
@@ -382,7 +433,8 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
                 },
                 follower_state,
             })
-        }).await
+        })
+        .await
     }
 
     /// Transfer leadership to another broker
@@ -391,7 +443,7 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
     async fn transfer_leadership(
         &self,
         broker_id: &internal::BrokerId,
-        request: internal::TransferLeadershipRequest
+        request: internal::TransferLeadershipRequest,
     ) -> Result<internal::TransferLeadershipResponse> {
         info!("Transferring leadership to broker {}", broker_id);
 
@@ -400,47 +452,51 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
         let mut temp_config = self.config.clone();
         temp_config.max_retries = 1; // Leadership transfer should be quick or fail fast
 
-        let result = self.execute_with_retry(broker_id, || async {
-            // Get gRPC client
-            let mut client = self.get_client(broker_id).await?;
+        let result = self
+            .execute_with_retry(broker_id, || async {
+                // Get gRPC client
+                let mut client = self.get_client(broker_id).await?;
 
-            // Convert internal request to proto request
-            let proto_request = broker::TransferLeadershipRequest {
-                topic_partition: Some(proto_convert::topic_partition_to_proto(&request.topic_partition)),
-                current_leader_id: request.current_leader_id.clone(),
-                current_leader_epoch: request.current_leader_epoch,
-                new_leader_id: request.new_leader_id.clone(),
-                metadata: None, // Would include metadata in production
-                controller_id: String::new(), // Would populate in production
-                controller_epoch: 0, // Would populate in production
-                transfer_timeout_ms: 10000, // 10 second timeout
-                force_transfer: false, // Safe default: don't force risky transfers
-                wait_for_sync: true, // Safe default: wait for new leader to sync
-            };
+                // Convert internal request to proto request
+                let proto_request = broker::TransferLeadershipRequest {
+                    topic_partition: Some(proto_convert::topic_partition_to_proto(
+                        &request.topic_partition,
+                    )),
+                    current_leader_id: request.current_leader_id.clone(),
+                    current_leader_epoch: request.current_leader_epoch,
+                    new_leader_id: request.new_leader_id.clone(),
+                    metadata: None, // Would include metadata in production
+                    controller_id: String::new(), // Would populate in production
+                    controller_epoch: 0, // Would populate in production
+                    transfer_timeout_ms: 10000, // 10 second timeout
+                    force_transfer: false, // Safe default: don't force risky transfers
+                    wait_for_sync: true, // Safe default: wait for new leader to sync
+                };
 
-            // Execute gRPC call with timeout
-            let response = tokio::time::timeout(
-                self.config.timeout,
-                client.transfer_leadership(tonic::Request::new(proto_request))
-            )
-            .await
-            .map_err(|_| RustMqError::OperationTimeout)?
-            .map_err(Self::status_to_error)?;
+                // Execute gRPC call with timeout
+                let response = tokio::time::timeout(
+                    self.config.timeout,
+                    client.transfer_leadership(tonic::Request::new(proto_request)),
+                )
+                .await
+                .map_err(|_| RustMqError::OperationTimeout)?
+                .map_err(Self::status_to_error)?;
 
-            // Convert proto response to internal response
-            let proto_resp = response.into_inner();
+                // Convert proto response to internal response
+                let proto_resp = response.into_inner();
 
-            Ok(internal::TransferLeadershipResponse {
-                success: proto_resp.success,
-                error_code: proto_resp.error_code,
-                error_message: if proto_resp.error_message.is_empty() {
-                    None
-                } else {
-                    Some(proto_resp.error_message)
-                },
-                new_leader_epoch: Some(proto_resp.new_leader_epoch),
+                Ok(internal::TransferLeadershipResponse {
+                    success: proto_resp.success,
+                    error_code: proto_resp.error_code,
+                    error_message: if proto_resp.error_message.is_empty() {
+                        None
+                    } else {
+                        Some(proto_resp.error_message)
+                    },
+                    new_leader_epoch: Some(proto_resp.new_leader_epoch),
+                })
             })
-        }).await;
+            .await;
 
         // Restore original retry config
         drop(temp_config);
@@ -468,11 +524,7 @@ mod tests {
     #[tokio::test]
     async fn test_broker_registration() {
         let client = GrpcReplicationRpcClient::new_default();
-        let endpoint = BrokerEndpoint::new(
-            "broker-1".to_string(),
-            "localhost".to_string(),
-            9093
-        );
+        let endpoint = BrokerEndpoint::new("broker-1".to_string(), "localhost".to_string(), 9093);
 
         client.register_broker(endpoint.clone());
         assert!(client.endpoints.contains_key("broker-1"));
@@ -482,11 +534,7 @@ mod tests {
     #[tokio::test]
     async fn test_broker_unregistration() {
         let client = GrpcReplicationRpcClient::new_default();
-        let endpoint = BrokerEndpoint::new(
-            "broker-1".to_string(),
-            "localhost".to_string(),
-            9093
-        );
+        let endpoint = BrokerEndpoint::new("broker-1".to_string(), "localhost".to_string(), 9093);
 
         client.register_broker(endpoint);
         assert!(client.endpoints.contains_key("broker-1"));
@@ -498,7 +546,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_channel_no_endpoint() {
         let client = GrpcReplicationRpcClient::new_default();
-        let result = client.get_or_create_channel(&"nonexistent".to_string()).await;
+        let result = client
+            .get_or_create_channel(&"nonexistent".to_string())
+            .await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), RustMqError::NotFound(_)));
     }

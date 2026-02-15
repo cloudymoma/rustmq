@@ -1,21 +1,21 @@
 //! Simplified comprehensive tests for protobuf type conversion layer
-//! 
+//!
 //! This test suite provides extensive coverage for all type conversions between
 //! internal RustMQ types and protobuf types, including:
 //! - Roundtrip conversion testing
 //! - Edge case handling (empty values, nulls, boundaries)
 //! - Error propagation and validation
 
-use rustmq::{
-    types::*,
-    proto::{common, broker},
-    proto_convert::{self, ConversionError},
-    error::RustMqError,
-};
-use chrono::{Utc, TimeZone};
 use bytes::Bytes;
+use chrono::{TimeZone, Utc};
 use prost_types::Timestamp;
 use rand::Rng;
+use rustmq::{
+    error::RustMqError,
+    proto::{broker, common},
+    proto_convert::{self, ConversionError},
+    types::*,
+};
 
 // ============================================================================
 // Roundtrip Conversion Tests
@@ -27,11 +27,11 @@ fn test_topic_partition_roundtrip() {
         topic: "test-topic".to_string(),
         partition: 42,
     };
-    
+
     // Internal -> Proto -> Internal
     let proto: common::TopicPartition = original.clone().into();
     let back_to_internal: TopicPartition = proto.into();
-    
+
     assert_eq!(original, back_to_internal);
 }
 
@@ -70,11 +70,11 @@ fn test_record_roundtrip_success() {
         ],
         Utc::now().timestamp_millis(),
     );
-    
+
     // Internal -> Proto -> Internal
     let proto: common::Record = original.clone().try_into().unwrap();
     let back_to_internal: Record = proto.try_into().unwrap();
-    
+
     assert_eq!(original.key, back_to_internal.key);
     assert_eq!(original.value, back_to_internal.value);
     assert_eq!(original.headers.len(), back_to_internal.headers.len());
@@ -86,48 +86,41 @@ fn test_record_roundtrip_success() {
 fn test_record_edge_cases() {
     let test_cases = vec![
         // Empty key
-        Record::new(
-            None,
-            b"value".to_vec(),
-            vec![],
-            0,
-        ),
+        Record::new(None, b"value".to_vec(), vec![], 0),
         // Empty value
-        Record::new(
-            Some(b"key".to_vec()),
-            vec![],
-            vec![],
-            i64::MAX,
-        ),
+        Record::new(Some(b"key".to_vec()), vec![], vec![], i64::MAX),
         // Large data
         Record::new(
             Some(vec![0u8; 1000]),
             vec![1u8; 10000],
-            (0..10).map(|i| Header::new(
-                format!("header-{}", i),
-                vec![i as u8; 10],
-            )).collect(),
+            (0..10)
+                .map(|i| Header::new(format!("header-{}", i), vec![i as u8; 10]))
+                .collect(),
             Utc::now().timestamp_millis(),
         ),
     ];
 
     for original in test_cases {
         let proto_result: Result<common::Record, ConversionError> = original.clone().try_into();
-        assert!(proto_result.is_ok(), "Failed to convert to proto: {:?}", original);
-        
+        assert!(
+            proto_result.is_ok(),
+            "Failed to convert to proto: {:?}",
+            original
+        );
+
         let proto = proto_result.unwrap();
         let back_result: Result<Record, ConversionError> = proto.try_into();
         assert!(back_result.is_ok(), "Failed to convert back from proto");
-        
+
         let back_to_internal = back_result.unwrap();
-        
+
         // Verify key handling (None -> empty vec -> None)
         if original.key.is_none() {
             assert!(back_to_internal.key.is_none() || back_to_internal.key == Some(vec![].into()));
         } else {
             assert_eq!(original.key, back_to_internal.key);
         }
-        
+
         assert_eq!(original.value, back_to_internal.value);
         assert_eq!(original.headers.len(), back_to_internal.headers.len());
     }
@@ -149,10 +142,10 @@ fn test_wal_record_roundtrip() {
         ),
         crc32: 98765,
     };
-    
+
     let proto: common::WalRecord = original.clone().try_into().unwrap();
     let back_to_internal: WalRecord = proto.try_into().unwrap();
-    
+
     assert_eq!(original.topic_partition, back_to_internal.topic_partition);
     assert_eq!(original.offset, back_to_internal.offset);
     assert_eq!(original.crc32, back_to_internal.crc32);
@@ -168,12 +161,15 @@ fn test_wal_record_missing_fields() {
             key: b"key".to_vec().into(),
             value: b"value".to_vec().into(),
             headers: vec![],
-            timestamp: Some(Timestamp { seconds: 0, nanos: 0 }),
+            timestamp: Some(Timestamp {
+                seconds: 0,
+                nanos: 0,
+            }),
         }),
         crc32: 12345,
         version: 1,
     };
-    
+
     let result: Result<WalRecord, ConversionError> = proto_wal.try_into();
     assert!(result.is_err());
     match result.unwrap_err() {
@@ -192,7 +188,7 @@ fn test_wal_record_missing_fields() {
         crc32: 12345,
         version: 1,
     };
-    
+
     let result: Result<WalRecord, ConversionError> = proto_wal.try_into();
     assert!(result.is_err());
     match result.unwrap_err() {
@@ -210,10 +206,10 @@ fn test_broker_info_roundtrip() {
         port_rpc: 9093,
         rack_id: "rack-a".to_string(),
     };
-    
+
     let proto: common::BrokerInfo = original.clone().try_into().unwrap();
     let back_to_internal: BrokerInfo = proto.try_into().unwrap();
-    
+
     // Manual comparison since BrokerInfo doesn't implement PartialEq
     assert_eq!(original.id, back_to_internal.id);
     assert_eq!(original.host, back_to_internal.host);
@@ -268,11 +264,11 @@ fn test_acknowledgment_level_all_variants() {
         AcknowledgmentLevel::Custom(0),
         AcknowledgmentLevel::Custom(u32::MAX as usize),
     ];
-    
+
     for level in levels {
         let proto_level: common::AcknowledgmentLevel = level.clone().into();
         let back_to_internal: AcknowledgmentLevel = proto_level.into();
-        
+
         // Custom levels will map to Custom(3) due to default mapping
         match level {
             AcknowledgmentLevel::Custom(_) => {
@@ -290,11 +286,8 @@ fn test_acknowledgment_level_all_variants() {
 
 #[test]
 fn test_durability_level_roundtrip() {
-    let levels = vec![
-        DurabilityLevel::LocalOnly,
-        DurabilityLevel::Durable,
-    ];
-    
+    let levels = vec![DurabilityLevel::LocalOnly, DurabilityLevel::Durable];
+
     for level in levels {
         let proto_level: common::DurabilityLevel = level.clone().into();
         let back_to_internal: DurabilityLevel = proto_level.into();
@@ -312,7 +305,7 @@ fn test_compression_type_roundtrip() {
         CompressionType::Lz4,
         CompressionType::Zstd,
     ];
-    
+
     for compression_type in types {
         let proto_type: common::CompressionType = compression_type.clone().into();
         let back_to_internal: CompressionType = proto_type.into();
@@ -335,15 +328,23 @@ fn test_follower_state_roundtrip() {
         last_heartbeat: Utc::now(),
         lag: 500,
     };
-    
+
     let proto: common::FollowerState = original.clone().try_into().unwrap();
     let back_to_internal: FollowerState = proto.try_into().unwrap();
-    
+
     assert_eq!(original.broker_id, back_to_internal.broker_id);
-    assert_eq!(original.last_known_offset, back_to_internal.last_known_offset);
+    assert_eq!(
+        original.last_known_offset,
+        back_to_internal.last_known_offset
+    );
     assert_eq!(original.lag, back_to_internal.lag);
     // Timestamp conversion may have slight differences
-    assert!((original.last_heartbeat.timestamp_millis() - back_to_internal.last_heartbeat.timestamp_millis()).abs() <= 1000);
+    assert!(
+        (original.last_heartbeat.timestamp_millis()
+            - back_to_internal.last_heartbeat.timestamp_millis())
+        .abs()
+            <= 1000
+    );
 }
 
 #[test]
@@ -364,16 +365,20 @@ fn test_follower_state_edge_cases() {
     ];
 
     for original in test_cases {
-        let proto_result: Result<common::FollowerState, ConversionError> = original.clone().try_into();
+        let proto_result: Result<common::FollowerState, ConversionError> =
+            original.clone().try_into();
         assert!(proto_result.is_ok());
-        
+
         let proto = proto_result.unwrap();
         let back_result: Result<FollowerState, ConversionError> = proto.try_into();
         assert!(back_result.is_ok());
-        
+
         let back_to_internal = back_result.unwrap();
         assert_eq!(original.broker_id, back_to_internal.broker_id);
-        assert_eq!(original.last_known_offset, back_to_internal.last_known_offset);
+        assert_eq!(
+            original.last_known_offset,
+            back_to_internal.last_known_offset
+        );
         assert_eq!(original.lag, back_to_internal.lag);
     }
 }
@@ -390,28 +395,26 @@ fn test_replicate_data_request_roundtrip() {
             topic: "test-topic".to_string(),
             partition: 3,
         },
-        records: vec![
-            WalRecord {
-                topic_partition: TopicPartition {
-                    topic: "test-topic".to_string(),
-                    partition: 3,
-                },
-                offset: 100,
-                record: Record::new(
-                    Some(b"key1".to_vec()),
-                    b"value1".to_vec(),
-                    vec![],
-                    Utc::now().timestamp_millis(),
-                ),
-                crc32: 12345,
+        records: vec![WalRecord {
+            topic_partition: TopicPartition {
+                topic: "test-topic".to_string(),
+                partition: 3,
             },
-        ],
+            offset: 100,
+            record: Record::new(
+                Some(b"key1".to_vec()),
+                b"value1".to_vec(),
+                vec![],
+                Utc::now().timestamp_millis(),
+            ),
+            crc32: 12345,
+        }],
         leader_id: "leader-1".to_string(),
     };
-    
+
     let proto: broker::ReplicateDataRequest = original.clone().try_into().unwrap();
     let back_to_internal: ReplicateDataRequest = proto.try_into().unwrap();
-    
+
     assert_eq!(original.leader_epoch, back_to_internal.leader_epoch);
     assert_eq!(original.topic_partition, back_to_internal.topic_partition);
     assert_eq!(original.leader_id, back_to_internal.leader_id);
@@ -431,10 +434,10 @@ fn test_replicate_data_response_roundtrip() {
             lag: 10,
         }),
     };
-    
+
     let proto: broker::ReplicateDataResponse = original.clone().try_into().unwrap();
     let back_to_internal: ReplicateDataResponse = proto.try_into().unwrap();
-    
+
     assert_eq!(original.success, back_to_internal.success);
     assert_eq!(original.error_code, back_to_internal.error_code);
     assert_eq!(original.error_message, back_to_internal.error_message);
@@ -453,10 +456,10 @@ fn test_heartbeat_request_roundtrip() {
         },
         high_watermark: 1000,
     };
-    
+
     let proto: broker::HeartbeatRequest = original.clone().try_into().unwrap();
     let back_to_internal: HeartbeatRequest = proto.try_into().unwrap();
-    
+
     // Manual comparison since HeartbeatRequest doesn't implement PartialEq
     assert_eq!(original.leader_epoch, back_to_internal.leader_epoch);
     assert_eq!(original.leader_id, back_to_internal.leader_id);
@@ -472,15 +475,18 @@ fn test_heartbeat_response_error_case() {
         error_message: Some("Partition not found".to_string()),
         follower_state: None,
     };
-    
+
     let proto: broker::HeartbeatResponse = original.clone().try_into().unwrap();
     let back_to_internal: HeartbeatResponse = proto.try_into().unwrap();
-    
+
     assert_eq!(original.success, back_to_internal.success);
     assert_eq!(original.error_code, back_to_internal.error_code);
     assert_eq!(original.error_message, back_to_internal.error_message);
     // Manual comparison for follower_state
-    assert_eq!(original.follower_state.is_some(), back_to_internal.follower_state.is_some());
+    assert_eq!(
+        original.follower_state.is_some(),
+        back_to_internal.follower_state.is_some()
+    );
 }
 
 // ============================================================================
@@ -493,7 +499,10 @@ fn test_error_code_mapping_comprehensive() {
         RustMqError::TopicNotFound("test-topic".to_string()),
         RustMqError::PartitionNotFound("test-partition".to_string()),
         RustMqError::BrokerNotFound("test-broker".to_string()),
-        RustMqError::StaleLeaderEpoch { request_epoch: 1, current_epoch: 2 },
+        RustMqError::StaleLeaderEpoch {
+            request_epoch: 1,
+            current_epoch: 2,
+        },
         RustMqError::NotLeader("test-broker".to_string()),
         RustMqError::OffsetOutOfRange("offset 100".to_string()),
         RustMqError::TopicAlreadyExists("existing-topic".to_string()),
@@ -508,13 +517,21 @@ fn test_error_code_mapping_comprehensive() {
         let error_code = proto_convert::error_to_code(&error);
         let error_message = proto_convert::error_to_message(&error);
         let is_retryable = proto_convert::error_is_retryable(&error);
-        
+
         // Verify error code is valid
-        assert!(error_code > 0, "Error code should be positive for {:?}", error);
-        
+        assert!(
+            error_code > 0,
+            "Error code should be positive for {:?}",
+            error
+        );
+
         // Verify error message is not empty
-        assert!(!error_message.is_empty(), "Error message should not be empty for {:?}", error);
-        
+        assert!(
+            !error_message.is_empty(),
+            "Error message should not be empty for {:?}",
+            error
+        );
+
         // Verify retryable classification makes sense
         match error {
             RustMqError::Timeout(_) | RustMqError::ResourceExhausted(_) => {
@@ -545,18 +562,17 @@ fn test_timestamp_conversion_edge_cases() {
 
     for millis in test_timestamps {
         // Test timestamp conversion through Record conversion
-        let record = Record::new(
-            None,
-            vec![],
-            vec![],
-            millis,
-        );
+        let record = Record::new(None, vec![], vec![], millis);
         let proto_record: common::Record = record.try_into().unwrap();
         let back_record: Record = proto_record.try_into().unwrap();
-        
+
         // Allow small rounding error due to nanosecond precision
-        assert!((millis - back_record.timestamp).abs() <= 1, 
-            "Timestamp conversion failed: {} != {}", millis, back_record.timestamp);
+        assert!(
+            (millis - back_record.timestamp).abs() <= 1,
+            "Timestamp conversion failed: {} != {}",
+            millis,
+            back_record.timestamp
+        );
     }
 }
 
@@ -566,18 +582,16 @@ fn test_timestamp_precision() {
     let base_time = Utc::now().timestamp_millis();
     for i in 0..100 {
         let test_time = base_time + i;
-        let record = Record::new(
-            None,
-            vec![],
-            vec![],
-            test_time,
-        );
+        let record = Record::new(None, vec![], vec![], test_time);
         let proto_record: common::Record = record.try_into().unwrap();
         let back_record: Record = proto_record.try_into().unwrap();
-        
+
         // Allow for rounding error
-        assert!((test_time - back_record.timestamp).abs() <= 1, 
-            "Precision lost for timestamp {}", test_time);
+        assert!(
+            (test_time - back_record.timestamp).abs() <= 1,
+            "Precision lost for timestamp {}",
+            test_time
+        );
     }
 }
 
@@ -590,52 +604,61 @@ fn test_large_data_conversion() {
     // Test conversion with large data structures
     let large_record = Record::new(
         Some(vec![0u8; 10_000]), // 10KB key
-        vec![1u8; 100_000],    // 100KB value
-        (0..100).map(|i| Header::new(
-            format!("header-{}", i),
-            vec![i as u8; 10],
-        )).collect(),
+        vec![1u8; 100_000],      // 100KB value
+        (0..100)
+            .map(|i| Header::new(format!("header-{}", i), vec![i as u8; 10]))
+            .collect(),
         Utc::now().timestamp_millis(),
     );
 
     let start = std::time::Instant::now();
     let proto_result: Result<common::Record, ConversionError> = large_record.clone().try_into();
     let conversion_time = start.elapsed();
-    
+
     assert!(proto_result.is_ok(), "Large data conversion should succeed");
-    assert!(conversion_time.as_millis() < 1000, "Conversion should be fast even for large data");
-    
+    assert!(
+        conversion_time.as_millis() < 1000,
+        "Conversion should be fast even for large data"
+    );
+
     if let Ok(proto) = proto_result {
         let start = std::time::Instant::now();
         let back_result: Result<Record, ConversionError> = proto.try_into();
         let back_conversion_time = start.elapsed();
-        
+
         assert!(back_result.is_ok(), "Back conversion should succeed");
-        assert!(back_conversion_time.as_millis() < 1000, "Back conversion should be fast");
+        assert!(
+            back_conversion_time.as_millis() < 1000,
+            "Back conversion should be fast"
+        );
     }
 }
 
 #[test]
 fn test_random_data_resilience() {
     let mut rng = rand::thread_rng();
-    
+
     for _ in 0..100 {
         // Generate random record data
         let key_len = rng.gen_range(0..100);
         let value_len = rng.gen_range(0..1000);
         let header_count = rng.gen_range(0..10);
-        
+
         let record = Record::new(
-            if key_len > 0 { 
-                Some((0..key_len).map(|_| rng.r#gen()).collect()) 
-            } else { 
-                None 
+            if key_len > 0 {
+                Some((0..key_len).map(|_| rng.r#gen()).collect())
+            } else {
+                None
             },
             (0..value_len).map(|_| rng.r#gen()).collect(),
-            (0..header_count).map(|i| Header::new(
-                format!("header-{}", i),
-                (0..rng.gen_range(0..10)).map(|_| rng.r#gen()).collect(),
-            )).collect(),
+            (0..header_count)
+                .map(|i| {
+                    Header::new(
+                        format!("header-{}", i),
+                        (0..rng.gen_range(0..10)).map(|_| rng.r#gen()).collect(),
+                    )
+                })
+                .collect(),
             rng.gen_range(0..i64::MAX / 1000),
         );
 
@@ -651,12 +674,12 @@ fn test_random_data_resilience() {
 #[test]
 fn test_utf8_edge_cases() {
     let test_strings = vec![
-        String::new(), // Empty string
-        "Hello, World!".to_string(), // ASCII
+        String::new(),                  // Empty string
+        "Hello, World!".to_string(),    // ASCII
         "Héllo, Wörld! 🌍".to_string(), // Unicode with emoji
-        "नमस्ते दुनिया".to_string(), // Hindi
-        "こんにちは世界".to_string(), // Japanese
-        "🚀🔥⭐🎯💯".to_string(), // Only emojis
+        "नमस्ते दुनिया".to_string(),       // Hindi
+        "こんにちは世界".to_string(),   // Japanese
+        "🚀🔥⭐🎯💯".to_string(),       // Only emojis
     ];
 
     for test_string in test_strings {
@@ -664,10 +687,14 @@ fn test_utf8_edge_cases() {
             topic: test_string.clone(),
             partition: 0,
         };
-        
+
         let proto: common::TopicPartition = topic_partition.clone().into();
         let back: TopicPartition = proto.into();
-        
-        assert_eq!(topic_partition, back, "UTF-8 conversion failed for: {}", test_string);
+
+        assert_eq!(
+            topic_partition, back,
+            "UTF-8 conversion failed for: {}",
+            test_string
+        );
     }
 }

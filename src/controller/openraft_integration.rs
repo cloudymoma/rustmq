@@ -1,13 +1,13 @@
 // Simplified OpenRaft integration for RustMQ
 // This is a placeholder implementation that will be expanded incrementally
 
+use crate::controller::service::{TopicConfig, TopicInfo};
+use crate::types::*;
 use openraft::{Config, SnapshotPolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tokio::sync::RwLock;
 use std::sync::Arc;
-use crate::types::*;
-use crate::controller::service::{TopicInfo, TopicConfig};
+use tokio::sync::RwLock;
 
 /// Node ID type for RustMQ cluster
 pub type NodeId = String;
@@ -85,14 +85,19 @@ impl RustMqStateMachine {
     /// Apply a command to the state machine
     pub fn apply_command(&mut self, cmd: &RustMqAppData) -> crate::Result<RustMqAppDataResponse> {
         match cmd {
-            RustMqAppData::CreateTopic { name, partitions, replication_factor, config } => {
+            RustMqAppData::CreateTopic {
+                name,
+                partitions,
+                replication_factor,
+                config,
+            } => {
                 if self.topics.contains_key(name) {
                     return Ok(RustMqAppDataResponse {
                         success: false,
                         error_message: Some(format!("Topic {} already exists", name)),
                     });
                 }
-                
+
                 let topic_info = TopicInfo {
                     name: name.clone(),
                     partitions: *partitions,
@@ -100,15 +105,15 @@ impl RustMqStateMachine {
                     config: config.clone(),
                     created_at: chrono::Utc::now(),
                 };
-                
+
                 self.topics.insert(name.clone(), topic_info);
-                
+
                 Ok(RustMqAppDataResponse {
                     success: true,
                     error_message: None,
                 })
             }
-            
+
             RustMqAppData::DeleteTopic { name } => {
                 if self.topics.remove(name).is_none() {
                     return Ok(RustMqAppDataResponse {
@@ -116,25 +121,25 @@ impl RustMqStateMachine {
                         error_message: Some(format!("Topic {} not found", name)),
                     });
                 }
-                
+
                 // Remove partition assignments for this topic
                 self.partition_assignments.retain(|tp, _| tp.topic != *name);
-                
+
                 Ok(RustMqAppDataResponse {
                     success: true,
                     error_message: None,
                 })
             }
-            
+
             RustMqAppData::AddBroker { broker } => {
                 self.brokers.insert(broker.id.clone(), broker.clone());
-                
+
                 Ok(RustMqAppDataResponse {
                     success: true,
                     error_message: None,
                 })
             }
-            
+
             RustMqAppData::RemoveBroker { broker_id } => {
                 if self.brokers.remove(broker_id).is_none() {
                     return Ok(RustMqAppDataResponse {
@@ -142,7 +147,7 @@ impl RustMqStateMachine {
                         error_message: Some(format!("Broker {} not found", broker_id)),
                     });
                 }
-                
+
                 Ok(RustMqAppDataResponse {
                     success: true,
                     error_message: None,
@@ -196,10 +201,10 @@ impl RustMqRaftManager {
     pub async fn become_leader(&self) {
         let mut is_leader = self.is_leader.write().await;
         *is_leader = true;
-        
+
         let mut term = self.current_term.write().await;
         *term += 1;
-        
+
         tracing::info!("Node {} became leader for term {}", self.node_id, *term);
     }
 
@@ -214,10 +219,10 @@ impl RustMqRaftManager {
 
         let mut state_machine = self.state_machine.write().await;
         let result = state_machine.apply_command(&cmd)?;
-        
+
         // In a real implementation, this would go through Raft consensus
         state_machine.last_applied_log += 1;
-        
+
         Ok(result)
     }
 
@@ -241,7 +246,7 @@ pub fn create_raft_config(cluster_name: &str) -> Config {
         election_timeout_max: 300,
         heartbeat_interval: 50,
         // Snapshot configuration for production message queue (in milliseconds)
-        install_snapshot_timeout: 60_000, // 60 seconds 
+        install_snapshot_timeout: 60_000,         // 60 seconds
         snapshot_max_chunk_size: 4 * 1024 * 1024, // 4MB chunks
         // Replication settings
         max_payload_entries: 300,
@@ -324,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_raft_integration_helper() {
         let helper = RaftIntegrationHelper::new("controller-1".to_string(), vec![]);
-        
+
         // Become leader for testing
         helper.become_leader().await;
         assert!(helper.is_leader().await);
@@ -336,12 +341,10 @@ mod tests {
             compression_type: Some("lz4".to_string()),
         };
 
-        let result = helper.create_topic(
-            "test-topic".to_string(),
-            3,
-            2,
-            config,
-        ).await.unwrap();
+        let result = helper
+            .create_topic("test-topic".to_string(), 3, 2, config)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.error_message.is_none());
@@ -394,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn test_leadership_requirements() {
         let helper = RaftIntegrationHelper::new("controller-1".to_string(), vec![]);
-        
+
         // Should not be leader initially
         assert!(!helper.is_leader().await);
 
@@ -405,12 +408,10 @@ mod tests {
             compression_type: Some("lz4".to_string()),
         };
 
-        let result = helper.create_topic(
-            "test-topic".to_string(),
-            3,
-            2,
-            config,
-        ).await.unwrap();
+        let result = helper
+            .create_topic("test-topic".to_string(), 3, 2, config)
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error_message.is_some());

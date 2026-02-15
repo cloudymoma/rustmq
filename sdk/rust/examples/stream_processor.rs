@@ -1,7 +1,10 @@
-use rustmq_client::{*, stream::{MessageProcessor, ErrorStrategy, StreamMode}};
+use async_trait::async_trait;
+use rustmq_client::{
+    stream::{ErrorStrategy, MessageProcessor, StreamMode},
+    *,
+};
 use tokio;
 use tracing_subscriber;
-use async_trait::async_trait;
 
 // Custom message processor that transforms messages
 struct UppercaseProcessor;
@@ -21,7 +24,14 @@ impl MessageProcessor for UppercaseProcessor {
             .payload(uppercase_payload)
             .header("processor", "uppercase")
             .header("original-topic", &message.topic)
-            .header("processed-at", &std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs().to_string())
+            .header(
+                "processed-at",
+                &std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .to_string(),
+            )
             .build()
             .map_err(|e| ClientError::Stream(e))?;
 
@@ -69,15 +79,17 @@ async fn main() -> Result<()> {
         processing_timeout: std::time::Duration::from_secs(30),
         exactly_once: false,
         max_in_flight: 100,
-        error_strategy: ErrorStrategy::Retry { 
-            max_attempts: 3, 
-            backoff_ms: 1000 
+        error_strategy: ErrorStrategy::Retry {
+            max_attempts: 3,
+            backoff_ms: 1000,
         },
         mode: StreamMode::Individual,
     };
 
     // Create message stream with custom processor
-    let stream = client.create_stream(stream_config).await?
+    let stream = client
+        .create_stream(stream_config)
+        .await?
         .with_processor(UppercaseProcessor);
 
     println!("Created stream processor: input-topic -> output-topic");
@@ -91,7 +103,9 @@ async fn main() -> Result<()> {
     println!("Stream processing active - metrics monitoring would go here");
 
     // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to install Ctrl+C handler");
     println!("\nReceived Ctrl+C, shutting down stream processor...");
 
     // Stop processing

@@ -1,5 +1,5 @@
 //! Performance benchmarks for gRPC protobuf operations
-//! 
+//!
 //! This benchmark suite measures the performance of critical protobuf operations:
 //! - Type conversion performance (internal ↔ protobuf)
 //! - Serialization/deserialization overhead
@@ -7,20 +7,16 @@
 //! - Concurrent operation throughput
 //! - Memory allocation patterns
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use chrono::Utc;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use prost_types;
+use rand::{Rng, thread_rng};
 use rustmq::{
-    types::*,
-    common,
-    proto_broker as broker,
-    proto_controller as controller,
-    proto_convert,
-    error::RustMqError,
+    common, error::RustMqError, proto_broker as broker, proto_controller as controller,
+    proto_convert, types::*,
 };
 use smallvec::SmallVec;
-use chrono::Utc;
 use std::time::Duration;
-use rand::{Rng, thread_rng};
-use prost_types;
 
 // ============================================================================
 // Benchmark Data Generators
@@ -28,51 +24,68 @@ use prost_types;
 
 fn generate_test_record(key_size: usize, value_size: usize, header_count: usize) -> Record {
     let mut rng = thread_rng();
-    
+
     Record {
         key: if key_size > 0 {
-            Some(((0..key_size).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into())
+            Some(
+                ((0..key_size)
+                    .map(|_| rng.r#gen::<u8>())
+                    .collect::<Vec<u8>>())
+                .into(),
+            )
         } else {
             None
         },
-        value: ((0..value_size).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into(),
-        headers: (0..header_count).map(|i| Header {
-            key: format!("header-{}", i),
-            value: ((0..20).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into(),
-        }).collect(),
+        value: ((0..value_size)
+            .map(|_| rng.r#gen::<u8>())
+            .collect::<Vec<u8>>())
+        .into(),
+        headers: (0..header_count)
+            .map(|i| Header {
+                key: format!("header-{}", i),
+                value: ((0..20).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>()).into(),
+            })
+            .collect(),
         timestamp: Utc::now().timestamp_millis(),
     }
 }
 
 fn generate_wal_record_batch(count: usize, record_size: usize) -> Vec<WalRecord> {
-    (0..count).map(|i| WalRecord {
-        topic_partition: TopicPartition {
-            topic: "benchmark-topic".to_string(),
-            partition: i as u32 % 10,
-        },
-        offset: i as u64,
-        record: generate_test_record(50, record_size, 3),
-        crc32: thread_rng().r#gen::<u32>(),
-    }).collect()
+    (0..count)
+        .map(|i| WalRecord {
+            topic_partition: TopicPartition {
+                topic: "benchmark-topic".to_string(),
+                partition: i as u32 % 10,
+            },
+            offset: i as u64,
+            record: generate_test_record(50, record_size, 3),
+            crc32: thread_rng().r#gen::<u32>(),
+        })
+        .collect()
 }
 
 fn generate_log_entries(count: usize, data_size: usize) -> Vec<controller::LogEntry> {
-    (0..count).map(|i| controller::LogEntry {
-        index: i as u64,
-        term: 1,
-        r#type: controller::LogEntryType::BrokerMetadata as i32,
-        data: ((0..data_size).map(|_| thread_rng().r#gen::<u8>()).collect::<Vec<u8>>()).into(),
-        timestamp: Some(prost_types::Timestamp {
-            seconds: Utc::now().timestamp(),
-            nanos: 0,
-        }),
-        node_id: "benchmark-node".to_string(),
-        checksum: thread_rng().r#gen::<u32>(),
-        data_size: data_size as u32,
-        correlation_id: format!("bench-{}", i),
-        priority: 0,
-        tags: vec!["benchmark".to_string()],
-    }).collect()
+    (0..count)
+        .map(|i| controller::LogEntry {
+            index: i as u64,
+            term: 1,
+            r#type: controller::LogEntryType::BrokerMetadata as i32,
+            data: ((0..data_size)
+                .map(|_| thread_rng().r#gen::<u8>())
+                .collect::<Vec<u8>>())
+            .into(),
+            timestamp: Some(prost_types::Timestamp {
+                seconds: Utc::now().timestamp(),
+                nanos: 0,
+            }),
+            node_id: "benchmark-node".to_string(),
+            checksum: thread_rng().r#gen::<u32>(),
+            data_size: data_size as u32,
+            correlation_id: format!("bench-{}", i),
+            priority: 0,
+            tags: vec!["benchmark".to_string()],
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -81,10 +94,10 @@ fn generate_log_entries(count: usize, data_size: usize) -> Vec<controller::LogEn
 
 fn bench_record_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("record_conversion");
-    
+
     for record_size in [100, 1000, 10000, 100000].iter() {
         let record = generate_test_record(50, *record_size, 5);
-        
+
         group.throughput(Throughput::Bytes(*record_size as u64));
         group.bench_with_input(
             BenchmarkId::new("internal_to_proto", record_size),
@@ -95,7 +108,7 @@ fn bench_record_conversion(c: &mut Criterion) {
                 });
             },
         );
-        
+
         let proto_record: common::Record = record.try_into().unwrap();
         group.bench_with_input(
             BenchmarkId::new("proto_to_internal", record_size),
@@ -107,45 +120,46 @@ fn bench_record_conversion(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_wal_record_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("wal_record_conversion");
-    
+
     for batch_size in [1, 10, 100, 1000].iter() {
         let wal_records = generate_wal_record_batch(*batch_size, 1000);
         let total_bytes = wal_records.len() * 1000;
-        
+
         group.throughput(Throughput::Bytes(total_bytes as u64));
         group.bench_with_input(
             BenchmarkId::new("batch_to_proto", batch_size),
             batch_size,
             |b, _| {
                 b.iter(|| {
-                    let _proto_records: Result<Vec<common::WalRecord>, _> = 
-                        black_box(wal_records.clone()).into_iter()
-                        .map(|r| r.try_into())
-                        .collect();
+                    let _proto_records: Result<Vec<common::WalRecord>, _> =
+                        black_box(wal_records.clone())
+                            .into_iter()
+                            .map(|r| r.try_into())
+                            .collect();
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_topic_partition_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("topic_partition_conversion");
-    
+
     // Test with different topic name lengths
     for topic_len in [10, 50, 100, 500].iter() {
         let topic_partition = TopicPartition {
             topic: "a".repeat(*topic_len),
             partition: 42,
         };
-        
+
         group.throughput(Throughput::Bytes(*topic_len as u64));
         group.bench_with_input(
             BenchmarkId::new("roundtrip", topic_len),
@@ -158,7 +172,7 @@ fn bench_topic_partition_conversion(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -170,7 +184,7 @@ fn bench_broker_info_conversion(c: &mut Criterion) {
         port_rpc: 9093,
         rack_id: "rack-with-very-long-descriptive-name".to_string(),
     };
-    
+
     c.bench_function("broker_info_roundtrip", |b| {
         b.iter(|| {
             let proto: common::BrokerInfo = black_box(broker_info.clone()).try_into().unwrap();
@@ -186,10 +200,11 @@ fn bench_follower_state_conversion(c: &mut Criterion) {
         last_heartbeat: Utc::now(),
         lag: 1000,
     };
-    
+
     c.bench_function("follower_state_roundtrip", |b| {
         b.iter(|| {
-            let proto: common::FollowerState = black_box(follower_state.clone()).try_into().unwrap();
+            let proto: common::FollowerState =
+                black_box(follower_state.clone()).try_into().unwrap();
             let _back: FollowerState = proto.try_into().unwrap();
         });
     });
@@ -201,7 +216,7 @@ fn bench_follower_state_conversion(c: &mut Criterion) {
 
 fn bench_replicate_data_request_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("replicate_data_request");
-    
+
     for record_count in [1, 10, 100, 1000].iter() {
         let request = ReplicateDataRequest {
             leader_epoch: 5,
@@ -212,34 +227,34 @@ fn bench_replicate_data_request_conversion(c: &mut Criterion) {
             records: generate_wal_record_batch(*record_count, 500),
             leader_id: "leader-1".to_string(),
         };
-        
+
         let total_bytes = record_count * 500;
         group.throughput(Throughput::Bytes(total_bytes as u64));
-        
+
         group.bench_with_input(
             BenchmarkId::new("to_proto", record_count),
             record_count,
             |b, _| {
                 b.iter(|| {
-                    let _proto: broker::ReplicateDataRequest = 
+                    let _proto: broker::ReplicateDataRequest =
                         black_box(request.clone()).try_into().unwrap();
                 });
             },
         );
-        
+
         let proto_request: broker::ReplicateDataRequest = request.try_into().unwrap();
         group.bench_with_input(
             BenchmarkId::new("from_proto", record_count),
             record_count,
             |b, _| {
                 b.iter(|| {
-                    let _internal: ReplicateDataRequest = 
+                    let _internal: ReplicateDataRequest =
                         black_box(proto_request.clone()).try_into().unwrap();
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -253,7 +268,7 @@ fn bench_heartbeat_request_conversion(c: &mut Criterion) {
         },
         high_watermark: 987654321,
     };
-    
+
     c.bench_function("heartbeat_request_roundtrip", |b| {
         b.iter(|| {
             let proto: broker::HeartbeatRequest = black_box(request.clone()).try_into().unwrap();
@@ -272,10 +287,10 @@ fn bench_transfer_leadership_request_conversion(c: &mut Criterion) {
         current_leader_epoch: 15,
         new_leader_id: "new-leader-with-long-name".to_string(),
     };
-    
+
     c.bench_function("transfer_leadership_roundtrip", |b| {
         b.iter(|| {
-            let proto: broker::TransferLeadershipRequest = 
+            let proto: broker::TransferLeadershipRequest =
                 black_box(request.clone()).try_into().unwrap();
             let _back: TransferLeadershipRequest = proto.try_into().unwrap();
         });
@@ -291,7 +306,10 @@ fn bench_error_code_mapping(c: &mut Criterion) {
         RustMqError::TopicNotFound("test-topic".to_string()),
         RustMqError::PartitionNotFound("test-partition".to_string()),
         RustMqError::BrokerNotFound("test-broker".to_string()),
-        RustMqError::StaleLeaderEpoch { request_epoch: 1, current_epoch: 2 },
+        RustMqError::StaleLeaderEpoch {
+            request_epoch: 1,
+            current_epoch: 2,
+        },
         RustMqError::NotLeader("test-broker".to_string()),
         RustMqError::OffsetOutOfRange("offset 100".to_string()),
         RustMqError::TopicAlreadyExists("existing-topic".to_string()),
@@ -299,7 +317,7 @@ fn bench_error_code_mapping(c: &mut Criterion) {
         RustMqError::PermissionDenied("access denied".to_string()),
         RustMqError::OperationTimeout,
     ];
-    
+
     c.bench_function("error_code_mapping", |b| {
         b.iter(|| {
             for error in &errors {
@@ -317,40 +335,41 @@ fn bench_error_code_mapping(c: &mut Criterion) {
 
 fn bench_timestamp_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("timestamp_conversion");
-    
-    let timestamps = (0..1000).map(|i| Utc::now().timestamp_millis() + i).collect::<Vec<_>>();
-    
+
+    let timestamps = (0..1000)
+        .map(|i| Utc::now().timestamp_millis() + i)
+        .collect::<Vec<_>>();
+
     group.bench_function("to_proto", |b| {
         b.iter(|| {
             for &timestamp in &timestamps {
                 // Convert milliseconds to protobuf Timestamp
                 let seconds = timestamp / 1000;
                 let nanos = ((timestamp % 1000) * 1_000_000) as i32;
-                let _proto = prost_types::Timestamp {
-                    seconds,
-                    nanos,
-                };
+                let _proto = prost_types::Timestamp { seconds, nanos };
             }
         });
     });
-    
-    let proto_timestamps: Vec<_> = timestamps.iter()
+
+    let proto_timestamps: Vec<_> = timestamps
+        .iter()
         .map(|&ts| {
             let seconds = ts / 1000;
             let nanos = ((ts % 1000) * 1_000_000) as i32;
             prost_types::Timestamp { seconds, nanos }
         })
         .collect();
-    
+
     group.bench_function("from_proto", |b| {
         b.iter(|| {
             for proto_ts in &proto_timestamps {
                 // Convert protobuf Timestamp to milliseconds
-                let _millis = black_box(proto_ts.seconds * 1000 + (proto_ts.nanos / 1_000_000) as i64);
+                let _millis =
+                    black_box(proto_ts.seconds * 1000 + (proto_ts.nanos / 1_000_000) as i64);
             }
         });
     });
-    
+
     group.finish();
 }
 
@@ -362,11 +381,11 @@ fn bench_large_record_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("large_record_conversion");
     group.sample_size(10); // Fewer samples for large data
     group.measurement_time(Duration::from_secs(10));
-    
+
     for size_mb in [1, 5, 10, 50].iter() {
         let size_bytes = size_mb * 1024 * 1024;
         let record = generate_test_record(1024, size_bytes, 10);
-        
+
         group.throughput(Throughput::Bytes(size_bytes as u64));
         group.bench_with_input(
             BenchmarkId::new("conversion", format!("{}MB", size_mb)),
@@ -379,18 +398,18 @@ fn bench_large_record_conversion(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_large_log_entry_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("large_log_entry_batch");
     group.sample_size(10);
-    
+
     for entry_count in [100, 500, 1000, 5000].iter() {
         let entries = generate_log_entries(*entry_count, 1024);
         let total_bytes = entry_count * 1024;
-        
+
         group.throughput(Throughput::Bytes(total_bytes as u64));
         group.bench_with_input(
             BenchmarkId::new("processing", entry_count),
@@ -398,14 +417,15 @@ fn bench_large_log_entry_batch(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Simulate processing log entries
-                    let _total_size: usize = black_box(&entries).iter()
+                    let _total_size: usize = black_box(&entries)
+                        .iter()
                         .map(|entry| entry.data.len())
                         .sum();
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -415,7 +435,7 @@ fn bench_large_log_entry_batch(c: &mut Criterion) {
 
 fn bench_memory_allocation_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_allocation");
-    
+
     // Benchmark record creation with different header counts
     for header_count in [0, 10, 100, 1000].iter() {
         group.bench_with_input(
@@ -423,12 +443,16 @@ fn bench_memory_allocation_patterns(c: &mut Criterion) {
             header_count,
             |b, &header_count| {
                 b.iter(|| {
-                    let _record = generate_test_record(black_box(100), black_box(1000), black_box(header_count));
+                    let _record = generate_test_record(
+                        black_box(100),
+                        black_box(1000),
+                        black_box(header_count),
+                    );
                 });
             },
         );
     }
-    
+
     // Benchmark batch operations
     for batch_size in [10, 100, 1000].iter() {
         group.bench_with_input(
@@ -441,7 +465,7 @@ fn bench_memory_allocation_patterns(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -451,9 +475,11 @@ fn bench_memory_allocation_patterns(c: &mut Criterion) {
 
 fn bench_concurrent_conversions(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_conversions");
-    
-    let records: Vec<_> = (0..100).map(|_| generate_test_record(100, 1000, 5)).collect();
-    
+
+    let records: Vec<_> = (0..100)
+        .map(|_| generate_test_record(100, 1000, 5))
+        .collect();
+
     group.bench_function("sequential", |b| {
         b.iter(|| {
             for record in &records {
@@ -462,7 +488,7 @@ fn bench_concurrent_conversions(c: &mut Criterion) {
             }
         });
     });
-    
+
     // Note: In a real benchmark, you'd use a thread pool or async runtime
     // This is a simplified version for demonstration
     group.bench_function("parallel_simulation", |b| {
@@ -476,7 +502,7 @@ fn bench_concurrent_conversions(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.finish();
 }
 
@@ -486,7 +512,7 @@ fn bench_concurrent_conversions(c: &mut Criterion) {
 
 fn bench_compression_impact(c: &mut Criterion) {
     let mut group = c.benchmark_group("compression_impact");
-    
+
     // Create highly compressible data (repeated patterns)
     let compressible_data = vec![0u8; 10000];
     let compressible_record = Record {
@@ -495,7 +521,7 @@ fn bench_compression_impact(c: &mut Criterion) {
         headers: SmallVec::new(),
         timestamp: Utc::now().timestamp_millis(),
     };
-    
+
     // Create incompressible data (random)
     let random_data: Vec<u8> = (0..10000).map(|_| thread_rng().r#gen::<u8>()).collect();
     let random_record = Record {
@@ -504,23 +530,23 @@ fn bench_compression_impact(c: &mut Criterion) {
         headers: SmallVec::new(),
         timestamp: Utc::now().timestamp_millis(),
     };
-    
+
     group.throughput(Throughput::Bytes(20000)); // 20KB per record
-    
+
     group.bench_function("compressible_data", |b| {
         b.iter(|| {
             let proto: common::Record = black_box(compressible_record.clone()).try_into().unwrap();
             let _back: Record = proto.try_into().unwrap();
         });
     });
-    
+
     group.bench_function("random_data", |b| {
         b.iter(|| {
             let proto: common::Record = black_box(random_record.clone()).try_into().unwrap();
             let _back: Record = proto.try_into().unwrap();
         });
     });
-    
+
     group.finish();
 }
 
@@ -562,10 +588,7 @@ criterion_group!(
     bench_concurrent_conversions
 );
 
-criterion_group!(
-    compression,
-    bench_compression_impact
-);
+criterion_group!(compression, bench_compression_impact);
 
 criterion_main!(
     type_conversions,

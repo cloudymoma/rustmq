@@ -4,12 +4,16 @@
 //! using modern ASN.1 parsing libraries for enhanced security validation.
 
 use crate::error::RustMqError;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Utc};
-use x509_cert::{Certificate as X509Certificate, name::Name, ext::{Extension, Extensions}};
 use der::{Decode, Encode};
 use spki::SubjectPublicKeyInfo;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use x509_cert::{
+    Certificate as X509Certificate,
+    ext::{Extension, Extensions},
+    name::Name,
+};
 
 /// Enhanced certificate metadata with comprehensive information extraction
 #[derive(Debug, Clone)]
@@ -157,17 +161,17 @@ pub struct PublicKeyInfo {
 /// Key strength classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyStrength {
-    Weak,      // < 2048 RSA, < 224 EC
-    Adequate,  // 2048 RSA, 224-255 EC
-    Strong,    // 3072+ RSA, 256+ EC
+    Weak,     // < 2048 RSA, < 224 EC
+    Adequate, // 2048 RSA, 224-255 EC
+    Strong,   // 3072+ RSA, 256+ EC
     Unknown,
 }
 
 impl CertificateMetadata {
     /// Parse certificate metadata from DER-encoded certificate bytes
     pub fn parse_from_der(cert_der: &[u8]) -> Result<Self, RustMqError> {
-        let cert = X509Certificate::from_der(cert_der)
-            .map_err(|e| RustMqError::InvalidCertificate {
+        let cert =
+            X509Certificate::from_der(cert_der).map_err(|e| RustMqError::InvalidCertificate {
                 reason: format!("Failed to parse certificate: {}", e),
             })?;
 
@@ -175,7 +179,10 @@ impl CertificateMetadata {
     }
 
     /// Parse certificate metadata from x509-cert Certificate
-    pub fn parse_from_x509_cert(cert: &X509Certificate, cert_der: &[u8]) -> Result<Self, RustMqError> {
+    pub fn parse_from_x509_cert(
+        cert: &X509Certificate,
+        cert_der: &[u8],
+    ) -> Result<Self, RustMqError> {
         let fingerprint = Self::calculate_fingerprint(cert_der);
         let parsed_at = Utc::now();
 
@@ -188,7 +195,8 @@ impl CertificateMetadata {
         let validity_period = Self::parse_validity_period(&cert.tbs_certificate.validity)?;
 
         // Extract public key information
-        let public_key_info = Self::parse_public_key_info(&cert.tbs_certificate.subject_public_key_info)?;
+        let public_key_info =
+            Self::parse_public_key_info(&cert.tbs_certificate.subject_public_key_info)?;
 
         // Extract extensions
         let extensions = cert.tbs_certificate.extensions.as_ref();
@@ -237,7 +245,7 @@ impl CertificateMetadata {
         // For now, use a simplified implementation
         // In a full implementation, you'd parse each RDN component
         let raw_dn = format!("{:?}", name); // Temporary representation
-        
+
         Ok(DistinguishedName {
             common_name: None, // TODO: Extract from RDNs
             organization: None,
@@ -251,10 +259,12 @@ impl CertificateMetadata {
     }
 
     /// Parse validity period from certificate
-    fn parse_validity_period(validity: &x509_cert::time::Validity) -> Result<ValidityPeriod, RustMqError> {
+    fn parse_validity_period(
+        validity: &x509_cert::time::Validity,
+    ) -> Result<ValidityPeriod, RustMqError> {
         // Convert x509-cert time to DateTime<Utc>
         let not_before = Utc::now(); // TODO: Convert from validity.not_before
-        let not_after = Utc::now();  // TODO: Convert from validity.not_after
+        let not_after = Utc::now(); // TODO: Convert from validity.not_after
 
         let now = Utc::now();
         let is_currently_valid = now >= not_before && now <= not_after;
@@ -271,10 +281,12 @@ impl CertificateMetadata {
     }
 
     /// Parse public key information
-    fn parse_public_key_info(spki: &SubjectPublicKeyInfo<der::Any, der::asn1::BitString>) -> Result<PublicKeyInfo, RustMqError> {
+    fn parse_public_key_info(
+        spki: &SubjectPublicKeyInfo<der::Any, der::asn1::BitString>,
+    ) -> Result<PublicKeyInfo, RustMqError> {
         let algorithm = format!("{:?}", spki.algorithm.oid); // Simplified
         let public_key_bytes = spki.subject_public_key.raw_bytes().to_vec();
-        
+
         Ok(PublicKeyInfo {
             algorithm,
             key_size: None, // TODO: Calculate based on key type
@@ -285,7 +297,9 @@ impl CertificateMetadata {
     }
 
     /// Extract Subject Alternative Names from extensions
-    fn extract_subject_alt_names(extensions: Option<&Extensions>) -> Result<Vec<SubjectAltName>, RustMqError> {
+    fn extract_subject_alt_names(
+        extensions: Option<&Extensions>,
+    ) -> Result<Vec<SubjectAltName>, RustMqError> {
         // TODO: Implement SAN extraction
         Ok(Vec::new())
     }
@@ -297,25 +311,33 @@ impl CertificateMetadata {
     }
 
     /// Extract Extended Key Usage from extensions
-    fn extract_extended_key_usage(extensions: Option<&Extensions>) -> Result<Option<ExtendedKeyUsage>, RustMqError> {
+    fn extract_extended_key_usage(
+        extensions: Option<&Extensions>,
+    ) -> Result<Option<ExtendedKeyUsage>, RustMqError> {
         // TODO: Implement extended key usage extraction
         Ok(None)
     }
 
     /// Extract Certificate Policies from extensions
-    fn extract_certificate_policies(extensions: Option<&Extensions>) -> Result<Vec<String>, RustMqError> {
+    fn extract_certificate_policies(
+        extensions: Option<&Extensions>,
+    ) -> Result<Vec<String>, RustMqError> {
         // TODO: Implement certificate policies extraction
         Ok(Vec::new())
     }
 
     /// Extract Authority Key Identifier from extensions
-    fn extract_authority_key_id(extensions: Option<&Extensions>) -> Result<Option<Vec<u8>>, RustMqError> {
+    fn extract_authority_key_id(
+        extensions: Option<&Extensions>,
+    ) -> Result<Option<Vec<u8>>, RustMqError> {
         // TODO: Implement authority key ID extraction
         Ok(None)
     }
 
     /// Extract Subject Key Identifier from extensions
-    fn extract_subject_key_id(extensions: Option<&Extensions>) -> Result<Option<Vec<u8>>, RustMqError> {
+    fn extract_subject_key_id(
+        extensions: Option<&Extensions>,
+    ) -> Result<Option<Vec<u8>>, RustMqError> {
         // TODO: Implement subject key ID extraction
         Ok(None)
     }
@@ -412,6 +434,7 @@ impl CertificateMetadata {
 
     /// Check if certificate is nearing expiration (within specified days)
     pub fn is_nearing_expiration(&self, warning_days: i64) -> bool {
-        self.validity_period.days_until_expiry <= warning_days && self.validity_period.days_until_expiry > 0
+        self.validity_period.days_until_expiry <= warning_days
+            && self.validity_period.days_until_expiry > 0
     }
 }

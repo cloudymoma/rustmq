@@ -1,12 +1,12 @@
-use crate::config::{TopicFilter, FilterType, ConditionalRule, ConditionType, ComparisonOperator};
+use crate::config::{ComparisonOperator, ConditionType, ConditionalRule, FilterType, TopicFilter};
 use crate::{Result, error::RustMqError, types::Record};
+use bytes::Bytes;
+use glob::Pattern as GlobPattern;
+use regex::Regex;
+use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use regex::Regex;
-use glob::Pattern as GlobPattern;
-use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
-use bytes::Bytes;
 
 /// High-performance topic filter engine with optimized matching strategies
 pub struct TopicFilterEngine {
@@ -98,10 +98,12 @@ impl TopicFilterEngine {
                     }
                 }
                 FilterType::Wildcard => {
-                    let glob_pattern = GlobPattern::new(&filter.pattern)
-                        .map_err(|e| RustMqError::ConfigurationError(
-                            format!("Invalid glob pattern '{}': {}", filter.pattern, e)
-                        ))?;
+                    let glob_pattern = GlobPattern::new(&filter.pattern).map_err(|e| {
+                        RustMqError::ConfigurationError(format!(
+                            "Invalid glob pattern '{}': {}",
+                            filter.pattern, e
+                        ))
+                    })?;
                     wildcard_patterns.push(CompiledGlobFilter {
                         pattern: glob_pattern,
                         original: filter.pattern,
@@ -113,9 +115,12 @@ impl TopicFilterEngine {
                     let regex = regex::RegexBuilder::new(&filter.pattern)
                         .case_insensitive(!filter.case_sensitive)
                         .build()
-                        .map_err(|e| RustMqError::ConfigurationError(
-                            format!("Invalid regex pattern '{}': {}", filter.pattern, e)
-                        ))?;
+                        .map_err(|e| {
+                            RustMqError::ConfigurationError(format!(
+                                "Invalid regex pattern '{}': {}",
+                                filter.pattern, e
+                            ))
+                        })?;
                     regex_patterns.push(CompiledRegexFilter {
                         regex,
                         original: filter.pattern,
@@ -175,7 +180,10 @@ impl TopicFilterEngine {
         }
 
         // Check case-insensitive exact matches
-        if self.exact_matches_insensitive.contains(&topic.to_lowercase()) {
+        if self
+            .exact_matches_insensitive
+            .contains(&topic.to_lowercase())
+        {
             matched_patterns.push(format!("exact_insensitive:{}", topic));
             return FilterResult {
                 matches: true,
@@ -189,10 +197,16 @@ impl TopicFilterEngine {
             let matches = if prefix_filter.case_sensitive {
                 topic.starts_with(&prefix_filter.pattern)
             } else {
-                topic.to_lowercase().starts_with(&prefix_filter.pattern.to_lowercase())
+                topic
+                    .to_lowercase()
+                    .starts_with(&prefix_filter.pattern.to_lowercase())
             };
 
-            let result = if prefix_filter.negate { !matches } else { matches };
+            let result = if prefix_filter.negate {
+                !matches
+            } else {
+                matches
+            };
             if result {
                 matched_patterns.push(format!("prefix:{}", prefix_filter.pattern));
                 return FilterResult {
@@ -208,10 +222,16 @@ impl TopicFilterEngine {
             let matches = if suffix_filter.case_sensitive {
                 topic.ends_with(&suffix_filter.pattern)
             } else {
-                topic.to_lowercase().ends_with(&suffix_filter.pattern.to_lowercase())
+                topic
+                    .to_lowercase()
+                    .ends_with(&suffix_filter.pattern.to_lowercase())
             };
 
-            let result = if suffix_filter.negate { !matches } else { matches };
+            let result = if suffix_filter.negate {
+                !matches
+            } else {
+                matches
+            };
             if result {
                 matched_patterns.push(format!("suffix:{}", suffix_filter.pattern));
                 return FilterResult {
@@ -227,10 +247,16 @@ impl TopicFilterEngine {
             let matches = if contains_filter.case_sensitive {
                 topic.contains(&contains_filter.pattern)
             } else {
-                topic.to_lowercase().contains(&contains_filter.pattern.to_lowercase())
+                topic
+                    .to_lowercase()
+                    .contains(&contains_filter.pattern.to_lowercase())
             };
 
-            let result = if contains_filter.negate { !matches } else { matches };
+            let result = if contains_filter.negate {
+                !matches
+            } else {
+                matches
+            };
             if result {
                 matched_patterns.push(format!("contains:{}", contains_filter.pattern));
                 return FilterResult {
@@ -250,7 +276,11 @@ impl TopicFilterEngine {
             };
 
             let matches = wildcard_filter.pattern.matches(test_topic);
-            let result = if wildcard_filter.negate { !matches } else { matches };
+            let result = if wildcard_filter.negate {
+                !matches
+            } else {
+                matches
+            };
             if result {
                 matched_patterns.push(format!("wildcard:{}", wildcard_filter.original));
                 return FilterResult {
@@ -264,7 +294,11 @@ impl TopicFilterEngine {
         // Check regex patterns (most expensive, done last)
         for regex_filter in &self.regex_patterns {
             let matches = regex_filter.regex.is_match(topic);
-            let result = if regex_filter.negate { !matches } else { matches };
+            let result = if regex_filter.negate {
+                !matches
+            } else {
+                matches
+            };
             if result {
                 matched_patterns.push(format!("regex:{}", regex_filter.original));
                 return FilterResult {
@@ -304,15 +338,15 @@ impl ConditionalRuleEngine {
         for rule in rules {
             let compiled_regex = if rule.operator == ComparisonOperator::Matches {
                 match &rule.value {
-                    JsonValue::String(pattern) => {
-                        Some(Regex::new(pattern)
-                            .map_err(|e| RustMqError::ConfigurationError(
-                                format!("Invalid regex pattern in conditional rule: {}", e)
-                            ))?)
-                    }
+                    JsonValue::String(pattern) => Some(Regex::new(pattern).map_err(|e| {
+                        RustMqError::ConfigurationError(format!(
+                            "Invalid regex pattern in conditional rule: {}",
+                            e
+                        ))
+                    })?),
                     _ => {
                         return Err(RustMqError::ConfigurationError(
-                            "Regex operator requires string value".to_string()
+                            "Regex operator requires string value".to_string(),
                         ));
                     }
                 }
@@ -341,7 +375,7 @@ impl ConditionalRuleEngine {
         for rule in &self.rules {
             let matches = self.evaluate_single_rule(rule, record, topic)?;
             let result = if rule.negate { !matches } else { matches };
-            
+
             if !result {
                 return Ok(false); // AND logic: all must match
             }
@@ -350,14 +384,15 @@ impl ConditionalRuleEngine {
     }
 
     /// Evaluate a single conditional rule
-    fn evaluate_single_rule(&self, rule: &CompiledConditionalRule, record: &Record, topic: &str) -> Result<bool> {
+    fn evaluate_single_rule(
+        &self,
+        rule: &CompiledConditionalRule,
+        record: &Record,
+        topic: &str,
+    ) -> Result<bool> {
         let extracted_value = match rule.condition_type {
-            ConditionType::HeaderValue => {
-                self.extract_header_value(record, &rule.field_path)
-            }
-            ConditionType::PayloadField => {
-                self.extract_payload_field(record, &rule.field_path)?
-            }
+            ConditionType::HeaderValue => self.extract_header_value(record, &rule.field_path),
+            ConditionType::PayloadField => self.extract_payload_field(record, &rule.field_path)?,
             ConditionType::MessageSize => {
                 JsonValue::Number(serde_json::Number::from(record.value.len()))
             }
@@ -371,14 +406,20 @@ impl ConditionalRuleEngine {
             }
         };
 
-        self.compare_values(&extracted_value, &rule.value, &rule.operator, rule.compiled_regex.as_ref())
+        self.compare_values(
+            &extracted_value,
+            &rule.value,
+            &rule.operator,
+            rule.compiled_regex.as_ref(),
+        )
     }
 
     /// Extract header value by key
     fn extract_header_value(&self, record: &Record, field_path: &str) -> JsonValue {
         for header in &record.headers {
             if header.key == field_path {
-                if let Ok(string_value) = String::from_utf8(header.value.to_vec()) { // Convert Bytes to Vec<u8>
+                if let Ok(string_value) = String::from_utf8(header.value.to_vec()) {
+                    // Convert Bytes to Vec<u8>
                     return JsonValue::String(string_value);
                 }
             }
@@ -389,10 +430,9 @@ impl ConditionalRuleEngine {
     /// Extract field from JSON payload using simplified JSONPath
     fn extract_payload_field(&self, record: &Record, field_path: &str) -> Result<JsonValue> {
         // Parse the record payload as JSON
-        let payload: JsonValue = serde_json::from_slice(&record.value)
-            .map_err(|e| RustMqError::EtlProcessingFailed(
-                format!("Failed to parse payload as JSON: {}", e)
-            ))?;
+        let payload: JsonValue = serde_json::from_slice(&record.value).map_err(|e| {
+            RustMqError::EtlProcessingFailed(format!("Failed to parse payload as JSON: {}", e))
+        })?;
 
         // Simplified JSONPath implementation for common cases
         if field_path.starts_with("$.") {
@@ -428,13 +468,21 @@ impl ConditionalRuleEngine {
     }
 
     /// Compare two JSON values using the specified operator
-    fn compare_values(&self, left: &JsonValue, right: &JsonValue, operator: &ComparisonOperator, regex: Option<&Regex>) -> Result<bool> {
+    fn compare_values(
+        &self,
+        left: &JsonValue,
+        right: &JsonValue,
+        operator: &ComparisonOperator,
+        regex: Option<&Regex>,
+    ) -> Result<bool> {
         match operator {
             ComparisonOperator::Equals => Ok(left == right),
             ComparisonOperator::NotEquals => Ok(left != right),
             ComparisonOperator::GreaterThan => self.compare_numeric(left, right, |a, b| a > b),
             ComparisonOperator::LessThan => self.compare_numeric(left, right, |a, b| a < b),
-            ComparisonOperator::GreaterThanOrEqual => self.compare_numeric(left, right, |a, b| a >= b),
+            ComparisonOperator::GreaterThanOrEqual => {
+                self.compare_numeric(left, right, |a, b| a >= b)
+            }
             ComparisonOperator::LessThanOrEqual => self.compare_numeric(left, right, |a, b| a <= b),
             ComparisonOperator::Contains => self.compare_string_contains(left, right),
             ComparisonOperator::StartsWith => self.compare_string_starts_with(left, right),
@@ -448,7 +496,7 @@ impl ConditionalRuleEngine {
                     }
                 } else {
                     Err(RustMqError::EtlProcessingFailed(
-                        "Regex not compiled for Matches operator".to_string()
+                        "Regex not compiled for Matches operator".to_string(),
                     ))
                 }
             }
@@ -580,14 +628,12 @@ mod tests {
 
     #[test]
     fn test_regex_topic_filtering() {
-        let filters = vec![
-            TopicFilter {
-                filter_type: FilterType::Regex,
-                pattern: r"^sensor-\d+$".to_string(),
-                case_sensitive: true,
-                negate: false,
-            },
-        ];
+        let filters = vec![TopicFilter {
+            filter_type: FilterType::Regex,
+            pattern: r"^sensor-\d+$".to_string(),
+            case_sensitive: true,
+            negate: false,
+        }];
 
         let engine = TopicFilterEngine::new(filters).unwrap();
 
@@ -624,27 +670,23 @@ mod tests {
 
     #[test]
     fn test_conditional_rule_header_evaluation() {
-        let rules = vec![
-            ConditionalRule {
-                condition_type: ConditionType::HeaderValue,
-                field_path: "content-type".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: JsonValue::String("application/json".to_string()),
-                negate: false,
-            },
-        ];
+        let rules = vec![ConditionalRule {
+            condition_type: ConditionType::HeaderValue,
+            field_path: "content-type".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: JsonValue::String("application/json".to_string()),
+            negate: false,
+        }];
 
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
         let record = Record::new(
             Some(b"test".to_vec()),
             b"{}".to_vec(),
-            vec![
-                Header::new(
-                    "content-type".to_string(),
-                    b"application/json".to_vec(),
-                ),
-            ],
+            vec![Header::new(
+                "content-type".to_string(),
+                b"application/json".to_vec(),
+            )],
             1234567890,
         );
 
@@ -653,15 +695,13 @@ mod tests {
 
     #[test]
     fn test_conditional_rule_payload_evaluation() {
-        let rules = vec![
-            ConditionalRule {
-                condition_type: ConditionType::PayloadField,
-                field_path: "user.id".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: JsonValue::String("user123".to_string()),
-                negate: false,
-            },
-        ];
+        let rules = vec![ConditionalRule {
+            condition_type: ConditionType::PayloadField,
+            field_path: "user.id".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: JsonValue::String("user123".to_string()),
+            negate: false,
+        }];
 
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
@@ -678,15 +718,13 @@ mod tests {
 
     #[test]
     fn test_conditional_rule_message_size() {
-        let rules = vec![
-            ConditionalRule {
-                condition_type: ConditionType::MessageSize,
-                field_path: "".to_string(),
-                operator: ComparisonOperator::GreaterThan,
-                value: JsonValue::Number(serde_json::Number::from(10)),
-                negate: false,
-            },
-        ];
+        let rules = vec![ConditionalRule {
+            condition_type: ConditionType::MessageSize,
+            field_path: "".to_string(),
+            operator: ComparisonOperator::GreaterThan,
+            value: JsonValue::Number(serde_json::Number::from(10)),
+            negate: false,
+        }];
 
         let engine = ConditionalRuleEngine::new(rules).unwrap();
 
@@ -704,7 +742,7 @@ mod tests {
     fn test_filter_performance() {
         // Create a large number of filters to test performance
         let mut filters = Vec::new();
-        
+
         // Add 100 exact matches
         for i in 0..100 {
             filters.push(TopicFilter {
@@ -716,7 +754,7 @@ mod tests {
         }
 
         let engine = TopicFilterEngine::new(filters).unwrap();
-        
+
         // Test performance of exact match (should be very fast)
         let result = engine.matches_topic("topic-50");
         assert!(result.matches);

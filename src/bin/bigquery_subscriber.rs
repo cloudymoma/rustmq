@@ -1,25 +1,21 @@
 use tracing::info;
 use tracing_subscriber;
 
-use rustmq::subscribers::bigquery::{
-    service::BigQuerySubscriberService,
-    error::Result,
-    config::*,
-};
+use rustmq::subscribers::bigquery::{config::*, error::Result, service::BigQuerySubscriberService};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
-    
+
     info!("BigQuery Subscriber Demo");
     info!("This is a demonstration binary showing BigQuery subscriber functionality");
     info!("For production use, implement proper RustMQ client integration");
-    
+
     // For now, just demonstrate that the service can be created
     let config = BigQuerySubscriberConfig {
         project_id: "demo-project".to_string(),
-        dataset: "demo_dataset".to_string(), 
+        dataset: "demo_dataset".to_string(),
         table: "demo_table".to_string(),
         write_method: WriteMethod::StreamingInserts {
             skip_invalid_rows: false,
@@ -75,14 +71,13 @@ async fn main() -> Result<()> {
             log_level: "info".to_string(),
         },
     };
-    
+
     info!("Creating BigQuery subscriber service...");
     let _service = BigQuerySubscriberService::new(config).await?;
     info!("BigQuery subscriber service created successfully!");
-    
+
     info!("Demo completed. Service can be created and configured.");
     info!("To run with real data, integrate with actual RustMQ brokers.");
-    
+
     Ok(())
 }
-

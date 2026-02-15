@@ -7,8 +7,8 @@
 pub mod authentication;
 pub mod authorization;
 pub mod cache;
-pub mod certificates;
 pub mod certificate_metadata;
+pub mod certificates;
 pub mod principal;
 
 pub use authentication::AuthenticationManager;
@@ -38,12 +38,12 @@ impl AuthContext {
             groups: Vec::new(),
         }
     }
-    
+
     pub fn with_certificate(mut self, fingerprint: String) -> Self {
         self.certificate_fingerprint = Some(fingerprint);
         self
     }
-    
+
     pub fn with_groups(mut self, groups: Vec<String>) -> Self {
         self.groups = groups;
         self
@@ -101,7 +101,7 @@ impl Permission {
         }
         permissions
     }
-    
+
     pub fn to_bits(permissions: &[Permission]) -> u8 {
         permissions.iter().fold(0u8, |acc, &perm| acc | perm as u8)
     }
@@ -117,33 +117,33 @@ impl PermissionSet {
     pub fn new() -> Self {
         Self { bits: 0 }
     }
-    
+
     pub fn with_permission(mut self, permission: Permission) -> Self {
         self.bits |= permission as u8;
         self
     }
-    
+
     pub fn add_permission(&mut self, permission: Permission) {
         self.bits |= permission as u8;
     }
-    
+
     pub fn remove_permission(&mut self, permission: Permission) {
         self.bits &= !(permission as u8);
     }
-    
+
     pub fn contains(&self, permission: Permission) -> bool {
         (self.bits & permission as u8) != 0
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.bits == 0
     }
-    
+
     pub fn has_all(&self, permissions: &[Permission]) -> bool {
         let required_bits = Permission::to_bits(permissions);
         (self.bits & required_bits) == required_bits
     }
-    
+
     pub fn has_any(&self, permissions: &[Permission]) -> bool {
         let check_bits = Permission::to_bits(permissions);
         (self.bits & check_bits) != 0

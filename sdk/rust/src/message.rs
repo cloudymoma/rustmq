@@ -1,6 +1,6 @@
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use bytes::Bytes;
 use uuid::Uuid;
 
 /// A message in the RustMQ system
@@ -8,37 +8,37 @@ use uuid::Uuid;
 pub struct Message {
     /// Message ID
     pub id: String,
-    
+
     /// Topic the message belongs to
     pub topic: String,
-    
+
     /// Partition ID
     pub partition: u32,
-    
+
     /// Message offset within partition
     pub offset: u64,
-    
+
     /// Message key for partitioning
     pub key: Option<Bytes>,
-    
+
     /// Message payload
     pub payload: Bytes,
-    
+
     /// Message headers/properties
     pub headers: HashMap<String, String>,
-    
+
     /// Timestamp when message was produced
     pub timestamp: u64,
-    
+
     /// Producer ID
     pub producer_id: Option<String>,
-    
+
     /// Message sequence number
     pub sequence: Option<u64>,
-    
+
     /// Compression algorithm used
     pub compression: Option<String>,
-    
+
     /// Message size in bytes
     pub size: usize,
 }
@@ -98,7 +98,7 @@ impl MessageBuilder {
     }
 
     /// Add multiple headers
-    pub fn headers<I, K, V>(mut self, headers: I) -> Self 
+    pub fn headers<I, K, V>(mut self, headers: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
@@ -120,15 +120,15 @@ impl MessageBuilder {
     pub fn build(self) -> Result<Message, String> {
         let payload = self.payload.ok_or("Message payload is required")?;
         let topic = self.topic.ok_or("Message topic is required")?;
-        
+
         let id = self.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        
+
         let size = payload.len() + self.key.as_ref().map_or(0, |k| k.len());
-        
+
         Ok(Message {
             id,
             topic,
@@ -139,7 +139,7 @@ impl MessageBuilder {
             headers: self.headers,
             timestamp,
             producer_id: self.producer_id,
-            sequence: None, // Will be set by producer
+            sequence: None,    // Will be set by producer
             compression: None, // Will be set based on producer config
             size,
         })
@@ -203,10 +203,8 @@ impl Message {
 
     /// Get message size including headers
     pub fn total_size(&self) -> usize {
-        let headers_size: usize = self.headers.iter()
-            .map(|(k, v)| k.len() + v.len())
-            .sum();
-        
+        let headers_size: usize = self.headers.iter().map(|(k, v)| k.len() + v.len()).sum();
+
         self.size + headers_size + self.id.len() + self.topic.len()
     }
 }
@@ -282,13 +280,13 @@ impl MessageBatch {
 
         for message in self.messages {
             let message_size = message.total_size();
-            
+
             if current_size + message_size > max_size && !current_batch.is_empty() {
                 batches.push(MessageBatch::new(current_batch));
                 current_batch = Vec::new();
                 current_size = 0;
             }
-            
+
             current_batch.push(message);
             current_size += message_size;
         }

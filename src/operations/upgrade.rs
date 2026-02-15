@@ -32,12 +32,15 @@ impl RollingUpgradeManagerImpl {
         // Initialize status
         {
             let mut upgrades = self.active_upgrades.write().await;
-            upgrades.insert(operation_id.clone(), UpgradeStatus::InProgress {
-                started_at: Instant::now(),
-                current_broker: "".to_string(),
-                completed_brokers: Vec::new(),
-                remaining_brokers: broker_ids.clone(),
-            });
+            upgrades.insert(
+                operation_id.clone(),
+                UpgradeStatus::InProgress {
+                    started_at: Instant::now(),
+                    current_broker: "".to_string(),
+                    completed_brokers: Vec::new(),
+                    remaining_brokers: broker_ids.clone(),
+                },
+            );
         }
 
         let mut completed_brokers = Vec::new();
@@ -63,11 +66,13 @@ impl RollingUpgradeManagerImpl {
                 }
             }
 
-            let upgrade_result = self.upgrade_single_broker(
-                &broker_id,
-                &request.target_version,
-                request.health_check_timeout,
-            ).await;
+            let upgrade_result = self
+                .upgrade_single_broker(
+                    &broker_id,
+                    &request.target_version,
+                    request.health_check_timeout,
+                )
+                .await;
 
             match upgrade_result {
                 Ok(()) => {
@@ -77,21 +82,27 @@ impl RollingUpgradeManagerImpl {
                 Err(e) => {
                     // Mark as failed
                     let mut upgrades = self.active_upgrades.write().await;
-                    upgrades.insert(operation_id.clone(), UpgradeStatus::Failed {
-                        error: e.to_string(),
-                        failed_at: Instant::now(),
-                        failed_broker: broker_id.clone(),
-                    });
+                    upgrades.insert(
+                        operation_id.clone(),
+                        UpgradeStatus::Failed {
+                            error: e.to_string(),
+                            failed_at: Instant::now(),
+                            failed_broker: broker_id.clone(),
+                        },
+                    );
 
                     if request.rollback_on_failure {
                         drop(upgrades); // Release lock before rollback
                         let _ = self.rollback_completed_brokers(&completed_brokers).await;
-                        
+
                         let mut upgrades = self.active_upgrades.write().await;
-                        upgrades.insert(operation_id, UpgradeStatus::RolledBack {
-                            rolled_back_at: Instant::now(),
-                            reason: format!("Failed to upgrade broker {}: {}", broker_id, e),
-                        });
+                        upgrades.insert(
+                            operation_id,
+                            UpgradeStatus::RolledBack {
+                                rolled_back_at: Instant::now(),
+                                reason: format!("Failed to upgrade broker {}: {}", broker_id, e),
+                            },
+                        );
                     }
                     return Err(e);
                 }
@@ -106,10 +117,13 @@ impl RollingUpgradeManagerImpl {
         // Mark as completed
         {
             let mut upgrades = self.active_upgrades.write().await;
-            upgrades.insert(operation_id, UpgradeStatus::Completed {
-                completed_at: Instant::now(),
-                upgraded_brokers: completed_brokers,
-            });
+            upgrades.insert(
+                operation_id,
+                UpgradeStatus::Completed {
+                    completed_at: Instant::now(),
+                    upgraded_brokers: completed_brokers,
+                },
+            );
         }
 
         Ok(())
@@ -121,37 +135,61 @@ impl RollingUpgradeManagerImpl {
         target_version: &str,
         health_check_timeout: Duration,
     ) -> Result<()> {
-        tracing::info!("Starting upgrade of broker {} to version {}", broker_id, target_version);
+        tracing::info!(
+            "Starting upgrade of broker {} to version {}",
+            broker_id,
+            target_version
+        );
 
         // Step 1: Drain broker
         self.upgrade_operations.drain_broker(broker_id).await?;
         tracing::info!("Drained broker {}", broker_id);
 
         // Step 2: Wait for graceful shutdown timeout
-        tokio::time::sleep(Duration::from_millis(self.config.graceful_shutdown_timeout_ms)).await;
+        tokio::time::sleep(Duration::from_millis(
+            self.config.graceful_shutdown_timeout_ms,
+        ))
+        .await;
 
         // Step 3: Upgrade broker
-        self.upgrade_operations.upgrade_broker(broker_id, target_version).await?;
-        tracing::info!("Upgraded broker {} to version {}", broker_id, target_version);
+        self.upgrade_operations
+            .upgrade_broker(broker_id, target_version)
+            .await?;
+        tracing::info!(
+            "Upgraded broker {} to version {}",
+            broker_id,
+            target_version
+        );
 
         // Step 4: Health check with timeout
         let health_check_start = Instant::now();
         while health_check_start.elapsed() < health_check_timeout {
-            if self.upgrade_operations.health_check_broker(broker_id).await? {
+            if self
+                .upgrade_operations
+                .health_check_broker(broker_id)
+                .await?
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(1000)).await;
         }
 
         // Final health check
-        if !self.upgrade_operations.health_check_broker(broker_id).await? {
-            return Err(crate::error::RustMqError::Storage(
-                format!("Broker {} failed health check after upgrade", broker_id)
-            ));
+        if !self
+            .upgrade_operations
+            .health_check_broker(broker_id)
+            .await?
+        {
+            return Err(crate::error::RustMqError::Storage(format!(
+                "Broker {} failed health check after upgrade",
+                broker_id
+            )));
         }
 
         // Step 5: Restore traffic
-        self.upgrade_operations.restore_broker_traffic(broker_id).await?;
+        self.upgrade_operations
+            .restore_broker_traffic(broker_id)
+            .await?;
         tracing::info!("Restored traffic to broker {}", broker_id);
 
         Ok(())
@@ -171,11 +209,11 @@ impl RollingUpgradeManagerImpl {
 impl RollingUpgradeManager for RollingUpgradeManagerImpl {
     async fn start_upgrade(&self, request: UpgradeRequest) -> Result<String> {
         let operation_id = request.operation_id.clone();
-        
+
         // Validate request
         if request.upgrade_velocity == 0 {
             return Err(crate::error::RustMqError::InvalidConfig(
-                "Upgrade velocity must be greater than 0".to_string()
+                "Upgrade velocity must be greater than 0".to_string(),
             ));
         }
 
@@ -183,9 +221,10 @@ impl RollingUpgradeManager for RollingUpgradeManagerImpl {
         {
             let upgrades = self.active_upgrades.read().await;
             if upgrades.contains_key(&operation_id) {
-                return Err(crate::error::RustMqError::InvalidConfig(
-                    format!("Upgrade operation {} already exists", operation_id)
-                ));
+                return Err(crate::error::RustMqError::InvalidConfig(format!(
+                    "Upgrade operation {} already exists",
+                    operation_id
+                )));
             }
         }
 
@@ -203,11 +242,12 @@ impl RollingUpgradeManager for RollingUpgradeManagerImpl {
 
     async fn get_upgrade_status(&self, operation_id: &str) -> Result<UpgradeStatus> {
         let upgrades = self.active_upgrades.read().await;
-        upgrades.get(operation_id)
-            .cloned()
-            .ok_or_else(|| crate::error::RustMqError::Storage(
-                format!("Upgrade operation {} not found", operation_id)
+        upgrades.get(operation_id).cloned().ok_or_else(|| {
+            crate::error::RustMqError::Storage(format!(
+                "Upgrade operation {} not found",
+                operation_id
             ))
+        })
     }
 
     async fn pause_upgrade(&self, operation_id: &str) -> Result<()> {
@@ -224,43 +264,55 @@ impl RollingUpgradeManager for RollingUpgradeManagerImpl {
 
     async fn rollback_upgrade(&self, operation_id: &str) -> Result<()> {
         let mut upgrades = self.active_upgrades.write().await;
-        
+
         if let Some(status) = upgrades.get(operation_id) {
             match status {
-                UpgradeStatus::InProgress { completed_brokers, .. } => {
+                UpgradeStatus::InProgress {
+                    completed_brokers, ..
+                } => {
                     let completed_brokers = completed_brokers.clone();
                     drop(upgrades); // Release lock before async operation
-                    
+
                     self.rollback_completed_brokers(&completed_brokers).await?;
-                    
+
                     let mut upgrades = self.active_upgrades.write().await;
-                    upgrades.insert(operation_id.to_string(), UpgradeStatus::RolledBack {
-                        rolled_back_at: Instant::now(),
-                        reason: "Manual rollback requested".to_string(),
-                    });
+                    upgrades.insert(
+                        operation_id.to_string(),
+                        UpgradeStatus::RolledBack {
+                            rolled_back_at: Instant::now(),
+                            reason: "Manual rollback requested".to_string(),
+                        },
+                    );
                 }
-                UpgradeStatus::Completed { upgraded_brokers, .. } => {
+                UpgradeStatus::Completed {
+                    upgraded_brokers, ..
+                } => {
                     let upgraded_brokers = upgraded_brokers.clone();
                     drop(upgrades); // Release lock before async operation
-                    
+
                     self.rollback_completed_brokers(&upgraded_brokers).await?;
-                    
+
                     let mut upgrades = self.active_upgrades.write().await;
-                    upgrades.insert(operation_id.to_string(), UpgradeStatus::RolledBack {
-                        rolled_back_at: Instant::now(),
-                        reason: "Manual rollback of completed upgrade".to_string(),
-                    });
+                    upgrades.insert(
+                        operation_id.to_string(),
+                        UpgradeStatus::RolledBack {
+                            rolled_back_at: Instant::now(),
+                            reason: "Manual rollback of completed upgrade".to_string(),
+                        },
+                    );
                 }
                 _ => {
-                    return Err(crate::error::RustMqError::InvalidConfig(
-                        format!("Cannot rollback upgrade in status: {:?}", status)
-                    ));
+                    return Err(crate::error::RustMqError::InvalidConfig(format!(
+                        "Cannot rollback upgrade in status: {:?}",
+                        status
+                    )));
                 }
             }
         } else {
-            return Err(crate::error::RustMqError::Storage(
-                format!("Upgrade operation {} not found", operation_id)
-            ));
+            return Err(crate::error::RustMqError::Storage(format!(
+                "Upgrade operation {} not found",
+                operation_id
+            )));
         }
 
         Ok(())
@@ -321,11 +373,9 @@ impl BrokerUpgradeOperations for MockBrokerUpgradeOperations {
 
     async fn get_broker_version(&self, broker_id: &str) -> Result<String> {
         let versions = self.broker_versions.read().await;
-        versions.get(broker_id)
-            .cloned()
-            .ok_or_else(|| crate::error::RustMqError::Storage(
-                format!("Broker {} not found", broker_id)
-            ))
+        versions.get(broker_id).cloned().ok_or_else(|| {
+            crate::error::RustMqError::Storage(format!("Broker {} not found", broker_id))
+        })
     }
 }
 
@@ -383,7 +433,10 @@ mod tests {
         // Wait for upgrade to progress
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let status = upgrade_manager.get_upgrade_status(&operation_id).await.unwrap();
+        let status = upgrade_manager
+            .get_upgrade_status(&operation_id)
+            .await
+            .unwrap();
         match status {
             UpgradeStatus::InProgress { .. } | UpgradeStatus::Completed { .. } => {
                 // Expected states
@@ -406,15 +459,13 @@ mod tests {
             },
         };
 
-        let brokers = vec![
-            BrokerInfo {
-                id: "broker-1".to_string(),
-                rack_id: "rack-1".to_string(),
-                endpoints: vec!["broker-1:9092".to_string()],
-                status: BrokerStatus::Healthy,
-                load_metrics: LoadMetrics::default(),
-            },
-        ];
+        let brokers = vec![BrokerInfo {
+            id: "broker-1".to_string(),
+            rack_id: "rack-1".to_string(),
+            endpoints: vec!["broker-1:9092".to_string()],
+            status: BrokerStatus::Healthy,
+            load_metrics: LoadMetrics::default(),
+        }];
 
         let broker_list = Arc::new(AsyncRwLock::new(brokers));
         let upgrade_ops = Arc::new(MockBrokerUpgradeOperations::new());
@@ -429,14 +480,17 @@ mod tests {
         };
 
         let operation_id = upgrade_manager.start_upgrade(request).await.unwrap();
-        
+
         // Wait for upgrade to complete
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         let rollback_result = upgrade_manager.rollback_upgrade(&operation_id).await;
         assert!(rollback_result.is_ok());
 
-        let status = upgrade_manager.get_upgrade_status(&operation_id).await.unwrap();
+        let status = upgrade_manager
+            .get_upgrade_status(&operation_id)
+            .await
+            .unwrap();
         match status {
             UpgradeStatus::RolledBack { .. } => {
                 // Expected

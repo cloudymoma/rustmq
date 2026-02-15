@@ -22,7 +22,7 @@ pub enum ScalingOperation {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalingStatus {
     NotStarted,
-    InProgress { 
+    InProgress {
         started_at: Instant,
         progress: f64, // 0.0 to 1.0
     },

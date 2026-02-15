@@ -1,8 +1,8 @@
 //! Comprehensive tests for BrokerReplicationService gRPC implementation
-//! 
+//!
 //! This test suite covers all 8 RPC methods of the BrokerReplicationService:
 //! 1. ReplicateData - Critical for data replication with epoch validation
-//! 2. SendHeartbeat - Leader-follower communication 
+//! 2. SendHeartbeat - Leader-follower communication
 //! 3. TransferLeadership - Graceful leadership transitions
 //! 4. AssignPartition - Partition assignment from controller
 //! 5. RemovePartition - Partition removal operations
@@ -10,15 +10,15 @@
 //! 7. SyncISR - In-sync replica management
 //! 8. TruncateLog - Log truncation for recovery scenarios
 
+use bytes::Bytes;
+use chrono::Utc;
 use rustmq::{
-    types::*,
-    proto::{broker, common},
     network::grpc_server::BrokerReplicationServiceImpl,
+    proto::{broker, common},
+    types::*,
 };
 use std::sync::Arc;
 use tonic::Request;
-use chrono::Utc;
-use bytes::Bytes;
 
 // Import the gRPC service trait
 use broker::broker_replication_service_server::BrokerReplicationService;
@@ -49,7 +49,7 @@ fn test_wal_record() -> WalRecord {
 #[tokio::test]
 async fn test_replicate_data_success() {
     let service = create_test_service();
-    
+
     // Create test request
     let proto_request = broker::ReplicateDataRequest {
         leader_epoch: 1,
@@ -75,7 +75,7 @@ async fn test_replicate_data_success() {
 #[tokio::test]
 async fn test_replicate_data_epoch_validation() {
     let service = create_test_service();
-    
+
     // Test with epoch validation scenarios
     let test_cases = vec![
         (0, "Zero epoch should be rejected"),
@@ -105,7 +105,7 @@ async fn test_replicate_data_epoch_validation() {
 #[tokio::test]
 async fn test_replicate_data_missing_fields() {
     let service = create_test_service();
-    
+
     // Test missing topic_partition
     let proto_request = broker::ReplicateDataRequest {
         leader_epoch: 1,
@@ -130,7 +130,7 @@ async fn test_replicate_data_missing_fields() {
 #[tokio::test]
 async fn test_replicate_data_large_batch() {
     let service = create_test_service();
-    
+
     // Create large batch of records
     let mut records = Vec::new();
     for i in 0..1000 {
@@ -163,7 +163,7 @@ async fn test_replicate_data_large_batch() {
 #[tokio::test]
 async fn test_send_heartbeat_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::HeartbeatRequest {
         leader_epoch: 1,
         leader_id: "leader-1".to_string(),
@@ -186,45 +186,54 @@ async fn test_send_heartbeat_success() {
 #[tokio::test]
 async fn test_send_heartbeat_validation() {
     let service = create_test_service();
-    
+
     // Test various heartbeat validation scenarios
     let test_cases = vec![
-        (broker::HeartbeatRequest {
-            leader_epoch: 0, // Invalid epoch
-            leader_id: "leader-1".to_string(),
-            topic_partition: Some(test_topic_partition().into()),
-            high_watermark: 100,
-            metadata: None,
-            leader_log_end_offset: 105,
-            in_sync_replicas: vec![],
-            heartbeat_interval_ms: 30000,
-            leader_messages_per_second: 1000,
-            leader_bytes_per_second: 1024 * 1024,
-        }, "Zero epoch"),
-        (broker::HeartbeatRequest {
-            leader_epoch: 1,
-            leader_id: "".to_string(), // Empty leader ID
-            topic_partition: Some(test_topic_partition().into()),
-            high_watermark: 100,
-            metadata: None,
-            leader_log_end_offset: 105,
-            in_sync_replicas: vec![],
-            heartbeat_interval_ms: 30000,
-            leader_messages_per_second: 1000,
-            leader_bytes_per_second: 1024 * 1024,
-        }, "Empty leader ID"),
-        (broker::HeartbeatRequest {
-            leader_epoch: 1,
-            leader_id: "leader-1".to_string(),
-            topic_partition: None, // Missing partition
-            high_watermark: 100,
-            metadata: None,
-            leader_log_end_offset: 105,
-            in_sync_replicas: vec![],
-            heartbeat_interval_ms: 30000,
-            leader_messages_per_second: 1000,
-            leader_bytes_per_second: 1024 * 1024,
-        }, "Missing topic partition"),
+        (
+            broker::HeartbeatRequest {
+                leader_epoch: 0, // Invalid epoch
+                leader_id: "leader-1".to_string(),
+                topic_partition: Some(test_topic_partition().into()),
+                high_watermark: 100,
+                metadata: None,
+                leader_log_end_offset: 105,
+                in_sync_replicas: vec![],
+                heartbeat_interval_ms: 30000,
+                leader_messages_per_second: 1000,
+                leader_bytes_per_second: 1024 * 1024,
+            },
+            "Zero epoch",
+        ),
+        (
+            broker::HeartbeatRequest {
+                leader_epoch: 1,
+                leader_id: "".to_string(), // Empty leader ID
+                topic_partition: Some(test_topic_partition().into()),
+                high_watermark: 100,
+                metadata: None,
+                leader_log_end_offset: 105,
+                in_sync_replicas: vec![],
+                heartbeat_interval_ms: 30000,
+                leader_messages_per_second: 1000,
+                leader_bytes_per_second: 1024 * 1024,
+            },
+            "Empty leader ID",
+        ),
+        (
+            broker::HeartbeatRequest {
+                leader_epoch: 1,
+                leader_id: "leader-1".to_string(),
+                topic_partition: None, // Missing partition
+                high_watermark: 100,
+                metadata: None,
+                leader_log_end_offset: 105,
+                in_sync_replicas: vec![],
+                heartbeat_interval_ms: 30000,
+                leader_messages_per_second: 1000,
+                leader_bytes_per_second: 1024 * 1024,
+            },
+            "Missing topic partition",
+        ),
     ];
 
     for (request, description) in test_cases {
@@ -236,7 +245,7 @@ async fn test_send_heartbeat_validation() {
 #[tokio::test]
 async fn test_transfer_leadership_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::TransferLeadershipRequest {
         topic_partition: Some(test_topic_partition().into()),
         current_leader_id: "leader-1".to_string(),
@@ -250,14 +259,16 @@ async fn test_transfer_leadership_success() {
         wait_for_sync: true,
     };
 
-    let result = service.transfer_leadership(Request::new(proto_request)).await;
+    let result = service
+        .transfer_leadership(Request::new(proto_request))
+        .await;
     assert!(result.is_err()); // No handler registered
 }
 
 #[tokio::test]
 async fn test_transfer_leadership_validation() {
     let service = create_test_service();
-    
+
     // Test invalid leadership transfer scenarios
     let proto_request = broker::TransferLeadershipRequest {
         topic_partition: Some(test_topic_partition().into()),
@@ -272,17 +283,23 @@ async fn test_transfer_leadership_validation() {
         wait_for_sync: true,
     };
 
-    let result = service.transfer_leadership(Request::new(proto_request)).await;
+    let result = service
+        .transfer_leadership(Request::new(proto_request))
+        .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_assign_partition_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::AssignPartitionRequest {
         topic_partition: Some(test_topic_partition().into()),
-        replica_set: vec!["broker-1".to_string(), "broker-2".to_string(), "broker-3".to_string()],
+        replica_set: vec![
+            "broker-1".to_string(),
+            "broker-2".to_string(),
+            "broker-3".to_string(),
+        ],
         leader_id: "broker-1".to_string(),
         leader_epoch: 1,
         controller_id: "controller-1".to_string(),
@@ -306,7 +323,7 @@ async fn test_assign_partition_success() {
 #[tokio::test]
 async fn test_assign_partition_validation() {
     let service = create_test_service();
-    
+
     // Test with empty replica set
     let proto_request = broker::AssignPartitionRequest {
         topic_partition: Some(test_topic_partition().into()),
@@ -332,7 +349,7 @@ async fn test_assign_partition_validation() {
 #[tokio::test]
 async fn test_remove_partition_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::RemovePartitionRequest {
         topic_partition: Some(test_topic_partition().into()),
         controller_id: "controller-1".to_string(),
@@ -355,7 +372,7 @@ async fn test_remove_partition_success() {
 #[tokio::test]
 async fn test_get_replication_status_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::ReplicationStatusRequest {
         topic_partition: Some(test_topic_partition().into()),
         metadata: None,
@@ -364,7 +381,9 @@ async fn test_get_replication_status_success() {
         include_lag_analysis: true,
     };
 
-    let result = service.get_replication_status(Request::new(proto_request)).await;
+    let result = service
+        .get_replication_status(Request::new(proto_request))
+        .await;
     // Should return success (placeholder implementation)
     assert!(result.is_ok());
     let response = result.unwrap().into_inner();
@@ -374,13 +393,17 @@ async fn test_get_replication_status_success() {
 #[tokio::test]
 async fn test_sync_isr_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::SyncIsrRequest {
         topic_partition: Some(test_topic_partition().into()),
         leader_id: "leader-1".to_string(),
         leader_epoch: 1,
         current_isr: vec!["broker-1".to_string(), "broker-2".to_string()],
-        proposed_isr: vec!["broker-1".to_string(), "broker-2".to_string(), "broker-3".to_string()],
+        proposed_isr: vec![
+            "broker-1".to_string(),
+            "broker-2".to_string(),
+            "broker-3".to_string(),
+        ],
         metadata: None,
         change_reason: "follower_caught_up".to_string(),
         added_replicas: vec!["broker-3".to_string()],
@@ -398,35 +421,45 @@ async fn test_sync_isr_success() {
 #[tokio::test]
 async fn test_sync_isr_validation() {
     let service = create_test_service();
-    
+
     // Test ISR validation scenarios
     let test_cases = vec![
         // ISR shrinkage
-        (broker::SyncIsrRequest {
-            topic_partition: Some(test_topic_partition().into()),
-            leader_id: "leader-1".to_string(),
-            leader_epoch: 1,
-            current_isr: vec!["broker-1".to_string(), "broker-2".to_string(), "broker-3".to_string()],
-            proposed_isr: vec!["broker-1".to_string()], // Shrinking ISR
-            metadata: None,
-            change_reason: "follower_lag".to_string(),
-            added_replicas: vec![],
-            removed_replicas: vec!["broker-2".to_string(), "broker-3".to_string()],
-            follower_performance: vec![],
-        }, "ISR shrinkage"),
+        (
+            broker::SyncIsrRequest {
+                topic_partition: Some(test_topic_partition().into()),
+                leader_id: "leader-1".to_string(),
+                leader_epoch: 1,
+                current_isr: vec![
+                    "broker-1".to_string(),
+                    "broker-2".to_string(),
+                    "broker-3".to_string(),
+                ],
+                proposed_isr: vec!["broker-1".to_string()], // Shrinking ISR
+                metadata: None,
+                change_reason: "follower_lag".to_string(),
+                added_replicas: vec![],
+                removed_replicas: vec!["broker-2".to_string(), "broker-3".to_string()],
+                follower_performance: vec![],
+            },
+            "ISR shrinkage",
+        ),
         // Empty ISR (invalid)
-        (broker::SyncIsrRequest {
-            topic_partition: Some(test_topic_partition().into()),
-            leader_id: "leader-1".to_string(),
-            leader_epoch: 1,
-            current_isr: vec!["broker-1".to_string()],
-            proposed_isr: vec![], // Empty ISR
-            metadata: None,
-            change_reason: "invalid_test".to_string(),
-            added_replicas: vec![],
-            removed_replicas: vec!["broker-1".to_string()],
-            follower_performance: vec![],
-        }, "Empty ISR"),
+        (
+            broker::SyncIsrRequest {
+                topic_partition: Some(test_topic_partition().into()),
+                leader_id: "leader-1".to_string(),
+                leader_epoch: 1,
+                current_isr: vec!["broker-1".to_string()],
+                proposed_isr: vec![], // Empty ISR
+                metadata: None,
+                change_reason: "invalid_test".to_string(),
+                added_replicas: vec![],
+                removed_replicas: vec!["broker-1".to_string()],
+                follower_performance: vec![],
+            },
+            "Empty ISR",
+        ),
     ];
 
     for (request, description) in test_cases {
@@ -439,7 +472,7 @@ async fn test_sync_isr_validation() {
 #[tokio::test]
 async fn test_truncate_log_success() {
     let service = create_test_service();
-    
+
     let proto_request = broker::TruncateLogRequest {
         topic_partition: Some(test_topic_partition().into()),
         truncate_offset: 50,
@@ -460,29 +493,35 @@ async fn test_truncate_log_success() {
 #[tokio::test]
 async fn test_truncate_log_validation() {
     let service = create_test_service();
-    
+
     // Test truncation validation scenarios
     let test_cases = vec![
         // Truncate to beginning
-        (broker::TruncateLogRequest {
-            topic_partition: Some(test_topic_partition().into()),
-            truncate_offset: 0,
-            requester_id: "broker-2".to_string(),
-            requester_epoch: 1,
-            metadata: None,
-            truncation_reason: "full_reset".to_string(),
-            force_truncation: true,
-        }, "Truncate to beginning"),
+        (
+            broker::TruncateLogRequest {
+                topic_partition: Some(test_topic_partition().into()),
+                truncate_offset: 0,
+                requester_id: "broker-2".to_string(),
+                requester_epoch: 1,
+                metadata: None,
+                truncation_reason: "full_reset".to_string(),
+                force_truncation: true,
+            },
+            "Truncate to beginning",
+        ),
         // Invalid offset
-        (broker::TruncateLogRequest {
-            topic_partition: Some(test_topic_partition().into()),
-            truncate_offset: u64::MAX,
-            requester_id: "broker-2".to_string(),
-            requester_epoch: 1,
-            metadata: None,
-            truncation_reason: "invalid_test".to_string(),
-            force_truncation: false,
-        }, "Invalid offset"),
+        (
+            broker::TruncateLogRequest {
+                topic_partition: Some(test_topic_partition().into()),
+                truncate_offset: u64::MAX,
+                requester_id: "broker-2".to_string(),
+                requester_epoch: 1,
+                metadata: None,
+                truncation_reason: "invalid_test".to_string(),
+                force_truncation: false,
+            },
+            "Invalid offset",
+        ),
     ];
 
     for (request, description) in test_cases {
@@ -503,10 +542,13 @@ async fn test_concurrent_replication_requests() {
         let handle = tokio::spawn(async move {
             let proto_request = broker::ReplicateDataRequest {
                 leader_epoch: 1,
-                topic_partition: Some(TopicPartition {
-                    topic: format!("topic-{}", i),
-                    partition: 0,
-                }.into()),
+                topic_partition: Some(
+                    TopicPartition {
+                        topic: format!("topic-{}", i),
+                        partition: 0,
+                    }
+                    .into(),
+                ),
                 records: vec![test_wal_record().try_into().unwrap()],
                 leader_id: "leader-1".to_string(),
                 leader_high_watermark: 100,
@@ -518,7 +560,9 @@ async fn test_concurrent_replication_requests() {
                 compression: common::CompressionType::None as i32,
             };
 
-            service_clone.replicate_data(Request::new(proto_request)).await
+            service_clone
+                .replicate_data(Request::new(proto_request))
+                .await
         });
         handles.push(handle);
     }
@@ -533,7 +577,7 @@ async fn test_concurrent_replication_requests() {
 #[tokio::test]
 async fn test_error_code_mapping() {
     let service = create_test_service();
-    
+
     // Test that various error conditions map to correct gRPC status codes
     let proto_request = broker::ReplicateDataRequest {
         leader_epoch: 1,
@@ -558,7 +602,7 @@ async fn test_error_code_mapping() {
 #[tokio::test]
 async fn test_metadata_handling() {
     let service = create_test_service();
-    
+
     // Test requests with metadata
     let metadata = common::RequestMetadata {
         client_id: "test-client".to_string(),
@@ -592,7 +636,7 @@ async fn test_metadata_handling() {
 #[tokio::test]
 async fn test_compression_types() {
     let service = create_test_service();
-    
+
     let compression_types = vec![
         common::CompressionType::None,
         common::CompressionType::Lz4,
@@ -622,7 +666,7 @@ async fn test_compression_types() {
 #[tokio::test]
 async fn test_performance_metrics_heartbeat() {
     let service = create_test_service();
-    
+
     // Test heartbeat with various performance metrics
     let proto_request = broker::HeartbeatRequest {
         leader_epoch: 1,
@@ -634,7 +678,7 @@ async fn test_performance_metrics_heartbeat() {
         in_sync_replicas: vec!["replica-1".to_string()],
         heartbeat_interval_ms: 30000,
         leader_messages_per_second: 0, // No messages
-        leader_bytes_per_second: 0, // No bytes
+        leader_bytes_per_second: 0,    // No bytes
     };
 
     let result = service.send_heartbeat(Request::new(proto_request)).await;

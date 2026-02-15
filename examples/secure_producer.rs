@@ -2,10 +2,10 @@
 // Demonstrates WebPKI integration, certificate caching, and secure message production
 // Updated: August 2025 - Advanced security enhancements
 
-use std::time::Duration;
-use std::path::Path;
 use serde_json::json;
-use tracing::{info, error, warn};
+use std::path::Path;
+use std::time::Duration;
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("🔐 RustMQ Secure Producer with Enhanced Security Features");
     info!("📊 Features: WebPKI validation, certificate caching, secure authentication");
-    
+
     // Enhanced Security Configuration
     let security_config = SecurityConfig {
         // WebPKI Integration with fallback mechanism
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cache_ttl_hours: 1,
             validation_timeout_ms: 3000,
         },
-        
+
         // TLS Configuration with advanced enhancements
         tls: TlsConfig {
             enabled: true,
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             min_tls_version: "TLS1.3",
             allow_self_signed: true, // For development
         },
-        
+
         // Authentication with certificate validation
         auth: AuthConfig {
             mechanism: "certificate",
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             principal_regex: Some("^(.+)@(dev|test|local)\\.(.+)$".to_string()),
         },
     };
-    
+
     // Create RustMQ client configuration
     let config = ClientConfig {
         brokers: vec!["127.0.0.1:9092".to_string()],
@@ -59,19 +59,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         retry_backoff: Duration::from_millis(500),
         ..Default::default()
     };
-    
+
     info!("🔗 Connecting to RustMQ broker with enhanced security...");
-    
+
     // In a real implementation, this would use the actual RustMQ client SDK
     // For this example, we simulate the secure connection process
     let client = simulate_rustmq_client_connect(config).await?;
-    
+
     info!("✅ Connected with enhanced security features:");
     info!("  - WebPKI certificate validation: enabled");
     info!("  - Certificate caching: enabled");
     info!("  - TLS 1.3: enforced");
     info!("  - mTLS authentication: active");
-    
+
     // Create producer with security context
     let producer_config = ProducerConfig {
         topic: "secure-messages".to_string(),
@@ -81,14 +81,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         compression: "lz4".to_string(),
         enable_idempotence: true,
     };
-    
+
     let mut producer = client.create_producer(producer_config).await?;
     info!("📤 Producer created for topic 'secure-messages'");
-    
+
     // Produce secure messages with enhanced security features
     info!("🎯 Starting secure message production...");
     let message_count = 25;
-    
+
     for i in 1..=message_count {
         // Create message with security headers and metadata
         let message_data = json!({
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "encryption": "tls-webpki",
             "producer_id": "secure-producer@dev.rustmq.io"
         });
-        
+
         // Create message with security context
         let message = Message {
             key: Some(format!("secure-key-{}", i).into_bytes()),
@@ -109,13 +109,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 headers.insert("security-version".to_string(), b"enhanced".to_vec());
                 headers.insert("encryption".to_string(), b"tls-webpki".to_vec());
                 headers.insert("auth-method".to_string(), b"certificate".to_vec());
-                headers.insert("producer-principal".to_string(), b"secure-producer@dev.rustmq.io".to_vec());
+                headers.insert(
+                    "producer-principal".to_string(),
+                    b"secure-producer@dev.rustmq.io".to_vec(),
+                );
                 headers
             }),
             topic: "secure-messages".to_string(),
             partition: None, // Let RustMQ decide partition
         };
-        
+
         // Send message with security validation
         match producer.send(message).await {
             Ok(metadata) => {
@@ -123,59 +126,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("  - Partition: {}", metadata.partition);
                 info!("  - Offset: {}", metadata.offset);
                 info!("  - Security validated: {}", metadata.security_validated);
-                info!("  - Validation latency: {}μs", metadata.validation_latency_us);
-                
+                info!(
+                    "  - Validation latency: {}μs",
+                    metadata.validation_latency_us
+                );
+
                 // Enhanced performance monitoring
                 if metadata.validation_latency_us > 245 {
-                    warn!("⚠️  Certificate validation exceeded performance target (245μs): {}μs", 
-                          metadata.validation_latency_us);
+                    warn!(
+                        "⚠️  Certificate validation exceeded performance target (245μs): {}μs",
+                        metadata.validation_latency_us
+                    );
                 }
-                
+
                 // Log WebPKI usage statistics
                 if metadata.webpki_used {
                     info!("  🛡️  WebPKI validation used successfully");
                 } else {
                     info!("  🔄 Legacy validation fallback used");
                 }
-            },
+            }
             Err(e) => {
                 error!("❌ Failed to send message {}: {}", i, e);
-                
+
                 // Check if error is security-related
-                if e.to_string().contains("certificate") || e.to_string().contains("authentication") {
+                if e.to_string().contains("certificate") || e.to_string().contains("authentication")
+                {
                     error!("🚨 Security error detected - checking certificate status");
-                    
+
                     // In a real implementation, trigger certificate refresh
                     warn!("🔄 Triggering certificate cache invalidation...");
-                    
+
                     // Continue with remaining messages after error handling
                     continue;
                 }
-                
+
                 // For other errors, stop production
                 break;
             }
         }
-        
+
         // Add small delay between messages for demo
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    
+
     // Flush any pending messages
     info!("🔄 Flushing pending messages...");
     producer.flush().await?;
-    
+
     // Graceful shutdown with security cleanup
     info!("🛑 Shutting down secure producer...");
     producer.close().await?;
     client.close().await?;
-    
+
     info!("✅ Secure producer finished successfully");
     info!("📊 Final stats:");
     info!("  - Messages sent: {}", message_count);
     info!("  - Security violations: 0");
     info!("  - Enhanced features used: WebPKI, certificate caching, secure auth");
-    
+
     Ok(())
 }
 
@@ -267,14 +276,17 @@ struct MessageMetadata {
 }
 
 impl RustMQClient {
-    async fn create_producer(&self, config: ProducerConfig) -> Result<Producer, Box<dyn std::error::Error>> {
+    async fn create_producer(
+        &self,
+        config: ProducerConfig,
+    ) -> Result<Producer, Box<dyn std::error::Error>> {
         // Simulate producer creation with security validation
         info!("🔧 Creating secure producer with enhanced security features");
-        
+
         // Validate security configuration
         if let Some(security) = &self.config.security {
             info!("🔐 Validating security configuration...");
-            
+
             // Check certificate files exist
             if security.tls.enabled {
                 if !Path::new(&security.tls.cert_path).exists() {
@@ -289,21 +301,21 @@ impl RustMQClient {
                     }
                 }
             }
-            
+
             // Simulate certificate validation
             tokio::time::sleep(Duration::from_millis(100)).await;
             info!("✅ Certificate validation completed");
-            
+
             // Simulate WebPKI validation
             if security.webpki.enabled {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 info!("✅ WebPKI validation completed");
             }
         }
-        
+
         Ok(Producer { config })
     }
-    
+
     async fn close(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("🔐 Closing secure client connection...");
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -312,16 +324,19 @@ impl RustMQClient {
 }
 
 impl Producer {
-    async fn send(&mut self, _message: Message) -> Result<MessageMetadata, Box<dyn std::error::Error>> {
+    async fn send(
+        &mut self,
+        _message: Message,
+    ) -> Result<MessageMetadata, Box<dyn std::error::Error>> {
         // Simulate message sending with security validation
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         // Simulate certificate validation latency
         let validation_latency = rand::random::<u64>() % 300 + 100; // 100-400μs
-        
+
         // Randomly simulate WebPKI vs fallback usage
         let webpki_used = rand::random::<f32>() > 0.1; // 90% WebPKI success rate
-        
+
         Ok(MessageMetadata {
             partition: rand::random::<u32>() % 3, // 3 partitions
             offset: rand::random::<u64>(),
@@ -331,38 +346,40 @@ impl Producer {
             webpki_used,
         })
     }
-    
+
     async fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("💾 Flushing producer buffer...");
         tokio::time::sleep(Duration::from_millis(50)).await;
         Ok(())
     }
-    
+
     async fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("📤 Closing secure producer...");
         Ok(())
     }
 }
 
-async fn simulate_rustmq_client_connect(config: ClientConfig) -> Result<RustMQClient, Box<dyn std::error::Error>> {
+async fn simulate_rustmq_client_connect(
+    config: ClientConfig,
+) -> Result<RustMQClient, Box<dyn std::error::Error>> {
     info!("🔗 Establishing secure connection to RustMQ broker...");
-    
+
     // Simulate connection process with security handshake
     tokio::time::sleep(Duration::from_millis(200)).await;
     info!("🤝 TLS handshake completed");
-    
+
     tokio::time::sleep(Duration::from_millis(100)).await;
     info!("🔐 Certificate authentication completed");
-    
+
     if let Some(security) = &config.security {
         if security.webpki.enabled {
             tokio::time::sleep(Duration::from_millis(50)).await;
             info!("🛡️  WebPKI validation completed");
         }
     }
-    
+
     info!("✅ Secure connection established");
-    
+
     Ok(RustMQClient { config })
 }
 

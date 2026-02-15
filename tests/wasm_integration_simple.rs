@@ -4,8 +4,8 @@
 #[cfg(feature = "wasm")]
 #[tokio::test]
 async fn test_real_wasm_simple_transform_execution() {
-    use rustmq::etl::instance_pool::WasmInstancePool;
     use rustmq::config::{EtlInstancePoolConfig, ModuleInstanceConfig};
+    use rustmq::etl::instance_pool::WasmInstancePool;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -26,7 +26,8 @@ async fn test_real_wasm_simple_transform_execution() {
     let pool = Arc::new(WasmInstancePool::new(pool_config).unwrap());
 
     // Load module
-    pool.load_module("simple_transform".to_string(), bytecode).await
+    pool.load_module("simple_transform".to_string(), bytecode)
+        .await
         .expect("Failed to load WASM module");
 
     // Create module config
@@ -40,20 +41,32 @@ async fn test_real_wasm_simple_transform_execution() {
     };
 
     // Checkout instance
-    let mut checkout = pool.checkout_instance("simple_transform", &module_config).await
+    let mut checkout = pool
+        .checkout_instance("simple_transform", &module_config)
+        .await
         .expect("Failed to checkout instance");
 
     // Execute WASM transformation (should convert to uppercase)
     let input = b"hello world";
-    let result = checkout.instance.wasm_context.execute("transform", input).await;
+    let result = checkout
+        .instance
+        .wasm_context
+        .execute("transform", input)
+        .await;
 
     assert!(result.is_ok(), "WASM execution failed: {:?}", result.err());
 
     let output = result.unwrap();
-    assert_eq!(output, b"HELLO WORLD", "Transformation failed - expected uppercase conversion");
+    assert_eq!(
+        output, b"HELLO WORLD",
+        "Transformation failed - expected uppercase conversion"
+    );
 
     // Return instance to pool
-    checkout.return_handle.return_instance(checkout.instance).await
+    checkout
+        .return_handle
+        .return_instance(checkout.instance)
+        .await
         .expect("Failed to return instance");
 
     println!("✅ Real WASM execution successful - transform function works!");
@@ -62,8 +75,8 @@ async fn test_real_wasm_simple_transform_execution() {
 #[cfg(not(feature = "wasm"))]
 #[tokio::test]
 async fn test_mock_wasm_simple() {
-    use rustmq::etl::instance_pool::WasmInstancePool;
     use rustmq::config::EtlInstancePoolConfig;
+    use rustmq::etl::instance_pool::WasmInstancePool;
     use std::sync::Arc;
 
     let pool_config = EtlInstancePoolConfig {

@@ -22,17 +22,17 @@ impl PartitionRebalancerImpl {
         let memory_weight = 0.3;
         let partition_weight = 0.2;
         let message_rate_weight = 0.2;
-        
+
         // Normalize partition count (assume max 1000 partitions per broker)
         let normalized_partitions = (broker.load_metrics.partition_count as f64) / 1000.0;
-        
+
         // Normalize message rate (assume max 100k msg/s per broker)
         let normalized_message_rate = (broker.load_metrics.message_rate as f64) / 100_000.0;
-        
-        cpu_weight * broker.load_metrics.cpu_usage +
-        memory_weight * broker.load_metrics.memory_usage +
-        partition_weight * normalized_partitions +
-        message_rate_weight * normalized_message_rate
+
+        cpu_weight * broker.load_metrics.cpu_usage
+            + memory_weight * broker.load_metrics.memory_usage
+            + partition_weight * normalized_partitions
+            + message_rate_weight * normalized_message_rate
     }
 
     fn select_partitions_to_move(
@@ -43,15 +43,17 @@ impl PartitionRebalancerImpl {
         // In a real implementation, this would query the metadata store
         // For testing, return mock partitions
         let mut partitions = Vec::new();
-        let partitions_to_move = (target_load_reduction * from_broker.load_metrics.partition_count as f64) as usize;
-        
-        for i in 0..partitions_to_move.min(5) { // Limit for testing
+        let partitions_to_move =
+            (target_load_reduction * from_broker.load_metrics.partition_count as f64) as usize;
+
+        for i in 0..partitions_to_move.min(5) {
+            // Limit for testing
             partitions.push(TopicPartition {
                 topic: format!("topic-{}", i),
                 partition: i as u32,
             });
         }
-        
+
         partitions
     }
 
@@ -66,7 +68,9 @@ impl PartitionRebalancerImpl {
             .min_by(|a, b| {
                 let score_a = self.calculate_broker_load_score(a);
                 let score_b = self.calculate_broker_load_score(b);
-                score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+                score_a
+                    .partial_cmp(&score_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|b| b.id.clone())
     }
@@ -79,7 +83,8 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
         let operation_id = Uuid::new_v4().to_string();
 
         // Calculate average load
-        let total_load: f64 = brokers.iter()
+        let total_load: f64 = brokers
+            .iter()
             .map(|b| self.calculate_broker_load_score(b))
             .sum();
         let average_load = total_load / brokers.len() as f64;
@@ -89,18 +94,22 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
             .iter()
             .filter(|b| {
                 let load = self.calculate_broker_load_score(b);
-                load > average_load * 1.1 && matches!(b.status, BrokerStatus::Healthy | BrokerStatus::Draining)
+                load > average_load * 1.1
+                    && matches!(b.status, BrokerStatus::Healthy | BrokerStatus::Draining)
             })
             .collect();
 
         for overloaded_broker in overloaded_brokers {
             let current_load = self.calculate_broker_load_score(overloaded_broker);
             let target_load_reduction = (current_load - average_load) / current_load;
-            
-            let partitions_to_move = self.select_partitions_to_move(overloaded_broker, target_load_reduction);
-            
+
+            let partitions_to_move =
+                self.select_partitions_to_move(overloaded_broker, target_load_reduction);
+
             for partition in partitions_to_move {
-                if let Some(target_broker) = self.find_best_target_broker(&brokers, &overloaded_broker.id) {
+                if let Some(target_broker) =
+                    self.find_best_target_broker(&brokers, &overloaded_broker.id)
+                {
                     moves.push(PartitionMove {
                         topic_partition: partition,
                         from_broker: overloaded_broker.id.clone(),
@@ -125,7 +134,7 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
     async fn execute_rebalance(&self, plan: RebalancePlan) -> Result<()> {
         let operation_id = plan.operation_id.clone();
         let total_moves = plan.moves.len();
-        
+
         {
             let mut progress_map = self.operation_progress.write().await;
             progress_map.insert(operation_id.clone(), 0.0);
@@ -178,7 +187,7 @@ impl MockPartitionRebalancer {
 impl PartitionRebalancer for MockPartitionRebalancer {
     async fn calculate_rebalance_plan(&self, _brokers: Vec<BrokerInfo>) -> Result<RebalancePlan> {
         let operation_id = Uuid::new_v4().to_string();
-        
+
         // Return empty plan for testing
         Ok(RebalancePlan {
             operation_id,
@@ -189,7 +198,7 @@ impl PartitionRebalancer for MockPartitionRebalancer {
 
     async fn execute_rebalance(&self, plan: RebalancePlan) -> Result<()> {
         let operation_id = plan.operation_id.clone();
-        
+
         {
             let mut progress_map = self.operation_progress.write().await;
             progress_map.insert(operation_id.clone(), 0.0);
@@ -219,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn test_rebalance_plan_calculation() {
         let rebalancer = PartitionRebalancerImpl::new();
-        
+
         let brokers = vec![
             BrokerInfo {
                 id: "broker-1".to_string(),
@@ -250,7 +259,7 @@ mod tests {
         ];
 
         let plan = rebalancer.calculate_rebalance_plan(brokers).await.unwrap();
-        
+
         // Should generate moves from overloaded broker to underloaded broker
         assert!(!plan.moves.is_empty());
         assert!(plan.moves.iter().all(|m| m.from_broker == "broker-1"));
@@ -260,20 +269,18 @@ mod tests {
     #[tokio::test]
     async fn test_rebalance_execution() {
         let rebalancer = PartitionRebalancerImpl::new();
-        
+
         let plan = RebalancePlan {
             operation_id: "test-op".to_string(),
-            moves: vec![
-                PartitionMove {
-                    topic_partition: TopicPartition {
-                        topic: "test-topic".to_string(),
-                        partition: 0,
-                    },
-                    from_broker: "broker-1".to_string(),
-                    to_broker: "broker-2".to_string(),
-                    estimated_bytes: 100 * 1024 * 1024,
+            moves: vec![PartitionMove {
+                topic_partition: TopicPartition {
+                    topic: "test-topic".to_string(),
+                    partition: 0,
                 },
-            ],
+                from_broker: "broker-1".to_string(),
+                to_broker: "broker-2".to_string(),
+                estimated_bytes: 100 * 1024 * 1024,
+            }],
             estimated_duration: Duration::from_secs(10),
         };
 

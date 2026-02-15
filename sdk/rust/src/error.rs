@@ -198,7 +198,9 @@ impl ClientError {
             ClientError::Serialization(_) | ClientError::Deserialization(_) => "serialization",
             ClientError::Broker(_) => "broker",
             ClientError::Timeout { .. } => "timeout",
-            ClientError::TopicNotFound { .. } | ClientError::PartitionNotFound { .. } => "not_found",
+            ClientError::TopicNotFound { .. } | ClientError::PartitionNotFound { .. } => {
+                "not_found"
+            }
             ClientError::Producer(_) => "producer",
             ClientError::Consumer(_) | ClientError::ConsumerGroup(_) => "consumer",
             ClientError::MessageTooLarge { .. } => "message_size",
@@ -227,7 +229,7 @@ impl ClientError {
     /// Check if the error is retryable
     pub fn is_retryable(&self) -> bool {
         match self {
-            ClientError::Connection(_) 
+            ClientError::Connection(_)
             | ClientError::NoConnectionsAvailable
             | ClientError::Timeout { .. }
             | ClientError::BrokerNotAvailable { .. }
@@ -235,7 +237,7 @@ impl ClientError {
             | ClientError::QuicTransport(_)
             | ClientError::RebalancingInProgress
             | ClientError::Broker(_) => true,
-            
+
             ClientError::Authentication(_)
             | ClientError::InvalidConfig(_)
             | ClientError::MessageTooLarge { .. }
@@ -245,7 +247,7 @@ impl ClientError {
             | ClientError::InvalidCertificate { .. }
             | ClientError::PrincipalExtraction(_)
             | ClientError::UnsupportedAuthMethod { .. } => false,
-            
+
             _ => false,
         }
     }

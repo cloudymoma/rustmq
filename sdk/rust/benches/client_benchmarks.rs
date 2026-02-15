@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use rustmq_client::*;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rustmq_client::message::{MessageBatch, MessageMetadata};
+use rustmq_client::*;
 use tokio::runtime::Runtime;
 
 fn bench_message_creation(c: &mut Criterion) {
@@ -39,7 +39,7 @@ fn bench_message_deserialization(c: &mut Criterion) {
         .header("benchmark", "true")
         .build()
         .unwrap();
-    
+
     let json = message.to_json().unwrap();
 
     c.bench_function("message_deserialization", |b| {
@@ -52,7 +52,7 @@ fn bench_message_deserialization(c: &mut Criterion) {
 
 fn bench_batch_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_creation");
-    
+
     for size in [10, 100, 1000].iter() {
         group.bench_with_input(BenchmarkId::new("size", size), size, |b, &size| {
             b.iter(|| {
@@ -65,7 +65,7 @@ fn bench_batch_creation(c: &mut Criterion) {
                             .unwrap()
                     })
                     .collect();
-                
+
                 let batch = MessageBatch::new(black_box(messages));
                 black_box(batch)
             })
@@ -91,7 +91,8 @@ fn bench_config_deserialization(c: &mut Criterion) {
 
     c.bench_function("config_deserialization", |b| {
         b.iter(|| {
-            let config: std::result::Result<ClientConfig, serde_json::Error> = serde_json::from_str(black_box(&json));
+            let config: std::result::Result<ClientConfig, serde_json::Error> =
+                serde_json::from_str(black_box(&json));
             black_box(config)
         })
     });
@@ -99,7 +100,7 @@ fn bench_config_deserialization(c: &mut Criterion) {
 
 fn bench_client_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("client_creation", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -107,7 +108,7 @@ fn bench_client_creation(c: &mut Criterion) {
                     brokers: vec!["localhost:9092".to_string()],
                     ..Default::default()
                 };
-                
+
                 // This will fail without a broker, but we're measuring creation overhead
                 let result = RustMqClient::new(black_box(config)).await;
                 black_box(result)
@@ -157,10 +158,10 @@ fn bench_error_handling(c: &mut Criterion) {
                 ClientError::Timeout { timeout_ms: 1000 },
                 ClientError::Producer("test".to_string()),
             ];
-            
+
             let categories: Vec<&str> = errors.iter().map(|e| e.category()).collect();
             let retryable: Vec<bool> = errors.iter().map(|e| e.is_retryable()).collect();
-            
+
             black_box((categories, retryable))
         })
     });

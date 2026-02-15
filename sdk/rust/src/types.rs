@@ -195,7 +195,7 @@ impl OffsetAndMetadata {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        
+
         Self {
             offset,
             metadata,

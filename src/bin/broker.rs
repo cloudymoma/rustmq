@@ -6,7 +6,7 @@
 use rustmq::{Config, Result, broker::Broker};
 use std::env;
 use tokio::signal;
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -40,12 +40,12 @@ async fn main() -> Result<()> {
     // Wait for shutdown signal (Ctrl+C or SIGTERM)
     #[cfg(unix)]
     {
-        use signal::unix::{signal, SignalKind};
+        use signal::unix::{SignalKind, signal};
 
-        let mut sigterm = signal(SignalKind::terminate())
-            .expect("Failed to register SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt())
-            .expect("Failed to register SIGINT handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+        let mut sigint =
+            signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
 
         tokio::select! {
             _ = sigterm.recv() => {

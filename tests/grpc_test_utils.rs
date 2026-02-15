@@ -1,5 +1,5 @@
 //! Test utilities and mock implementations for gRPC protobuf service testing
-//! 
+//!
 //! This module provides comprehensive testing infrastructure including:
 //! - Mock service implementations for testing
 //! - Test data generators and factories
@@ -7,20 +7,20 @@
 //! - Performance measurement utilities
 //! - Error simulation capabilities
 
+use async_trait::async_trait;
+use bytes::Bytes;
+use chrono::Utc;
+use rand::{Rng, thread_rng};
 use rustmq::{
+    config::{ScalingConfig, WalConfig},
+    proto::{broker, common, controller},
     types::*,
-    proto::{broker, controller, common},
-    config::{WalConfig, ScalingConfig},
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
-use chrono::Utc;
-use async_trait::async_trait;
-use rand::{Rng, thread_rng};
-use tempfile::TempDir;
-use bytes::Bytes;
 
 // ============================================================================
 // Test Data Factories
@@ -38,15 +38,10 @@ impl TestDataFactory {
     }
 
     /// Generate a test record with customizable fields
-    pub fn record(
-        key: Option<Vec<u8>>,
-        value: Option<Vec<u8>>,
-        header_count: usize,
-    ) -> Record {
-        let headers = (0..header_count).map(|i| Header::new(
-            format!("header-{}", i),
-            format!("value-{}", i).into_bytes(),
-        )).collect();
+    pub fn record(key: Option<Vec<u8>>, value: Option<Vec<u8>>, header_count: usize) -> Record {
+        let headers = (0..header_count)
+            .map(|i| Header::new(format!("header-{}", i), format!("value-{}", i).into_bytes()))
+            .collect();
 
         Record::new(
             key,
@@ -76,17 +71,19 @@ impl TestDataFactory {
         start_offset: u64,
         count: usize,
     ) -> Vec<WalRecord> {
-        (0..count).map(|i| {
-            Self::wal_record(
-                topic_partition.clone(),
-                start_offset + i as u64,
-                Some(Self::record(
-                    Some(format!("key-{}", i).into_bytes()),
-                    Some(format!("value-{}", i).into_bytes()),
-                    i % 3, // Vary header count
-                ))
-            )
-        }).collect()
+        (0..count)
+            .map(|i| {
+                Self::wal_record(
+                    topic_partition.clone(),
+                    start_offset + i as u64,
+                    Some(Self::record(
+                        Some(format!("key-{}", i).into_bytes()),
+                        Some(format!("value-{}", i).into_bytes()),
+                        i % 3, // Vary header count
+                    )),
+                )
+            })
+            .collect()
     }
 
     /// Generate random CRC32 value
@@ -101,7 +98,9 @@ impl TestDataFactory {
             host: "127.0.0.1".to_string(),
             port_quic: 9092,
             port_rpc: 9093,
-            rack_id: rack.map(|r| r.to_string()).unwrap_or_else(|| "default-rack".to_string()),
+            rack_id: rack
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "default-rack".to_string()),
         }
     }
 
@@ -202,12 +201,16 @@ impl MockBrokerReplicationService {
 
     async fn log_request(&self, operation: &str) {
         let mut log = self.request_log.lock().await;
-        log.push(format!("{}: {}", Utc::now().format("%H:%M:%S%.3f"), operation));
+        log.push(format!(
+            "{}: {}",
+            Utc::now().format("%H:%M:%S%.3f"),
+            operation
+        ));
     }
 
     async fn apply_latency_and_failure(&self, operation: &str) -> Result<(), Status> {
         self.log_request(operation).await;
-        
+
         if !self.simulated_latency.is_zero() {
             tokio::time::sleep(self.simulated_latency).await;
         }
@@ -221,13 +224,15 @@ impl MockBrokerReplicationService {
 }
 
 #[async_trait]
-impl broker::broker_replication_service_server::BrokerReplicationService for MockBrokerReplicationService {
+impl broker::broker_replication_service_server::BrokerReplicationService
+    for MockBrokerReplicationService
+{
     async fn replicate_data(
         &self,
         request: Request<broker::ReplicateDataRequest>,
     ) -> Result<Response<broker::ReplicateDataResponse>, Status> {
         self.apply_latency_and_failure("replicate_data").await?;
-        
+
         let req = request.into_inner();
         let response = broker::ReplicateDataResponse {
             success: true,
@@ -269,7 +274,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::HeartbeatRequest>,
     ) -> Result<Response<broker::HeartbeatResponse>, Status> {
         self.apply_latency_and_failure("send_heartbeat").await?;
-        
+
         let _req = request.into_inner();
         let response = broker::HeartbeatResponse {
             success: true,
@@ -303,8 +308,9 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         &self,
         request: Request<broker::TransferLeadershipRequest>,
     ) -> Result<Response<broker::TransferLeadershipResponse>, Status> {
-        self.apply_latency_and_failure("transfer_leadership").await?;
-        
+        self.apply_latency_and_failure("transfer_leadership")
+            .await?;
+
         let req = request.into_inner();
         let response = broker::TransferLeadershipResponse {
             success: req.new_leader_id != req.current_leader_id, // Succeed if different leaders
@@ -326,7 +332,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::AssignPartitionRequest>,
     ) -> Result<Response<broker::AssignPartitionResponse>, Status> {
         self.apply_latency_and_failure("assign_partition").await?;
-        
+
         let _req = request.into_inner();
         let response = broker::AssignPartitionResponse {
             success: true,
@@ -337,7 +343,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
             assigned_wal_path: "/tmp/test-wal".to_string(),
             estimated_setup_time_ms: 1000,
             allocated_memory_bytes: 1024 * 1024 * 100, // 100MB
-            allocated_disk_bytes: 1024 * 1024 * 1024, // 1GB
+            allocated_disk_bytes: 1024 * 1024 * 1024,  // 1GB
             allocated_network_mbs: 10,
         };
 
@@ -349,7 +355,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::RemovePartitionRequest>,
     ) -> Result<Response<broker::RemovePartitionResponse>, Status> {
         self.apply_latency_and_failure("remove_partition").await?;
-        
+
         let _req = request.into_inner();
         let response = broker::RemovePartitionResponse {
             success: true,
@@ -371,8 +377,9 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         &self,
         request: Request<broker::ReplicationStatusRequest>,
     ) -> Result<Response<broker::ReplicationStatusResponse>, Status> {
-        self.apply_latency_and_failure("get_replication_status").await?;
-        
+        self.apply_latency_and_failure("get_replication_status")
+            .await?;
+
         let req = request.into_inner();
         let response = broker::ReplicationStatusResponse {
             success: true,
@@ -423,7 +430,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::SyncIsrRequest>,
     ) -> Result<Response<broker::SyncIsrResponse>, Status> {
         self.apply_latency_and_failure("sync_isr").await?;
-        
+
         let req = request.into_inner();
         let response = broker::SyncIsrResponse {
             success: true,
@@ -443,7 +450,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::TruncateLogRequest>,
     ) -> Result<Response<broker::TruncateLogResponse>, Status> {
         self.apply_latency_and_failure("truncate_log").await?;
-        
+
         let req = request.into_inner();
         let response = broker::TruncateLogResponse {
             success: true,
@@ -465,7 +472,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
         request: Request<broker::HealthCheckRequest>,
     ) -> Result<Response<broker::HealthCheckResponse>, Status> {
         self.apply_latency_and_failure("health_check").await?;
-        
+
         let _req = request.into_inner();
         let response = broker::HealthCheckResponse {
             overall_healthy: true,
@@ -559,7 +566,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Moc
                 cpu_usage_percent: 25.0,
                 memory_usage_bytes: 1024 * 1024 * 512, // 512MB
                 memory_total_bytes: 1024 * 1024 * 1024 * 2, // 2GB
-                disk_usage_bytes: 1024 * 1024 * 1024, // 1GB
+                disk_usage_bytes: 1024 * 1024 * 1024,  // 1GB
                 disk_total_bytes: 1024 * 1024 * 1024 * 10, // 10GB
                 network_in_bytes_per_sec: 1024 * 100,
                 network_out_bytes_per_sec: 1024 * 50,
@@ -625,18 +632,25 @@ impl MockControllerRaftService {
 
     async fn log_request(&self, operation: &str) {
         let mut log = self.request_log.lock().await;
-        log.push(format!("{}: {}", Utc::now().format("%H:%M:%S%.3f"), operation));
+        log.push(format!(
+            "{}: {}",
+            Utc::now().format("%H:%M:%S%.3f"),
+            operation
+        ));
     }
 
     async fn apply_latency_and_failure(&self, operation: &str) -> Result<(), Status> {
         self.log_request(operation).await;
-        
+
         if !self.simulated_latency.is_zero() {
             tokio::time::sleep(self.simulated_latency).await;
         }
 
         if self.fail_requests {
-            return Err(Status::internal(format!("Mock failure: {}", self.error_code)));
+            return Err(Status::internal(format!(
+                "Mock failure: {}",
+                self.error_code
+            )));
         }
 
         Ok(())
@@ -644,13 +658,15 @@ impl MockControllerRaftService {
 }
 
 #[async_trait]
-impl controller::controller_raft_service_server::ControllerRaftService for MockControllerRaftService {
+impl controller::controller_raft_service_server::ControllerRaftService
+    for MockControllerRaftService
+{
     async fn request_vote(
         &self,
         request: Request<controller::RequestVoteRequest>,
     ) -> Result<Response<controller::RequestVoteResponse>, Status> {
         self.apply_latency_and_failure("request_vote").await?;
-        
+
         let req = request.into_inner();
         let mut current_term = self.current_term.lock().await;
         let mut voted_for = self.voted_for.lock().await;
@@ -681,7 +697,11 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
                 error_message: String::new(),
                 throttle_time_ms: self.simulated_latency.as_millis() as u32,
             }),
-            vote_reason: if vote_granted { "vote_granted".to_string() } else { "vote_denied".to_string() },
+            vote_reason: if vote_granted {
+                "vote_granted".to_string()
+            } else {
+                "vote_denied".to_string()
+            },
             voter_last_log_index: 100,
             voter_last_log_term: *current_term,
             voter_version: "1.0.0".to_string(),
@@ -698,12 +718,16 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::AppendEntriesRequest>,
     ) -> Result<Response<controller::AppendEntriesResponse>, Status> {
         self.apply_latency_and_failure("append_entries").await?;
-        
+
         let req = request.into_inner();
         let current_term = *self.current_term.lock().await;
 
         let success = req.term >= current_term;
-        let match_index = if success { req.prev_log_index + req.entries.len() as u64 } else { 0 };
+        let match_index = if success {
+            req.prev_log_index + req.entries.len() as u64
+        } else {
+            0
+        };
 
         let response = controller::AppendEntriesResponse {
             term: current_term,
@@ -718,7 +742,11 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
             follower_commit_index: 500,
             follower_applied_index: 500,
             append_time_ms: self.simulated_latency.as_millis() as u64,
-            bytes_appended: if success { req.total_batch_size_bytes } else { 0 },
+            bytes_appended: if success {
+                req.total_batch_size_bytes
+            } else {
+                0
+            },
             preferred_max_entries: 1000,
             preferred_max_bytes: 1024 * 1024,
         };
@@ -731,7 +759,7 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::InstallSnapshotRequest>,
     ) -> Result<Response<controller::InstallSnapshotResponse>, Status> {
         self.apply_latency_and_failure("install_snapshot").await?;
-        
+
         let req = request.into_inner();
         let response = controller::InstallSnapshotResponse {
             term: *self.current_term.lock().await,
@@ -742,7 +770,7 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
             chunks_received: req.chunk_index + 1,
             installation_progress: (req.chunk_index + 1) as f64 / req.total_chunks as f64,
             installation_time_ms: self.simulated_latency.as_millis() as u64,
-            preferred_chunk_size: 64 * 1024, // 64KB
+            preferred_chunk_size: 64 * 1024,               // 64KB
             available_disk_space: 1024 * 1024 * 1024 * 10, // 10GB
             cpu_usage: 25.0,
             memory_usage: 60.0,
@@ -758,10 +786,10 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::PreVoteRequest>,
     ) -> Result<Response<controller::PreVoteResponse>, Status> {
         self.apply_latency_and_failure("pre_vote").await?;
-        
+
         let req = request.into_inner();
         let current_term = *self.current_term.lock().await;
-        
+
         let response = controller::PreVoteResponse {
             term: current_term,
             vote_granted: req.term > current_term,
@@ -769,7 +797,11 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
             metadata: None,
             vote_reason: "pre_vote_granted".to_string(),
             has_leader: *self.is_leader.lock().await,
-            current_leader_id: if *self.is_leader.lock().await { self.node_id.clone() } else { String::new() },
+            current_leader_id: if *self.is_leader.lock().await {
+                self.node_id.clone()
+            } else {
+                String::new()
+            },
         };
 
         Ok(Response::new(response))
@@ -779,8 +811,9 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         &self,
         request: Request<controller::TransferLeadershipRequest>,
     ) -> Result<Response<controller::TransferLeadershipResponse>, Status> {
-        self.apply_latency_and_failure("transfer_leadership").await?;
-        
+        self.apply_latency_and_failure("transfer_leadership")
+            .await?;
+
         let req = request.into_inner();
         let response = controller::TransferLeadershipResponse {
             success: true,
@@ -801,10 +834,10 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::GetClusterInfoRequest>,
     ) -> Result<Response<controller::GetClusterInfoResponse>, Status> {
         self.apply_latency_and_failure("get_cluster_info").await?;
-        
+
         let req = request.into_inner();
         let is_leader = *self.is_leader.lock().await;
-        
+
         let response = controller::GetClusterInfoResponse {
             success: true,
             error_code: 0,
@@ -820,16 +853,20 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
                 throttle_time_ms: 0,
             }),
             cluster_id: "test-cluster".to_string(),
-            current_leader_id: if is_leader { self.node_id.clone() } else { "unknown".to_string() },
+            current_leader_id: if is_leader {
+                self.node_id.clone()
+            } else {
+                "unknown".to_string()
+            },
             current_term: *self.current_term.lock().await,
             nodes: if req.include_node_details {
                 vec![controller::NodeInfo {
                     node_id: self.node_id.clone(),
                     address: "127.0.0.1:9090".to_string(),
-                    state: if is_leader { 
-                        controller::NodeState::Leader 
-                    } else { 
-                        controller::NodeState::Follower 
+                    state: if is_leader {
+                        controller::NodeState::Leader
+                    } else {
+                        controller::NodeState::Follower
                     } as i32,
                     term: *self.current_term.lock().await,
                     last_log_index: 1000,
@@ -921,7 +958,7 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::AddNodeRequest>,
     ) -> Result<Response<controller::AddNodeResponse>, Status> {
         self.apply_latency_and_failure("add_node").await?;
-        
+
         let _req = request.into_inner();
         let response = controller::AddNodeResponse {
             success: true,
@@ -940,7 +977,7 @@ impl controller::controller_raft_service_server::ControllerRaftService for MockC
         request: Request<controller::RemoveNodeRequest>,
     ) -> Result<Response<controller::RemoveNodeResponse>, Status> {
         self.apply_latency_and_failure("remove_node").await?;
-        
+
         let _req = request.into_inner();
         let response = controller::RemoveNodeResponse {
             success: true,
@@ -1035,7 +1072,8 @@ impl PerformanceMetrics {
         println!("Total Bytes: {}", self.total_bytes);
         println!("Requests/sec: {:.2}", self.requests_per_second());
         println!("Throughput: {:.2} MB/s", self.throughput_mbps());
-        println!("Average Latency: {:.2} ms", 
+        println!(
+            "Average Latency: {:.2} ms",
             if self.request_count > 0 {
                 self.duration().as_millis() as f64 / self.request_count as f64
             } else {
@@ -1075,7 +1113,7 @@ impl TestEnvironment {
             upload_interval_ms: 60_000,
             flush_interval_ms: 1000,
         };
-        
+
         self.temp_dirs.push(temp_dir);
         self.broker_configs.push(config.clone());
         config
@@ -1089,7 +1127,7 @@ impl TestEnvironment {
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
         };
-        
+
         self.controller_configs.push(config.clone());
         config
     }
@@ -1133,9 +1171,9 @@ impl ErrorSimulator {
         // Simulate random latency
         if self.latency_range.0 < self.latency_range.1 {
             let latency = Duration::from_millis(
-                thread_rng().gen_range(
-                    self.latency_range.0.as_millis()..=self.latency_range.1.as_millis()
-                ) as u64
+                thread_rng()
+                    .gen_range(self.latency_range.0.as_millis()..=self.latency_range.1.as_millis())
+                    as u64,
             );
             tokio::time::sleep(latency).await;
         }
@@ -1155,16 +1193,19 @@ impl ErrorSimulator {
 // ============================================================================
 
 /// Assert that a conversion roundtrip maintains data integrity
-pub fn assert_conversion_roundtrip<T, P>(original: T) 
+pub fn assert_conversion_roundtrip<T, P>(original: T)
 where
     T: Clone + PartialEq + std::fmt::Debug + TryInto<P>,
     P: TryInto<T>,
     T::Error: std::fmt::Debug,
     P::Error: std::fmt::Debug,
 {
-    let proto: P = original.clone().try_into()
+    let proto: P = original
+        .clone()
+        .try_into()
         .expect("Failed to convert to protobuf");
-    let back_to_internal: T = proto.try_into()
+    let back_to_internal: T = proto
+        .try_into()
         .expect("Failed to convert back from protobuf");
     assert_eq!(original, back_to_internal, "Roundtrip conversion failed");
 }
@@ -1174,11 +1215,11 @@ pub fn generate_test_data(size_kb: usize) -> Vec<u8> {
     let size_bytes = size_kb * 1024;
     let mut data = Vec::with_capacity(size_bytes);
     let mut rng = thread_rng();
-    
+
     for _ in 0..size_bytes {
         data.push(rng.r#gen());
     }
-    
+
     data
 }
 

@@ -1,7 +1,7 @@
-use crate::{Result, types::*, error::RustMqError, storage::WriteAheadLog};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use crate::{Result, error::RustMqError, storage::WriteAheadLog, types::*};
 use parking_lot::RwLock;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Follower-side replication handler that validates leader epochs
 pub struct FollowerReplicationHandler {
@@ -35,10 +35,13 @@ impl FollowerReplicationHandler {
     }
 
     /// Handle incoming replication request with leader epoch validation
-    pub async fn handle_replicate_data(&self, request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
+    pub async fn handle_replicate_data(
+        &self,
+        request: ReplicateDataRequest,
+    ) -> Result<ReplicateDataResponse> {
         // First, validate the leader epoch
         let current_epoch = self.leader_epoch.load(Ordering::SeqCst);
-        
+
         if request.leader_epoch < current_epoch {
             // Stale leader - reject the request
             return Ok(ReplicateDataResponse {
@@ -54,7 +57,8 @@ impl FollowerReplicationHandler {
 
         // If epoch is higher, update our known epoch and leader
         if request.leader_epoch > current_epoch {
-            self.leader_epoch.store(request.leader_epoch, Ordering::SeqCst);
+            self.leader_epoch
+                .store(request.leader_epoch, Ordering::SeqCst);
             let mut leader = self.current_leader.write();
             *leader = Some(request.leader_id.clone());
         }
@@ -125,7 +129,7 @@ impl FollowerReplicationHandler {
     pub async fn handle_heartbeat(&self, request: HeartbeatRequest) -> Result<FollowerState> {
         // Validate the leader epoch
         let current_epoch = self.leader_epoch.load(Ordering::SeqCst);
-        
+
         if request.leader_epoch < current_epoch {
             // Stale leader - return error
             return Err(RustMqError::StaleLeaderEpoch {
@@ -136,7 +140,8 @@ impl FollowerReplicationHandler {
 
         // If epoch is higher, update our known epoch and leader
         if request.leader_epoch > current_epoch {
-            self.leader_epoch.store(request.leader_epoch, Ordering::SeqCst);
+            self.leader_epoch
+                .store(request.leader_epoch, Ordering::SeqCst);
             let mut leader = self.current_leader.write();
             *leader = Some(request.leader_id.clone());
         }
@@ -182,8 +187,8 @@ impl FollowerReplicationHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{DirectIOWal, AlignedBufferPool};
     use crate::config::WalConfig;
+    use crate::storage::{AlignedBufferPool, DirectIOWal};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -200,7 +205,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -224,11 +230,16 @@ mod tests {
         };
 
         let response = handler.handle_replicate_data(stale_request).await.unwrap();
-        
+
         // Should reject the request
         assert!(!response.success);
         assert_eq!(response.error_code, 1001);
-        assert!(response.error_message.unwrap().contains("Stale leader epoch"));
+        assert!(
+            response
+                .error_message
+                .unwrap()
+                .contains("Stale leader epoch")
+        );
     }
 
     #[tokio::test]
@@ -245,7 +256,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -269,7 +281,7 @@ mod tests {
         };
 
         let response = handler.handle_replicate_data(new_request).await.unwrap();
-        
+
         // Should accept the request and update epoch
         assert!(response.success);
         assert_eq!(handler.get_leader_epoch(), 7);
@@ -290,7 +302,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -314,11 +327,14 @@ mod tests {
         };
 
         let result = handler.handle_heartbeat(stale_heartbeat).await;
-        
+
         // Should return error for stale epoch
         assert!(result.is_err());
         match result.unwrap_err() {
-            RustMqError::StaleLeaderEpoch { request_epoch, current_epoch } => {
+            RustMqError::StaleLeaderEpoch {
+                request_epoch,
+                current_epoch,
+            } => {
                 assert_eq!(request_epoch, 3);
                 assert_eq!(current_epoch, 5);
             }
@@ -340,7 +356,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -364,11 +381,11 @@ mod tests {
         };
 
         let follower_state = handler.handle_heartbeat(heartbeat).await.unwrap();
-        
+
         // Should calculate lag correctly (high_watermark - current_wal_offset)
         let current_offset = wal.get_end_offset().await.unwrap();
         let expected_lag = 100u64.saturating_sub(current_offset);
-        
+
         assert_eq!(follower_state.lag, expected_lag);
         assert_eq!(follower_state.last_known_offset, current_offset);
         assert_eq!(follower_state.broker_id, "follower-1".to_string());
@@ -388,7 +405,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -424,12 +442,12 @@ mod tests {
         };
 
         let response = handler.handle_replicate_data(request).await.unwrap();
-        
+
         assert!(response.success);
-        
+
         let follower_state = response.follower_state.unwrap();
         let current_offset = wal.get_end_offset().await.unwrap();
-        
+
         // Should return actual WAL offset
         assert_eq!(follower_state.last_known_offset, current_offset);
         assert_eq!(follower_state.broker_id, "follower-1".to_string());

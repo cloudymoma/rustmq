@@ -1,25 +1,17 @@
 use crate::{
-    Result, 
-    types as internal,
-    proto::broker,
-    proto_convert,
-    replication::FollowerReplicationHandler,
-    health::HealthCheckService,
-    error::RustMqError
+    Result, error::RustMqError, health::HealthCheckService, proto::broker, proto_convert,
+    replication::FollowerReplicationHandler, types as internal,
 };
 // Import types for legacy trait implementations
-use internal::{
-    ReplicateDataRequest, ReplicateDataResponse,
-    HeartbeatRequest, HeartbeatResponse,
-    TransferLeadershipRequest, TransferLeadershipResponse,
-    AssignPartitionRequest, AssignPartitionResponse,
-    RemovePartitionRequest, RemovePartitionResponse,
-    FollowerState,
-};
 use async_trait::async_trait;
-use std::sync::Arc;
+use internal::{
+    AssignPartitionRequest, AssignPartitionResponse, FollowerState, HeartbeatRequest,
+    HeartbeatResponse, RemovePartitionRequest, RemovePartitionResponse, ReplicateDataRequest,
+    ReplicateDataResponse, TransferLeadershipRequest, TransferLeadershipResponse,
+};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::error;
 
@@ -28,7 +20,8 @@ use tracing::error;
 #[derive(Clone)]
 pub struct BrokerReplicationServiceImpl {
     /// Map of topic partitions to their follower handlers
-    follower_handlers: Arc<RwLock<HashMap<internal::TopicPartition, Arc<FollowerReplicationHandler>>>>,
+    follower_handlers:
+        Arc<RwLock<HashMap<internal::TopicPartition, Arc<FollowerReplicationHandler>>>>,
     /// Current broker ID
     broker_id: internal::BrokerId,
     /// Health check service for comprehensive broker health monitoring
@@ -45,7 +38,10 @@ impl BrokerReplicationServiceImpl {
         }
     }
 
-    pub fn new_with_health_service(broker_id: internal::BrokerId, health_service: Arc<HealthCheckService>) -> Self {
+    pub fn new_with_health_service(
+        broker_id: internal::BrokerId,
+        health_service: Arc<HealthCheckService>,
+    ) -> Self {
         Self {
             follower_handlers: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
@@ -60,9 +56,9 @@ impl BrokerReplicationServiceImpl {
 
     /// Register a follower handler for a specific topic partition
     pub fn register_follower_handler(
-        &self, 
-        topic_partition: internal::TopicPartition, 
-        handler: Arc<FollowerReplicationHandler>
+        &self,
+        topic_partition: internal::TopicPartition,
+        handler: Arc<FollowerReplicationHandler>,
     ) {
         let mut handlers = self.follower_handlers.write();
         handlers.insert(topic_partition, handler);
@@ -75,20 +71,24 @@ impl BrokerReplicationServiceImpl {
     }
 
     /// Get follower handler for a topic partition
-    fn get_follower_handler(&self, topic_partition: &internal::TopicPartition) -> Result<Arc<FollowerReplicationHandler>> {
+    fn get_follower_handler(
+        &self,
+        topic_partition: &internal::TopicPartition,
+    ) -> Result<Arc<FollowerReplicationHandler>> {
         let handlers = self.follower_handlers.read();
-        handlers.get(topic_partition)
-            .cloned()
-            .ok_or_else(|| RustMqError::NotFound(
-                format!("No handler registered for partition {:?}", topic_partition)
+        handlers.get(topic_partition).cloned().ok_or_else(|| {
+            RustMqError::NotFound(format!(
+                "No handler registered for partition {:?}",
+                topic_partition
             ))
+        })
     }
 
     /// Convert RustMqError to gRPC Status
     fn error_to_status(error: RustMqError) -> Status {
         let _code = proto_convert::error_to_code(&error);
         let message = proto_convert::error_to_message(&error);
-        
+
         // Map to appropriate gRPC status codes
         let status_code = match error {
             RustMqError::NotFound(_) => tonic::Code::NotFound,
@@ -100,50 +100,58 @@ impl BrokerReplicationServiceImpl {
             RustMqError::NotLeader(_) => tonic::Code::FailedPrecondition,
             _ => tonic::Code::Internal,
         };
-        
+
         Status::new(status_code, message)
     }
 }
 
 // Implement the protobuf-generated service trait
 #[async_trait]
-impl broker::broker_replication_service_server::BrokerReplicationService for BrokerReplicationServiceImpl {
+impl broker::broker_replication_service_server::BrokerReplicationService
+    for BrokerReplicationServiceImpl
+{
     async fn replicate_data(
         &self,
         request: Request<broker::ReplicateDataRequest>,
     ) -> std::result::Result<Response<broker::ReplicateDataResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request: internal::ReplicateDataRequest = match proto_request.try_into() {
             Ok(req) => req,
             Err(e) => {
-                let status = Status::new(tonic::Code::InvalidArgument, format!("Invalid request: {}", e));
+                let status = Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Invalid request: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         // Get the appropriate follower handler for this partition
         let handler = match self.get_follower_handler(&internal_request.topic_partition) {
             Ok(h) => h,
             Err(e) => return Err(Self::error_to_status(e)),
         };
-        
+
         // Delegate to the follower handler which enforces leader epoch validation
         let internal_response = match handler.handle_replicate_data(internal_request).await {
             Ok(resp) => resp,
             Err(e) => return Err(Self::error_to_status(e)),
         };
-        
+
         // Convert internal response back to protobuf
         let proto_response: broker::ReplicateDataResponse = match internal_response.try_into() {
             Ok(resp) => resp,
             Err(e) => {
-                let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
+                let status = Status::new(
+                    tonic::Code::Internal,
+                    format!("Response conversion failed: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         Ok(Response::new(proto_response))
     }
 
@@ -152,33 +160,37 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         request: Request<broker::HeartbeatRequest>,
     ) -> std::result::Result<Response<broker::HeartbeatResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request: internal::HeartbeatRequest = match proto_request.try_into() {
             Ok(req) => req,
             Err(e) => {
-                let status = Status::new(tonic::Code::InvalidArgument, format!("Invalid request: {}", e));
+                let status = Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Invalid request: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         // Get the appropriate follower handler for this partition
         let handler = match self.get_follower_handler(&internal_request.topic_partition) {
             Ok(h) => h,
             Err(e) => return Err(Self::error_to_status(e)),
         };
-        
+
         // Handle the heartbeat with leader epoch validation
         let internal_response = match handler.handle_heartbeat(internal_request.clone()).await {
-            Ok(follower_state) => {
-                internal::HeartbeatResponse {
-                    success: true,
-                    error_code: 0,
-                    error_message: None,
-                    follower_state: Some(follower_state),
-                }
-            }
-            Err(RustMqError::StaleLeaderEpoch { request_epoch, current_epoch }) => {
+            Ok(follower_state) => internal::HeartbeatResponse {
+                success: true,
+                error_code: 0,
+                error_message: None,
+                follower_state: Some(follower_state),
+            },
+            Err(RustMqError::StaleLeaderEpoch {
+                request_epoch,
+                current_epoch,
+            }) => {
                 internal::HeartbeatResponse {
                     success: false,
                     error_code: 1001, // STALE_LEADER_EPOCH
@@ -198,16 +210,19 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
                 }
             }
         };
-        
+
         // Convert internal response back to protobuf
         let proto_response: broker::HeartbeatResponse = match internal_response.try_into() {
             Ok(resp) => resp,
             Err(e) => {
-                let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
+                let status = Status::new(
+                    tonic::Code::Internal,
+                    format!("Response conversion failed: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         Ok(Response::new(proto_response))
     }
 
@@ -216,22 +231,25 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         request: Request<broker::TransferLeadershipRequest>,
     ) -> std::result::Result<Response<broker::TransferLeadershipResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request: internal::TransferLeadershipRequest = match proto_request.try_into() {
             Ok(req) => req,
             Err(e) => {
-                let status = Status::new(tonic::Code::InvalidArgument, format!("Invalid request: {}", e));
+                let status = Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Invalid request: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         // Validate that we have a handler for this partition
         let handler = match self.get_follower_handler(&internal_request.topic_partition) {
             Ok(h) => h,
             Err(e) => return Err(Self::error_to_status(e)),
         };
-        
+
         // Validate leader epoch - only accept transfers from current or higher epoch leaders
         let current_epoch = handler.get_leader_epoch();
         if internal_request.current_leader_epoch < current_epoch {
@@ -244,38 +262,46 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
                 )),
                 new_leader_epoch: None,
             };
-            
-            let proto_response: broker::TransferLeadershipResponse = match internal_response.try_into() {
-                Ok(resp) => resp,
-                Err(e) => {
-                    let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
-                    return Err(status);
-                }
-            };
-            
+
+            let proto_response: broker::TransferLeadershipResponse =
+                match internal_response.try_into() {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        let status = Status::new(
+                            tonic::Code::Internal,
+                            format!("Response conversion failed: {}", e),
+                        );
+                        return Err(status);
+                    }
+                };
+
             return Ok(Response::new(proto_response));
         }
-        
+
         // For leadership transfer, we need to coordinate with the controller
         // This is a simplified implementation - in practice would involve Raft consensus
         let new_epoch = current_epoch + 1;
         handler.update_leadership(new_epoch, internal_request.new_leader_id.clone());
-        
+
         let internal_response = internal::TransferLeadershipResponse {
             success: true,
             error_code: 0,
             error_message: None,
             new_leader_epoch: Some(new_epoch),
         };
-        
-        let proto_response: broker::TransferLeadershipResponse = match internal_response.try_into() {
+
+        let proto_response: broker::TransferLeadershipResponse = match internal_response.try_into()
+        {
             Ok(resp) => resp,
             Err(e) => {
-                let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
+                let status = Status::new(
+                    tonic::Code::Internal,
+                    format!("Response conversion failed: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         Ok(Response::new(proto_response))
     }
 
@@ -284,16 +310,19 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         request: Request<broker::AssignPartitionRequest>,
     ) -> std::result::Result<Response<broker::AssignPartitionResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request: internal::AssignPartitionRequest = match proto_request.try_into() {
             Ok(req) => req,
             Err(e) => {
-                let status = Status::new(tonic::Code::InvalidArgument, format!("Invalid request: {}", e));
+                let status = Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Invalid request: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         // Check if we already have a handler for this partition
         {
             let handlers = self.follower_handlers.read();
@@ -306,37 +335,44 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
                         internal_request.topic_partition
                     )),
                 };
-                
-                let proto_response: broker::AssignPartitionResponse = match internal_response.try_into() {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
-                        return Err(status);
-                    }
-                };
-                
+
+                let proto_response: broker::AssignPartitionResponse =
+                    match internal_response.try_into() {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            let status = Status::new(
+                                tonic::Code::Internal,
+                                format!("Response conversion failed: {}", e),
+                            );
+                            return Err(status);
+                        }
+                    };
+
                 return Ok(Response::new(proto_response));
             }
         }
-        
+
         // Create a new follower handler for this partition
         // In practice, this would be created with the appropriate WAL and configuration
         // For now, we'll return success but note that actual handler creation is needed
-        
+
         let internal_response = internal::AssignPartitionResponse {
             success: true,
             error_code: 0,
             error_message: None,
         };
-        
+
         let proto_response: broker::AssignPartitionResponse = match internal_response.try_into() {
             Ok(resp) => resp,
             Err(e) => {
-                let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
+                let status = Status::new(
+                    tonic::Code::Internal,
+                    format!("Response conversion failed: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         Ok(Response::new(proto_response))
     }
 
@@ -345,22 +381,25 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         request: Request<broker::RemovePartitionRequest>,
     ) -> std::result::Result<Response<broker::RemovePartitionResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request: internal::RemovePartitionRequest = match proto_request.try_into() {
             Ok(req) => req,
             Err(e) => {
-                let status = Status::new(tonic::Code::InvalidArgument, format!("Invalid request: {}", e));
+                let status = Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Invalid request: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         // Remove the follower handler for this partition
         let had_partition = {
             let mut handlers = self.follower_handlers.write();
             handlers.remove(&internal_request.topic_partition).is_some()
         };
-        
+
         let internal_response = if !had_partition {
             internal::RemovePartitionResponse {
                 success: false,
@@ -378,15 +417,18 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
                 error_message: None,
             }
         };
-        
+
         let proto_response: broker::RemovePartitionResponse = match internal_response.try_into() {
             Ok(resp) => resp,
             Err(e) => {
-                let status = Status::new(tonic::Code::Internal, format!("Response conversion failed: {}", e));
+                let status = Status::new(
+                    tonic::Code::Internal,
+                    format!("Response conversion failed: {}", e),
+                );
                 return Err(status);
             }
         };
-        
+
         Ok(Response::new(proto_response))
     }
 
@@ -410,7 +452,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
             replication_throughput_mbs: 0.0,
             follower_details: vec![],
         };
-        
+
         Ok(Response::new(response))
     }
 
@@ -428,7 +470,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
             isr_version: 1,
             controller_comment: "ISR approved".to_string(),
         };
-        
+
         Ok(Response::new(response))
     }
 
@@ -448,7 +490,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
             new_log_end_offset: 0,
             new_high_watermark: 0,
         };
-        
+
         Ok(Response::new(response))
     }
 
@@ -457,7 +499,7 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
         request: Request<broker::HealthCheckRequest>,
     ) -> std::result::Result<Response<broker::HealthCheckResponse>, Status> {
         let proto_request = request.into_inner();
-        
+
         // Convert protobuf request to internal types
         let internal_request = internal::HealthCheckRequest {
             check_wal: proto_request.check_wal,
@@ -465,11 +507,19 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
             check_object_storage: proto_request.check_object_storage,
             check_network: proto_request.check_network,
             check_replication: proto_request.check_replication,
-            timeout_ms: if proto_request.timeout_ms > 0 { Some(proto_request.timeout_ms) } else { None },
+            timeout_ms: if proto_request.timeout_ms > 0 {
+                Some(proto_request.timeout_ms)
+            } else {
+                None
+            },
         };
-        
+
         // Perform comprehensive health check
-        match self.health_service.perform_health_check(internal_request).await {
+        match self
+            .health_service
+            .perform_health_check(internal_request)
+            .await
+        {
             Ok(internal_response) => {
                 // Convert internal response to protobuf
                 let proto_response = broker::HealthCheckResponse {
@@ -481,21 +531,27 @@ impl broker::broker_replication_service_server::BrokerReplicationService for Bro
                     }),
                     uptime_seconds: internal_response.uptime_seconds,
                     metadata: None, // Could be populated with request metadata if needed
-                    
+
                     // Convert component health
                     wal_health: Some(convert_component_health(&internal_response.wal_health)),
                     cache_health: Some(convert_component_health(&internal_response.cache_health)),
-                    object_storage_health: Some(convert_component_health(&internal_response.object_storage_health)),
-                    network_health: Some(convert_component_health(&internal_response.network_health)),
-                    replication_health: Some(convert_component_health(&internal_response.replication_health)),
-                    
+                    object_storage_health: Some(convert_component_health(
+                        &internal_response.object_storage_health,
+                    )),
+                    network_health: Some(convert_component_health(
+                        &internal_response.network_health,
+                    )),
+                    replication_health: Some(convert_component_health(
+                        &internal_response.replication_health,
+                    )),
+
                     // Convert resource usage
                     resource_usage: Some(convert_resource_usage(&internal_response.resource_usage)),
-                    
+
                     partition_count: internal_response.partition_count,
                     error_summary: internal_response.error_summary.unwrap_or_default(),
                 };
-                
+
                 Ok(Response::new(proto_response))
             }
             Err(e) => {
@@ -524,8 +580,8 @@ fn convert_component_health(internal: &internal::ComponentHealth) -> broker::Com
         last_error: internal.last_error.clone().unwrap_or_default(),
         details: internal.details.clone(),
         throughput_ops_per_sec: 0.0, // Not currently tracked in internal type
-        total_operations: 0,          // Not currently tracked in internal type
-        failed_operations: 0,         // Not currently tracked in internal type
+        total_operations: 0,         // Not currently tracked in internal type
+        failed_operations: 0,        // Not currently tracked in internal type
     }
 }
 
@@ -541,10 +597,10 @@ fn convert_resource_usage(internal: &internal::ResourceUsage) -> broker::Resourc
         network_out_bytes_per_sec: internal.network_out_bytes_per_sec,
         open_file_descriptors: internal.open_file_descriptors,
         active_connections: internal.active_connections,
-        heap_usage_bytes: 0,   // Not applicable for Rust
-        heap_total_bytes: 0,   // Not applicable for Rust
-        gc_count: 0,           // Not applicable for Rust
-        gc_time_ms: 0,         // Not applicable for Rust
+        heap_usage_bytes: 0, // Not applicable for Rust
+        heap_total_bytes: 0, // Not applicable for Rust
+        gc_count: 0,         // Not applicable for Rust
+        gc_time_ms: 0,       // Not applicable for Rust
     }
 }
 
@@ -553,23 +609,38 @@ fn convert_resource_usage(internal: &internal::ResourceUsage) -> broker::Resourc
 pub trait BrokerReplicationRpc: Send + Sync {
     /// Handle replication data request from leader to follower
     /// CRITICAL: Must validate leader epoch to prevent stale leader attacks
-    async fn replicate_data(&self, request: internal::ReplicateDataRequest) -> Result<internal::ReplicateDataResponse>;
+    async fn replicate_data(
+        &self,
+        request: internal::ReplicateDataRequest,
+    ) -> Result<internal::ReplicateDataResponse>;
 
     /// Handle heartbeat request from leader to follower  
     /// CRITICAL: Must validate leader epoch to prevent stale leader attacks
-    async fn send_heartbeat(&self, request: internal::HeartbeatRequest) -> Result<internal::HeartbeatResponse>;
+    async fn send_heartbeat(
+        &self,
+        request: internal::HeartbeatRequest,
+    ) -> Result<internal::HeartbeatResponse>;
 
     /// Handle partition leadership transfer request
     /// Used when leadership needs to be transferred to another broker
-    async fn transfer_leadership(&self, request: internal::TransferLeadershipRequest) -> Result<internal::TransferLeadershipResponse>;
+    async fn transfer_leadership(
+        &self,
+        request: internal::TransferLeadershipRequest,
+    ) -> Result<internal::TransferLeadershipResponse>;
 
     /// Handle partition assignment request from controller
     /// Used to assign new partitions to this broker
-    async fn assign_partition(&self, request: internal::AssignPartitionRequest) -> Result<internal::AssignPartitionResponse>;
+    async fn assign_partition(
+        &self,
+        request: internal::AssignPartitionRequest,
+    ) -> Result<internal::AssignPartitionResponse>;
 
     /// Handle partition removal request from controller
     /// Used to remove partitions from this broker during rebalancing
-    async fn remove_partition(&self, request: internal::RemovePartitionRequest) -> Result<internal::RemovePartitionResponse>;
+    async fn remove_partition(
+        &self,
+        request: internal::RemovePartitionRequest,
+    ) -> Result<internal::RemovePartitionResponse>;
 }
 
 #[async_trait]
@@ -577,7 +648,7 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
     async fn replicate_data(&self, request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
         // Get the appropriate follower handler for this partition
         let handler = self.get_follower_handler(&request.topic_partition)?;
-        
+
         // Delegate to the follower handler which enforces leader epoch validation
         handler.handle_replicate_data(request).await
     }
@@ -585,18 +656,19 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
     async fn send_heartbeat(&self, request: HeartbeatRequest) -> Result<HeartbeatResponse> {
         // Get the appropriate follower handler for this partition
         let handler = self.get_follower_handler(&request.topic_partition)?;
-        
+
         // Handle the heartbeat with leader epoch validation
         match handler.handle_heartbeat(request.clone()).await {
-            Ok(follower_state) => {
-                Ok(HeartbeatResponse {
-                    success: true,
-                    error_code: 0,
-                    error_message: None,
-                    follower_state: Some(follower_state),
-                })
-            }
-            Err(RustMqError::StaleLeaderEpoch { request_epoch, current_epoch }) => {
+            Ok(follower_state) => Ok(HeartbeatResponse {
+                success: true,
+                error_code: 0,
+                error_message: None,
+                follower_state: Some(follower_state),
+            }),
+            Err(RustMqError::StaleLeaderEpoch {
+                request_epoch,
+                current_epoch,
+            }) => {
                 Ok(HeartbeatResponse {
                     success: false,
                     error_code: 1001, // STALE_LEADER_EPOCH
@@ -618,10 +690,13 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
         }
     }
 
-    async fn transfer_leadership(&self, request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse> {
+    async fn transfer_leadership(
+        &self,
+        request: TransferLeadershipRequest,
+    ) -> Result<TransferLeadershipResponse> {
         // Validate that we have a handler for this partition
         let handler = self.get_follower_handler(&request.topic_partition)?;
-        
+
         // Validate leader epoch - only accept transfers from current or higher epoch leaders
         let current_epoch = handler.get_leader_epoch();
         if request.current_leader_epoch < current_epoch {
@@ -649,10 +724,13 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
         })
     }
 
-    async fn assign_partition(&self, request: AssignPartitionRequest) -> Result<AssignPartitionResponse> {
+    async fn assign_partition(
+        &self,
+        request: AssignPartitionRequest,
+    ) -> Result<AssignPartitionResponse> {
         // Controller requests don't use leader epochs, but we validate controller identity
         // In a real implementation, this would verify the request comes from the active controller
-        
+
         // Check if we already have a handler for this partition
         {
             let handlers = self.follower_handlers.read();
@@ -671,7 +749,7 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
         // Create a new follower handler for this partition
         // In practice, this would be created with the appropriate WAL and configuration
         // For now, we'll return success but note that actual handler creation is needed
-        
+
         Ok(AssignPartitionResponse {
             success: true,
             error_code: 0,
@@ -679,7 +757,10 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
         })
     }
 
-    async fn remove_partition(&self, request: RemovePartitionRequest) -> Result<RemovePartitionResponse> {
+    async fn remove_partition(
+        &self,
+        request: RemovePartitionRequest,
+    ) -> Result<RemovePartitionResponse> {
         // Remove the follower handler for this partition
         let had_partition = {
             let mut handlers = self.follower_handlers.write();
@@ -698,7 +779,7 @@ impl BrokerReplicationRpc for BrokerReplicationServiceImpl {
         }
 
         // In practice, would also need to clean up WAL files, caches, etc.
-        
+
         Ok(RemovePartitionResponse {
             success: true,
             error_code: 0,
@@ -720,7 +801,8 @@ impl MockBrokerReplicationRpc {
     }
 
     pub fn update_epoch(&self, new_epoch: u64) {
-        self.current_epoch.store(new_epoch, std::sync::atomic::Ordering::SeqCst);
+        self.current_epoch
+            .store(new_epoch, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -728,7 +810,7 @@ impl MockBrokerReplicationRpc {
 impl BrokerReplicationRpc for MockBrokerReplicationRpc {
     async fn replicate_data(&self, request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
         let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
-        
+
         // Mock epoch validation
         if request.leader_epoch < current_epoch {
             return Ok(ReplicateDataResponse {
@@ -744,7 +826,8 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
 
         // Update epoch if higher
         if request.leader_epoch > current_epoch {
-            self.current_epoch.store(request.leader_epoch, std::sync::atomic::Ordering::SeqCst);
+            self.current_epoch
+                .store(request.leader_epoch, std::sync::atomic::Ordering::SeqCst);
         }
 
         Ok(ReplicateDataResponse {
@@ -762,7 +845,7 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
 
     async fn send_heartbeat(&self, request: HeartbeatRequest) -> Result<HeartbeatResponse> {
         let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
-        
+
         if request.leader_epoch < current_epoch {
             return Ok(HeartbeatResponse {
                 success: false,
@@ -776,7 +859,8 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
         }
 
         if request.leader_epoch > current_epoch {
-            self.current_epoch.store(request.leader_epoch, std::sync::atomic::Ordering::SeqCst);
+            self.current_epoch
+                .store(request.leader_epoch, std::sync::atomic::Ordering::SeqCst);
         }
 
         Ok(HeartbeatResponse {
@@ -792,9 +876,12 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
         })
     }
 
-    async fn transfer_leadership(&self, request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse> {
+    async fn transfer_leadership(
+        &self,
+        request: TransferLeadershipRequest,
+    ) -> Result<TransferLeadershipResponse> {
         let current_epoch = self.current_epoch.load(std::sync::atomic::Ordering::SeqCst);
-        
+
         if request.current_leader_epoch < current_epoch {
             return Ok(TransferLeadershipResponse {
                 success: false,
@@ -805,7 +892,8 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
         }
 
         let new_epoch = current_epoch + 1;
-        self.current_epoch.store(new_epoch, std::sync::atomic::Ordering::SeqCst);
+        self.current_epoch
+            .store(new_epoch, std::sync::atomic::Ordering::SeqCst);
 
         Ok(TransferLeadershipResponse {
             success: true,
@@ -815,7 +903,10 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
         })
     }
 
-    async fn assign_partition(&self, _request: AssignPartitionRequest) -> Result<AssignPartitionResponse> {
+    async fn assign_partition(
+        &self,
+        _request: AssignPartitionRequest,
+    ) -> Result<AssignPartitionResponse> {
         Ok(AssignPartitionResponse {
             success: true,
             error_code: 0,
@@ -823,7 +914,10 @@ impl BrokerReplicationRpc for MockBrokerReplicationRpc {
         })
     }
 
-    async fn remove_partition(&self, _request: RemovePartitionRequest) -> Result<RemovePartitionResponse> {
+    async fn remove_partition(
+        &self,
+        _request: RemovePartitionRequest,
+    ) -> Result<RemovePartitionResponse> {
         Ok(RemovePartitionResponse {
             success: true,
             error_code: 0,
@@ -895,10 +989,12 @@ impl GrpcNetworkHandler {
     pub fn register_broker(&self, broker_id: internal::BrokerId, endpoint: String) {
         let mut endpoints = self.broker_endpoints.write();
         endpoints.insert(broker_id.clone(), endpoint);
-        
+
         // Initialize health tracking for the broker
         let mut health = self.health_tracker.write();
-        health.entry(broker_id).or_insert_with(BrokerHealth::default);
+        health
+            .entry(broker_id)
+            .or_insert_with(BrokerHealth::default);
     }
 
     /// Remove a broker from the registry and close its connection
@@ -908,24 +1004,27 @@ impl GrpcNetworkHandler {
             let mut endpoints = self.broker_endpoints.write();
             endpoints.remove(broker_id);
         }
-        
+
         // Remove and close connection
         {
             let mut connections = self.connections.write();
             connections.remove(broker_id);
         }
-        
+
         // Remove health tracking
         {
             let mut health = self.health_tracker.write();
             health.remove(broker_id);
         }
-        
+
         tracing::debug!("Deregistered broker: {}", broker_id);
     }
 
     /// Get or create a gRPC channel to the specified broker with lazy initialization
-    async fn get_or_create_connection(&self, broker_id: &internal::BrokerId) -> Result<tonic::transport::Channel> {
+    async fn get_or_create_connection(
+        &self,
+        broker_id: &internal::BrokerId,
+    ) -> Result<tonic::transport::Channel> {
         // First check if we already have a connection
         {
             let connections = self.connections.read();
@@ -937,15 +1036,17 @@ impl GrpcNetworkHandler {
         // Check circuit breaker state
         if !self.should_attempt_connection(broker_id) {
             return Err(RustMqError::Network(format!(
-                "Circuit breaker open for broker: {}", broker_id
+                "Circuit breaker open for broker: {}",
+                broker_id
             )));
         }
 
         // Get endpoint for the broker
         let endpoint = {
             let endpoints = self.broker_endpoints.read();
-            endpoints.get(broker_id).cloned()
-                .ok_or_else(|| RustMqError::NotFound(format!("No endpoint registered for broker: {}", broker_id)))?
+            endpoints.get(broker_id).cloned().ok_or_else(|| {
+                RustMqError::NotFound(format!("No endpoint registered for broker: {}", broker_id))
+            })?
         };
 
         // Create new connection
@@ -957,7 +1058,11 @@ impl GrpcNetworkHandler {
             connections.insert(broker_id.clone(), channel.clone());
         }
 
-        tracing::debug!("Created new gRPC connection to broker: {} at {}", broker_id, endpoint);
+        tracing::debug!(
+            "Created new gRPC connection to broker: {} at {}",
+            broker_id,
+            endpoint
+        );
         Ok(channel)
     }
 
@@ -965,8 +1070,12 @@ impl GrpcNetworkHandler {
     async fn create_connection(&self, endpoint: &str) -> Result<tonic::transport::Channel> {
         let channel = tonic::transport::Channel::from_shared(endpoint.to_string())
             .map_err(|e| RustMqError::Config(format!("Invalid endpoint URI: {}", e)))?
-            .timeout(std::time::Duration::from_millis(self.config.connection_timeout_ms))
-            .connect_timeout(std::time::Duration::from_millis(self.config.connection_timeout_ms))
+            .timeout(std::time::Duration::from_millis(
+                self.config.connection_timeout_ms,
+            ))
+            .connect_timeout(std::time::Duration::from_millis(
+                self.config.connection_timeout_ms,
+            ))
             .tcp_keepalive(Some(std::time::Duration::from_secs(30)))
             .http2_keep_alive_interval(std::time::Duration::from_secs(30))
             .keep_alive_timeout(std::time::Duration::from_secs(5))
@@ -988,7 +1097,7 @@ impl GrpcNetworkHandler {
                 // Check if enough time has passed to attempt half-open
                 if let Some(last_failure) = broker_health.last_failure {
                     let circuit_timeout = std::time::Duration::from_secs(
-                        30 + (broker_health.consecutive_failures as u64 * 5).min(300)
+                        30 + (broker_health.consecutive_failures as u64 * 5).min(300),
                     );
                     last_failure.elapsed() > circuit_timeout
                 } else {
@@ -1002,7 +1111,9 @@ impl GrpcNetworkHandler {
     /// Update broker health state based on request outcome
     fn update_broker_health(&self, broker_id: &internal::BrokerId, success: bool) {
         let mut health = self.health_tracker.write();
-        let broker_health = health.entry(broker_id.clone()).or_insert_with(BrokerHealth::default);
+        let broker_health = health
+            .entry(broker_id.clone())
+            .or_insert_with(BrokerHealth::default);
 
         broker_health.total_requests += 1;
 
@@ -1029,7 +1140,8 @@ impl GrpcNetworkHandler {
         if matches!(broker_health.state, CircuitBreakerState::Open) {
             tracing::warn!(
                 "Circuit breaker opened for broker: {} after {} consecutive failures",
-                broker_id, broker_health.consecutive_failures
+                broker_id,
+                broker_health.consecutive_failures
             );
         }
     }
@@ -1047,7 +1159,7 @@ impl GrpcNetworkHandler {
         loop {
             // Create a request using tonic-health ping service as a generic communication method
             let mut client = tonic_health::pb::health_client::HealthClient::new(channel.clone());
-            
+
             // For this implementation, we'll use a simple approach where we wrap the raw request
             // In a real implementation, you'd use the specific protobuf service definition
             let health_request = tonic_health::pb::HealthCheckRequest {
@@ -1055,7 +1167,7 @@ impl GrpcNetworkHandler {
             };
 
             let request_future = client.check(tonic::Request::new(health_request));
-            
+
             match request_future.await {
                 Ok(response) => {
                     self.update_broker_health(broker_id, true);
@@ -1065,7 +1177,7 @@ impl GrpcNetworkHandler {
                 }
                 Err(e) => {
                     retry_count += 1;
-                    
+
                     if retry_count >= MAX_RETRIES {
                         self.update_broker_health(broker_id, false);
                         return Err(RustMqError::Network(format!(
@@ -1078,12 +1190,15 @@ impl GrpcNetworkHandler {
                     let base_delay = std::time::Duration::from_millis(100 * (1 << retry_count));
                     let jitter = std::time::Duration::from_millis(retry_count as u64 * 50);
                     let delay = base_delay + jitter;
-                    
+
                     tracing::warn!(
                         "Request to broker {} failed (attempt {}), retrying in {:?}: {}",
-                        broker_id, retry_count, delay, e
+                        broker_id,
+                        retry_count,
+                        delay,
+                        e
                     );
-                    
+
                     tokio::time::sleep(delay).await;
                 }
             }
@@ -1093,22 +1208,26 @@ impl GrpcNetworkHandler {
     /// Get broker connection statistics for monitoring
     pub fn get_connection_stats(&self) -> HashMap<internal::BrokerId, BrokerConnectionStats> {
         let health = self.health_tracker.read();
-        
-        health.iter().map(|(broker_id, health)| {
-            let stats = BrokerConnectionStats {
-                total_requests: health.total_requests,
-                success_requests: health.success_requests,
-                failure_rate: if health.total_requests > 0 {
-                    (health.total_requests - health.success_requests) as f64 / health.total_requests as f64
-                } else {
-                    0.0
-                },
-                consecutive_failures: health.consecutive_failures,
-                circuit_breaker_state: format!("{:?}", health.state),
-                last_failure: health.last_failure,
-            };
-            (broker_id.clone(), stats)
-        }).collect()
+
+        health
+            .iter()
+            .map(|(broker_id, health)| {
+                let stats = BrokerConnectionStats {
+                    total_requests: health.total_requests,
+                    success_requests: health.success_requests,
+                    failure_rate: if health.total_requests > 0 {
+                        (health.total_requests - health.success_requests) as f64
+                            / health.total_requests as f64
+                    } else {
+                        0.0
+                    },
+                    consecutive_failures: health.consecutive_failures,
+                    circuit_breaker_state: format!("{:?}", health.state),
+                    last_failure: health.last_failure,
+                };
+                (broker_id.clone(), stats)
+            })
+            .collect()
     }
 }
 
@@ -1127,10 +1246,14 @@ pub struct BrokerConnectionStats {
 #[async_trait]
 impl crate::network::NetworkHandler for GrpcNetworkHandler {
     /// Send a request to a specific broker with connection pooling and retry logic
-    async fn send_request(&self, broker_id: &internal::BrokerId, request: Vec<u8>) -> Result<Vec<u8>> {
+    async fn send_request(
+        &self,
+        broker_id: &internal::BrokerId,
+        request: Vec<u8>,
+    ) -> Result<Vec<u8>> {
         // Get or create connection
         let channel = self.get_or_create_connection(broker_id).await?;
-        
+
         // Send request with retry and circuit breaker logic
         self.send_with_retry(broker_id, channel, request).await
     }
@@ -1138,7 +1261,9 @@ impl crate::network::NetworkHandler for GrpcNetworkHandler {
     /// Broadcast a message to multiple brokers with parallel execution and partial failure handling
     async fn broadcast(&self, brokers: &[internal::BrokerId], request: Vec<u8>) -> Result<()> {
         if brokers.is_empty() {
-            return Err(RustMqError::Network("Cannot broadcast to empty broker list".to_string()));
+            return Err(RustMqError::Network(
+                "Cannot broadcast to empty broker list".to_string(),
+            ));
         }
 
         // Create futures for each broker request
@@ -1181,23 +1306,29 @@ impl crate::network::NetworkHandler for GrpcNetworkHandler {
 
         tracing::info!(
             "Broadcast completed: {} successful, {} failed out of {} total brokers",
-            successful_broadcasts, failed_broadcasts, brokers.len()
+            successful_broadcasts,
+            failed_broadcasts,
+            brokers.len()
         );
 
         // For broadcast operations, we succeed if at least 50% of brokers received the message
         // This provides resilience against partial network failures
-        if successful_broadcasts > 0 && (successful_broadcasts as f64 / brokers.len() as f64) >= 0.5 {
+        if successful_broadcasts > 0 && (successful_broadcasts as f64 / brokers.len() as f64) >= 0.5
+        {
             if failed_broadcasts > 0 {
                 tracing::warn!(
-                    "Partial broadcast failure: {}/{} brokers failed", 
-                    failed_broadcasts, brokers.len()
+                    "Partial broadcast failure: {}/{} brokers failed",
+                    failed_broadcasts,
+                    brokers.len()
                 );
             }
             Ok(())
         } else {
             Err(RustMqError::Network(format!(
                 "Broadcast failed: only {}/{} brokers reached, errors: {:?}",
-                successful_broadcasts, brokers.len(), errors
+                successful_broadcasts,
+                brokers.len(),
+                errors
             )))
         }
     }
@@ -1206,16 +1337,16 @@ impl crate::network::NetworkHandler for GrpcNetworkHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{DirectIOWal, AlignedBufferPool};
     use crate::config::WalConfig;
-    use crate::types::TopicPartition;
     use crate::network::NetworkHandler;
+    use crate::storage::{AlignedBufferPool, DirectIOWal};
+    use crate::types::TopicPartition;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_replication_service_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
-        
+
         // Create a test follower handler
         let temp_dir = TempDir::new().unwrap();
         let wal_config = WalConfig {
@@ -1229,7 +1360,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn crate::storage::WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1273,7 +1405,7 @@ mod tests {
     #[tokio::test]
     async fn test_heartbeat_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
-        
+
         let temp_dir = TempDir::new().unwrap();
         let wal_config = WalConfig {
             path: temp_dir.path().to_path_buf(),
@@ -1286,7 +1418,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn crate::storage::WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1319,7 +1452,7 @@ mod tests {
     #[tokio::test]
     async fn test_leadership_transfer_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
-        
+
         let temp_dir = TempDir::new().unwrap();
         let wal_config = WalConfig {
             path: temp_dir.path().to_path_buf(),
@@ -1332,7 +1465,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn crate::storage::WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1406,16 +1540,21 @@ mod tests {
 
         let response = mock_client.replicate_data(valid_request).await.unwrap();
         assert!(response.success);
-        assert_eq!(mock_client.current_epoch.load(std::sync::atomic::Ordering::SeqCst), 6);
+        assert_eq!(
+            mock_client
+                .current_epoch
+                .load(std::sync::atomic::Ordering::SeqCst),
+            6
+        );
     }
 
     #[tokio::test]
     async fn test_comprehensive_leader_epoch_enforcement() {
         // This test demonstrates that ALL critical leader-to-follower RPCs
         // properly enforce leader epoch validation as required by Raft consensus
-        
+
         let service = BrokerReplicationServiceImpl::new("follower-broker".to_string());
-        
+
         let temp_dir = TempDir::new().unwrap();
         let wal_config = WalConfig {
             path: temp_dir.path().to_path_buf(),
@@ -1428,7 +1567,8 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+            as Arc<dyn crate::storage::WriteAheadLog>;
 
         let topic_partition = TopicPartition {
             topic: "critical-topic".to_string(),
@@ -1455,11 +1595,19 @@ mod tests {
         };
 
         let response = service.replicate_data(stale_replicate).await.unwrap();
-        assert!(!response.success, "ReplicateData should reject stale leader epoch");
+        assert!(
+            !response.success,
+            "ReplicateData should reject stale leader epoch"
+        );
         assert_eq!(response.error_code, 1001);
-        assert!(response.error_message.unwrap().contains("Stale leader epoch"));
+        assert!(
+            response
+                .error_message
+                .unwrap()
+                .contains("Stale leader epoch")
+        );
 
-        // Test 2: Heartbeat with stale epoch should be rejected  
+        // Test 2: Heartbeat with stale epoch should be rejected
         let stale_heartbeat = HeartbeatRequest {
             leader_epoch: 7, // Stale epoch
             leader_id: "stale-leader".to_string(),
@@ -1468,7 +1616,10 @@ mod tests {
         };
 
         let response = service.send_heartbeat(stale_heartbeat).await.unwrap();
-        assert!(!response.success, "Heartbeat should reject stale leader epoch");
+        assert!(
+            !response.success,
+            "Heartbeat should reject stale leader epoch"
+        );
         assert_eq!(response.error_code, 1001);
 
         // Test 3: Leadership transfer with stale epoch should be rejected
@@ -1480,7 +1631,10 @@ mod tests {
         };
 
         let response = service.transfer_leadership(stale_transfer).await.unwrap();
-        assert!(!response.success, "Leadership transfer should reject stale leader epoch");
+        assert!(
+            !response.success,
+            "Leadership transfer should reject stale leader epoch"
+        );
         assert_eq!(response.error_code, 1001);
 
         // Test 4: All RPCs should accept current or higher epochs
@@ -1492,7 +1646,10 @@ mod tests {
         };
 
         let response = service.replicate_data(valid_replicate).await.unwrap();
-        assert!(response.success, "ReplicateData should accept higher leader epoch");
+        assert!(
+            response.success,
+            "ReplicateData should accept higher leader epoch"
+        );
 
         // Verify epoch was updated
         assert_eq!(handler.get_leader_epoch(), 11);
@@ -1500,13 +1657,16 @@ mod tests {
         // Test 5: Subsequent requests with old epoch should now fail
         let now_stale_heartbeat = HeartbeatRequest {
             leader_epoch: 10, // Now stale
-            leader_id: "old-leader".to_string(), 
+            leader_id: "old-leader".to_string(),
             topic_partition: topic_partition.clone(),
             high_watermark: 100,
         };
 
         let response = service.send_heartbeat(now_stale_heartbeat).await.unwrap();
-        assert!(!response.success, "Heartbeat should reject now-stale epoch after update");
+        assert!(
+            !response.success,
+            "Heartbeat should reject now-stale epoch after update"
+        );
         assert_eq!(response.error_code, 1001);
 
         // This test validates that:
@@ -1530,7 +1690,7 @@ mod tests {
         };
 
         let handler = GrpcNetworkHandler::new(config);
-        
+
         // Verify initial state
         assert_eq!(handler.connections.read().len(), 0);
         assert_eq!(handler.broker_endpoints.read().len(), 0);
@@ -1553,7 +1713,7 @@ mod tests {
 
         // Test registration
         handler.register_broker(broker_id.clone(), endpoint.clone());
-        
+
         assert_eq!(handler.broker_endpoints.read().len(), 1);
         assert_eq!(handler.health_tracker.read().len(), 1);
         assert_eq!(
@@ -1563,7 +1723,7 @@ mod tests {
 
         // Test deregistration
         handler.deregister_broker(&broker_id).await;
-        
+
         assert_eq!(handler.broker_endpoints.read().len(), 0);
         assert_eq!(handler.health_tracker.read().len(), 0);
         assert_eq!(handler.connections.read().len(), 0);
@@ -1625,10 +1785,10 @@ mod tests {
         let broker_id = "test-broker-1".to_string();
 
         // Simulate some requests
-        handler.update_broker_health(&broker_id, true);  // Success
-        handler.update_broker_health(&broker_id, true);  // Success
+        handler.update_broker_health(&broker_id, true); // Success
+        handler.update_broker_health(&broker_id, true); // Success
         handler.update_broker_health(&broker_id, false); // Failure
-        handler.update_broker_health(&broker_id, true);  // Success
+        handler.update_broker_health(&broker_id, true); // Success
 
         let stats = handler.get_connection_stats();
         let broker_stats = stats.get(&broker_id).unwrap();
@@ -1656,7 +1816,7 @@ mod tests {
         // Should fail because broker is not registered
         let result = handler.send_request(&broker_id, request).await;
         assert!(result.is_err());
-        
+
         if let Err(RustMqError::NotFound(msg)) = result {
             assert!(msg.contains("No endpoint registered for broker"));
         } else {
@@ -1681,7 +1841,7 @@ mod tests {
         // Should fail with empty broker list
         let result = handler.broadcast(&brokers, request).await;
         assert!(result.is_err());
-        
+
         if let Err(RustMqError::Network(msg)) = result {
             assert!(msg.contains("Cannot broadcast to empty broker list"));
         } else {
@@ -1760,16 +1920,15 @@ mod tests {
         {
             let mut health = handler.health_tracker.write();
             let broker_health = health.get_mut(&broker_id).unwrap();
-            broker_health.last_failure = Some(
-                std::time::Instant::now() - std::time::Duration::from_secs(400)
-            );
+            broker_health.last_failure =
+                Some(std::time::Instant::now() - std::time::Duration::from_secs(400));
         }
 
         // Should now allow connections due to timeout
         assert!(handler.should_attempt_connection(&broker_id));
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_concurrent_broker_operations() {
         let config = crate::config::NetworkConfig {
             quic_listen: "127.0.0.1:9092".to_string(),
@@ -1823,7 +1982,7 @@ mod tests {
         // Verify stats collection works under concurrent access
         let stats = handler.get_connection_stats();
         assert_eq!(stats.len(), 10);
-        
+
         // Each broker should have 2 total requests
         for (_, broker_stats) in stats {
             assert_eq!(broker_stats.total_requests, 2);
@@ -1851,7 +2010,7 @@ mod tests {
         for i in 0..100 {
             let success = i % 20 != 0; // 5% failure rate
             handler.update_broker_health(&broker_id, success);
-            
+
             if success {
                 success_count += 1;
             } else {

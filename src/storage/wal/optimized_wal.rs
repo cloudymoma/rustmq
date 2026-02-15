@@ -1,12 +1,15 @@
 // Optimized DirectIOWal using the async file abstraction for performance
+use super::{
+    WalSegmentMetadata,
+    async_file::{AsyncWalFile, AsyncWalFileFactory, PlatformCapabilities},
+};
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
-use super::{async_file::{AsyncWalFile, AsyncWalFileFactory, PlatformCapabilities}, WalSegmentMetadata};
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use tokio::time::{Duration, Instant};
 use parking_lot::RwLock;
-use tokio::sync::{mpsc, oneshot, Semaphore, OwnedSemaphorePermit};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::time::{Duration, Instant};
 
 // Default channel capacity for bounded WAL writes (configurable via WalConfig)
 const DEFAULT_WAL_CHANNEL_CAPACITY: usize = 10000;
@@ -18,7 +21,7 @@ enum OptimizedWriteCommand {
         data: Vec<u8>,
         file_offset: u64,
         response: oneshot::Sender<Result<Vec<u8>>>, // Returns buffer for reuse
-        _permit: OwnedSemaphorePermit, // Backpressure token
+        _permit: OwnedSemaphorePermit,              // Backpressure token
     },
     Sync {
         response: oneshot::Sender<Result<()>>,
@@ -37,7 +40,7 @@ pub struct OptimizedDirectIOWal {
 
     // Semaphore for flow control (prevents OOM under heavy load)
     write_semaphore: Arc<Semaphore>,
-    
+
     buffer_pool: Arc<dyn BufferPool>,
     current_offset: Arc<AtomicU64>,
     current_file_offset: Arc<AtomicU64>,
@@ -49,7 +52,7 @@ pub struct OptimizedDirectIOWal {
     upload_callbacks: Arc<RwLock<Vec<Box<dyn Fn(u64, u64) + Send + Sync>>>>,
     upload_in_progress: Arc<AtomicBool>,
     segment_tracking_lock: Arc<Mutex<()>>,
-    
+
     // Platform capabilities for metrics and debugging
     platform_capabilities: PlatformCapabilities,
     backend_type: String,
@@ -67,7 +70,7 @@ impl OptimizedDirectIOWal {
         let platform_capabilities = factory.capabilities().clone();
         let file = factory.create_file(&file_path).await?;
         let backend_type = file.backend_type().to_string();
-        
+
         tracing::info!(
             "Initialized WAL with {} backend on platform with io_uring_available={}",
             backend_type,
@@ -85,13 +88,14 @@ impl OptimizedDirectIOWal {
 
         tracing::info!(
             "Initialized OptimizedDirectIOWal with {} backend, bounded channel capacity={}, backpressure semaphore",
-            backend_type, channel_capacity
+            backend_type,
+            channel_capacity
         );
 
         // Start the optimized file task with the appropriate runtime
         let flush_interval_ms = config.flush_interval_ms;
         let fsync_on_write = config.fsync_on_write;
-        
+
         // Spawn the file task on the appropriate runtime
         // The backend_type tells us what the factory actually created
         #[cfg(all(target_os = "linux", feature = "io-uring"))]
@@ -100,22 +104,31 @@ impl OptimizedDirectIOWal {
                 // We have an actual io_uring backend, try to spawn on io_uring runtime
                 // This will work when we're in an io_uring context
                 tokio_uring::spawn(Self::optimized_file_task(
-                    file, write_rx, flush_interval_ms, fsync_on_write
+                    file,
+                    write_rx,
+                    flush_interval_ms,
+                    fsync_on_write,
                 ));
                 tracing::debug!("Spawned io_uring file task");
             } else {
                 // Factory created tokio backend, use tokio spawn
                 tokio::spawn(Self::optimized_file_task(
-                    file, write_rx, flush_interval_ms, fsync_on_write
+                    file,
+                    write_rx,
+                    flush_interval_ms,
+                    fsync_on_write,
                 ));
                 tracing::debug!("Spawned tokio file task");
             }
         }
-        
+
         #[cfg(not(all(target_os = "linux", feature = "io-uring")))]
         {
             tokio::spawn(Self::optimized_file_task(
-                file, write_rx, flush_interval_ms, fsync_on_write
+                file,
+                write_rx,
+                flush_interval_ms,
+                fsync_on_write,
             ));
             tracing::debug!("Spawned tokio file task");
         }
@@ -152,9 +165,12 @@ impl OptimizedDirectIOWal {
     ) {
         let mut flush_interval = tokio::time::interval(Duration::from_millis(flush_interval_ms));
         let mut needs_flush = false;
-        
-        tracing::info!("Started optimized WAL file task with {} backend", file.backend_type());
-        
+
+        tracing::info!(
+            "Started optimized WAL file task with {} backend",
+            file.backend_type()
+        );
+
         loop {
             tokio::select! {
                 cmd = rx.recv() => {
@@ -164,16 +180,16 @@ impl OptimizedDirectIOWal {
                             let result = async {
                                 // Use the optimized async file interface
                                 let returned_buffer = file.write_at(data, file_offset).await?;
-                                
+
                                 if fsync_on_write {
                                     file.sync_all().await?;
                                 } else {
                                     needs_flush = true;
                                 }
-                                
+
                                 Ok(returned_buffer)
                             }.await;
-                            
+
                             let _ = response.send(result);
                         },
                         Some(OptimizedWriteCommand::Sync { response }) => {
@@ -204,8 +220,11 @@ impl OptimizedDirectIOWal {
                 }
             }
         }
-        
-        tracing::info!("Optimized WAL file task ({}) shutting down", file.backend_type());
+
+        tracing::info!(
+            "Optimized WAL file task ({}) shutting down",
+            file.backend_type()
+        );
     }
 
     async fn start_background_tasks(&self) -> Result<()> {
@@ -225,47 +244,51 @@ impl OptimizedDirectIOWal {
 
         tokio::spawn(async move {
             let mut check_interval = tokio::time::interval(Duration::from_secs(1));
-            
+
             loop {
                 check_interval.tick().await;
                 let cfg = config.read().clone();
                 let segment_start_time = *current_segment_start_time.read();
                 let segment_size = current_segment_size.load(Ordering::SeqCst);
-                
-                let should_upload = segment_size >= cfg.segment_size_bytes ||
-                    segment_start_time.elapsed() >= Duration::from_millis(cfg.upload_interval_ms);
-                
+
+                let should_upload = segment_size >= cfg.segment_size_bytes
+                    || segment_start_time.elapsed()
+                        >= Duration::from_millis(cfg.upload_interval_ms);
+
                 if should_upload && segment_size > 0 {
-                    if upload_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                    if upload_in_progress
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
                         let (start_offset, end_offset) = {
                             let _guard = segment_tracking_lock.lock().unwrap();
                             let end_offset = current_offset.load(Ordering::SeqCst);
                             let start_offset = current_segment_start_offset.load(Ordering::SeqCst);
-                            
+
                             current_segment_size.store(0, Ordering::SeqCst);
                             current_segment_start_offset.store(end_offset, Ordering::SeqCst);
                             *current_segment_start_time.write() = Instant::now();
-                            
+
                             (start_offset, end_offset)
                         };
-                        
+
                         let callbacks = upload_callbacks.read();
                         for callback in callbacks.iter() {
                             callback(start_offset, end_offset);
                         }
-                        
+
                         upload_in_progress.store(false, Ordering::SeqCst);
                     }
                 }
             }
         });
-        
+
         Ok(())
     }
 
-    pub fn register_upload_callback<F>(&self, callback: F) 
-    where 
-        F: Fn(u64, u64) + Send + Sync + 'static 
+    pub fn register_upload_callback<F>(&self, callback: F)
+    where
+        F: Fn(u64, u64) + Send + Sync + 'static,
     {
         self.upload_callbacks.write().push(Box::new(callback));
     }
@@ -294,16 +317,20 @@ impl OptimizedDirectIOWal {
 
         while file_offset < file_size {
             let bytes_to_read = (file_size - file_offset).min(RECOVERY_BUFFER_SIZE as u64) as usize;
-            
+
             let (tx, rx) = oneshot::channel();
-            self.write_tx.send(OptimizedWriteCommand::Read {
-                file_offset,
-                size: bytes_to_read,
-                response: tx,
-            }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-            
-            let buffer = rx.await
-                .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
+            self.write_tx
+                .send(OptimizedWriteCommand::Read {
+                    file_offset,
+                    size: bytes_to_read,
+                    response: tx,
+                })
+                .await
+                .map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+
+            let buffer = rx.await.map_err(|_| {
+                crate::error::RustMqError::Wal("File task response failed".to_string())
+            })??;
 
             let mut buffer_pos = 0;
             while buffer_pos < buffer.len() {
@@ -331,10 +358,11 @@ impl OptimizedDirectIOWal {
         }
 
         self.current_offset.store(logical_offset, Ordering::SeqCst);
-        
+
         {
             let _guard = self.segment_tracking_lock.lock().unwrap();
-            self.current_segment_start_offset.store(logical_offset, Ordering::SeqCst);
+            self.current_segment_start_offset
+                .store(logical_offset, Ordering::SeqCst);
             self.current_segment_size.store(0, Ordering::SeqCst);
         }
 
@@ -343,62 +371,77 @@ impl OptimizedDirectIOWal {
 
     fn read_record_size(&self, buffer: &[u8]) -> Result<u64> {
         if buffer.len() < 8 {
-            return Err(crate::error::RustMqError::Wal("Buffer too small for record size".to_string()));
+            return Err(crate::error::RustMqError::Wal(
+                "Buffer too small for record size".to_string(),
+            ));
         }
-        
+
         let size = u64::from_le_bytes([
-            buffer[0], buffer[1], buffer[2], buffer[3],
-            buffer[4], buffer[5], buffer[6], buffer[7],
+            buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7],
         ]);
-        
+
         Ok(size)
     }
 
     async fn write_with_optimized_io(&self, data: &[u8]) -> Result<(u64, Vec<u8>)> {
-        let file_offset = self.current_file_offset.fetch_add(data.len() as u64, Ordering::SeqCst);
+        let file_offset = self
+            .current_file_offset
+            .fetch_add(data.len() as u64, Ordering::SeqCst);
 
         // Acquire semaphore permit for backpressure (blocks if channel is full)
-        let permit = self.write_semaphore
+        let permit = self
+            .write_semaphore
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| crate::error::RustMqError::Wal("Semaphore closed".to_string()))?;
 
         let (tx, rx) = oneshot::channel();
-        self.write_tx.send(OptimizedWriteCommand::Write {
-            data: data.to_vec(),
-            file_offset,
-            response: tx,
-            _permit: permit,  // Permit dropped when command processed
-        }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+        self.write_tx
+            .send(OptimizedWriteCommand::Write {
+                data: data.to_vec(),
+                file_offset,
+                response: tx,
+                _permit: permit, // Permit dropped when command processed
+            })
+            .await
+            .map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
 
-        let returned_buffer = rx.await
-            .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
+        let returned_buffer = rx.await.map_err(|_| {
+            crate::error::RustMqError::Wal("File task response failed".to_string())
+        })??;
 
         Ok((file_offset, returned_buffer))
     }
 
     async fn write_with_buffer(&self, buffer: Vec<u8>) -> Result<(u64, Vec<u8>)> {
-        let file_offset = self.current_file_offset.fetch_add(buffer.len() as u64, Ordering::SeqCst);
+        let file_offset = self
+            .current_file_offset
+            .fetch_add(buffer.len() as u64, Ordering::SeqCst);
 
         // Acquire semaphore permit for backpressure (blocks if channel is full)
-        let permit = self.write_semaphore
+        let permit = self
+            .write_semaphore
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| crate::error::RustMqError::Wal("Semaphore closed".to_string()))?;
 
         let (tx, rx) = oneshot::channel();
-        self.write_tx.send(OptimizedWriteCommand::Write {
-            data: buffer, // Direct ownership transfer - eliminates data.to_vec() allocation
-            file_offset,
-            response: tx,
-            _permit: permit,  // Permit dropped when command processed
-        }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+        self.write_tx
+            .send(OptimizedWriteCommand::Write {
+                data: buffer, // Direct ownership transfer - eliminates data.to_vec() allocation
+                file_offset,
+                response: tx,
+                _permit: permit, // Permit dropped when command processed
+            })
+            .await
+            .map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
 
-        let returned_buffer = rx.await
-            .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-        
+        let returned_buffer = rx.await.map_err(|_| {
+            crate::error::RustMqError::Wal("File task response failed".to_string())
+        })??;
+
         Ok((file_offset, returned_buffer))
     }
 }
@@ -409,13 +452,13 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         let serialized = bincode::serialize(record)?;
         let record_size = serialized.len() as u64;
         let total_size = serialized.len() + 8;
-        
+
         // Get buffer from pool and write directly into it
         let mut buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
         buffer.clear(); // Ensure buffer is empty
         buffer.extend_from_slice(&record_size.to_le_bytes());
         buffer.extend_from_slice(&serialized);
-        
+
         // Use optimized method that takes ownership to avoid data.to_vec()
         let (file_offset, returned_buffer) = self.write_with_buffer(buffer).await?;
         let logical_offset = self.current_offset.fetch_add(1, Ordering::SeqCst);
@@ -432,10 +475,11 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         };
 
         self.segments.write().push(segment_meta);
-        
+
         {
             let _guard = self.segment_tracking_lock.lock().unwrap();
-            self.current_segment_size.fetch_add(total_size as u64, Ordering::SeqCst);
+            self.current_segment_size
+                .fetch_add(total_size as u64, Ordering::SeqCst);
         }
 
         Ok(logical_offset)
@@ -452,34 +496,52 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         for segment in segments.iter() {
             if segment.start_offset <= offset && offset < segment.end_offset {
                 let (tx, rx) = oneshot::channel();
-                self.write_tx.send(OptimizedWriteCommand::Read {
-                    file_offset: segment.file_offset,
-                    size: 8,
-                    response: tx,
-                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-                
-                let size_buffer = rx.await
-                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-                
+                self.write_tx
+                    .send(OptimizedWriteCommand::Read {
+                        file_offset: segment.file_offset,
+                        size: 8,
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|_| {
+                        crate::error::RustMqError::Wal("File task unavailable".to_string())
+                    })?;
+
+                let size_buffer = rx.await.map_err(|_| {
+                    crate::error::RustMqError::Wal("File task response failed".to_string())
+                })??;
+
                 let record_size = u64::from_le_bytes([
-                    size_buffer[0], size_buffer[1], size_buffer[2], size_buffer[3],
-                    size_buffer[4], size_buffer[5], size_buffer[6], size_buffer[7],
+                    size_buffer[0],
+                    size_buffer[1],
+                    size_buffer[2],
+                    size_buffer[3],
+                    size_buffer[4],
+                    size_buffer[5],
+                    size_buffer[6],
+                    size_buffer[7],
                 ]) as usize;
-                
+
                 if bytes_read + record_size > max_bytes {
                     break;
                 }
 
                 let (tx, rx) = oneshot::channel();
-                self.write_tx.send(OptimizedWriteCommand::Read {
-                    file_offset: segment.file_offset + 8,
-                    size: record_size,
-                    response: tx,
-                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-                
-                let record_buffer = rx.await
-                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-                
+                self.write_tx
+                    .send(OptimizedWriteCommand::Read {
+                        file_offset: segment.file_offset + 8,
+                        size: record_size,
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|_| {
+                        crate::error::RustMqError::Wal("File task unavailable".to_string())
+                    })?;
+
+                let record_buffer = rx.await.map_err(|_| {
+                    crate::error::RustMqError::Wal("File task response failed".to_string())
+                })??;
+
                 let record: WalRecord = bincode::deserialize(&record_buffer)?;
                 records.push(record);
                 bytes_read += record_size;
@@ -502,43 +564,61 @@ impl WriteAheadLog for OptimizedDirectIOWal {
             }
 
             let mut file_offset = segment.file_offset;
-            
+
             while file_offset < segment.file_offset + segment.size_bytes {
                 let (tx, rx) = oneshot::channel();
-                self.write_tx.send(OptimizedWriteCommand::Read {
-                    file_offset,
-                    size: 8,
-                    response: tx,
-                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-                
-                let size_buffer = rx.await
-                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-                
+                self.write_tx
+                    .send(OptimizedWriteCommand::Read {
+                        file_offset,
+                        size: 8,
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|_| {
+                        crate::error::RustMqError::Wal("File task unavailable".to_string())
+                    })?;
+
+                let size_buffer = rx.await.map_err(|_| {
+                    crate::error::RustMqError::Wal("File task response failed".to_string())
+                })??;
+
                 let record_size = u64::from_le_bytes([
-                    size_buffer[0], size_buffer[1], size_buffer[2], size_buffer[3],
-                    size_buffer[4], size_buffer[5], size_buffer[6], size_buffer[7],
+                    size_buffer[0],
+                    size_buffer[1],
+                    size_buffer[2],
+                    size_buffer[3],
+                    size_buffer[4],
+                    size_buffer[5],
+                    size_buffer[6],
+                    size_buffer[7],
                 ]) as usize;
 
                 let (tx, rx) = oneshot::channel();
-                self.write_tx.send(OptimizedWriteCommand::Read {
-                    file_offset: file_offset + 8,
-                    size: record_size,
-                    response: tx,
-                }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-                
-                let record_buffer = rx.await
-                    .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-                
+                self.write_tx
+                    .send(OptimizedWriteCommand::Read {
+                        file_offset: file_offset + 8,
+                        size: record_size,
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|_| {
+                        crate::error::RustMqError::Wal("File task unavailable".to_string())
+                    })?;
+
+                let record_buffer = rx.await.map_err(|_| {
+                    crate::error::RustMqError::Wal("File task response failed".to_string())
+                })??;
+
                 let record: WalRecord = bincode::deserialize(&record_buffer)?;
-                
+
                 if record.offset >= end_offset {
                     break;
                 }
-                
+
                 if record.offset >= start_offset {
                     records.push(record);
                 }
-                
+
                 file_offset += 8 + record_size as u64;
             }
         }
@@ -548,13 +628,15 @@ impl WriteAheadLog for OptimizedDirectIOWal {
 
     async fn sync(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.write_tx.send(OptimizedWriteCommand::Sync {
-            response: tx,
-        }).await.map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
-        
-        rx.await
-            .map_err(|_| crate::error::RustMqError::Wal("File task response failed".to_string()))??;
-        
+        self.write_tx
+            .send(OptimizedWriteCommand::Sync { response: tx })
+            .await
+            .map_err(|_| crate::error::RustMqError::Wal("File task unavailable".to_string()))?;
+
+        rx.await.map_err(|_| {
+            crate::error::RustMqError::Wal("File task response failed".to_string())
+        })??;
+
         Ok(())
     }
 
@@ -562,13 +644,14 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         let mut segments = self.segments.write();
         segments.retain(|seg| seg.start_offset < offset);
         self.current_offset.store(offset, Ordering::SeqCst);
-        
+
         {
             let _guard = self.segment_tracking_lock.lock().unwrap();
-            self.current_segment_start_offset.store(offset, Ordering::SeqCst);
+            self.current_segment_start_offset
+                .store(offset, Ordering::SeqCst);
             self.current_segment_size.store(0, Ordering::SeqCst);
         }
-        
+
         Ok(())
     }
 
@@ -598,10 +681,18 @@ impl OptimizedDirectIOWal {
         tracing::info!("Initiating optimized WAL graceful shutdown...");
 
         // Send shutdown command to file task
-        self.write_tx.send(OptimizedWriteCommand::Shutdown).await
-            .map_err(|_| crate::error::RustMqError::Wal("Failed to send shutdown signal to optimized WAL file task".to_string()))?;
+        self.write_tx
+            .send(OptimizedWriteCommand::Shutdown)
+            .await
+            .map_err(|_| {
+                crate::error::RustMqError::Wal(
+                    "Failed to send shutdown signal to optimized WAL file task".to_string(),
+                )
+            })?;
 
-        tracing::info!("✅ Optimized WAL graceful shutdown signal sent - file task will flush and close");
+        tracing::info!(
+            "✅ Optimized WAL graceful shutdown signal sent - file task will flush and close"
+        );
         Ok(())
     }
 }
@@ -632,12 +723,16 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = OptimizedDirectIOWal::new(config, buffer_pool).await.unwrap();
+        let wal = OptimizedDirectIOWal::new(config, buffer_pool)
+            .await
+            .unwrap();
 
         // Check platform information
         let (capabilities, backend_type) = wal.get_platform_info();
-        println!("Using backend: {} with io_uring_available: {}", 
-                backend_type, capabilities.io_uring_available);
+        println!(
+            "Using backend: {} with io_uring_available: {}",
+            backend_type, capabilities.io_uring_available
+        );
 
         let record = WalRecord {
             topic_partition: TopicPartition {
@@ -676,10 +771,12 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = OptimizedDirectIOWal::new(config, buffer_pool).await.unwrap();
+        let wal = OptimizedDirectIOWal::new(config, buffer_pool)
+            .await
+            .unwrap();
 
         let (capabilities, backend_type) = wal.get_platform_info();
-        
+
         // Verify that backend selection is working
         #[cfg(all(target_os = "linux", feature = "io-uring"))]
         {
@@ -692,15 +789,17 @@ mod tests {
                 assert_eq!(backend_type, "tokio-fs");
             }
         }
-        
+
         #[cfg(not(all(target_os = "linux", feature = "io-uring")))]
         {
             assert_eq!(backend_type, "tokio-fs");
             assert!(!capabilities.io_uring_available);
         }
-        
-        println!("Selected backend: {} (io_uring available: {})", 
-                backend_type, capabilities.io_uring_available);
+
+        println!(
+            "Selected backend: {} (io_uring available: {})",
+            backend_type, capabilities.io_uring_available
+        );
     }
 
     #[tokio::test]
@@ -717,11 +816,13 @@ mod tests {
         };
 
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 20));
-        let wal = OptimizedDirectIOWal::new(config, buffer_pool).await.unwrap();
+        let wal = OptimizedDirectIOWal::new(config, buffer_pool)
+            .await
+            .unwrap();
 
         let (_, backend_type) = wal.get_platform_info();
         let start_time = Instant::now();
-        
+
         // Write 100 records to test performance
         for i in 0..100 {
             let record = WalRecord {
@@ -740,18 +841,24 @@ mod tests {
             };
             wal.append(&record).await.unwrap();
         }
-        
+
         let write_duration = start_time.elapsed();
         wal.sync().await.unwrap();
         let total_duration = start_time.elapsed();
-        
-        println!("Backend: {} - Write time: {:?}, Total time: {:?}", 
-                backend_type, write_duration, total_duration);
-        
+
+        println!(
+            "Backend: {} - Write time: {:?}, Total time: {:?}",
+            backend_type, write_duration, total_duration
+        );
+
         // Verify all records were written
         assert_eq!(wal.get_end_offset().await.unwrap(), 100);
-        
+
         // Performance should be reasonable regardless of backend
-        assert!(total_duration.as_millis() < 5000, "WAL operations took too long: {:?}", total_duration);
+        assert!(
+            total_duration.as_millis() < 5000,
+            "WAL operations took too long: {:?}",
+            total_duration
+        );
     }
 }

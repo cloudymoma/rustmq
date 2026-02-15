@@ -1,3 +1,7 @@
+use async_trait::async_trait;
+use rustmq::Result;
+use rustmq::config::ReplicationConfig;
+use rustmq::config::WalConfig;
 /// Comprehensive tests for FuturesUnordered replication optimization
 ///
 /// These tests validate that the FuturesUnordered implementation:
@@ -5,15 +9,10 @@
 /// 2. Handles failures gracefully
 /// 3. Maintains correctness with variable follower latencies
 /// 4. Improves performance over join_all approach
-
 use rustmq::replication::manager::{ReplicationManager, ReplicationRpcClient};
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
-use rustmq::config::ReplicationConfig;
+use rustmq::storage::{AlignedBufferPool, DirectIOWal, WriteAheadLog};
 use rustmq::types::*;
-use rustmq::Result;
-use rustmq::storage::{WriteAheadLog, DirectIOWal, AlignedBufferPool};
-use rustmq::config::WalConfig;
-use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -48,7 +47,11 @@ impl VariableLatencyRpcClient {
 
 #[async_trait]
 impl ReplicationRpcClient for VariableLatencyRpcClient {
-    async fn replicate_data(&self, broker_id: &BrokerId, _request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
+    async fn replicate_data(
+        &self,
+        broker_id: &BrokerId,
+        _request: ReplicateDataRequest,
+    ) -> Result<ReplicateDataResponse> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
 
         // Check if this broker should fail
@@ -82,7 +85,11 @@ impl ReplicationRpcClient for VariableLatencyRpcClient {
         })
     }
 
-    async fn send_heartbeat(&self, broker_id: &BrokerId, _request: HeartbeatRequest) -> Result<HeartbeatResponse> {
+    async fn send_heartbeat(
+        &self,
+        broker_id: &BrokerId,
+        _request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse> {
         Ok(HeartbeatResponse {
             success: true,
             error_code: 0,
@@ -96,7 +103,11 @@ impl ReplicationRpcClient for VariableLatencyRpcClient {
         })
     }
 
-    async fn transfer_leadership(&self, _broker_id: &BrokerId, _request: TransferLeadershipRequest) -> Result<TransferLeadershipResponse> {
+    async fn transfer_leadership(
+        &self,
+        _broker_id: &BrokerId,
+        _request: TransferLeadershipRequest,
+    ) -> Result<TransferLeadershipResponse> {
         Ok(TransferLeadershipResponse {
             success: true,
             error_code: 0,
@@ -123,7 +134,8 @@ async fn setup_test_replication_manager(
     };
 
     let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap()) as Arc<dyn WriteAheadLog>;
+    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
+        as Arc<dyn WriteAheadLog>;
 
     let config = ReplicationConfig {
         min_in_sync_replicas,
@@ -184,7 +196,8 @@ async fn test_early_return_with_majority() {
     latencies.insert("broker-3".to_string(), Duration::from_millis(100));
     latencies.insert("broker-4".to_string(), Duration::from_millis(200));
 
-    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client =
+        Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
     let followers = vec![
         "broker-1".to_string(),
         "broker-2".to_string(),
@@ -192,7 +205,8 @@ async fn test_early_return_with_majority() {
         "broker-4".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client.clone(), 3, followers).await;
+    let (manager, _temp_dir) =
+        setup_test_replication_manager(rpc_client.clone(), 3, followers).await;
 
     let record = create_test_record(0);
 
@@ -201,7 +215,11 @@ async fn test_early_return_with_majority() {
     let elapsed = start.elapsed();
 
     // Should return in ~20-30ms (after broker-2), not 200ms (broker-4)
-    assert!(elapsed < Duration::from_millis(50), "Expected early return but took {:?}", elapsed);
+    assert!(
+        elapsed < Duration::from_millis(50),
+        "Expected early return but took {:?}",
+        elapsed
+    );
     assert_eq!(result.durability, DurabilityLevel::Durable);
 
     println!("✓ Early return test passed: {} acks in {:?}", 3, elapsed);
@@ -215,7 +233,8 @@ async fn test_handles_slow_followers_gracefully() {
     latencies.insert("broker-2".to_string(), Duration::from_millis(5));
     latencies.insert("broker-3".to_string(), Duration::from_millis(5000)); // Very slow
 
-    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client =
+        Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
     let followers = vec![
         "broker-1".to_string(),
         "broker-2".to_string(),
@@ -231,10 +250,17 @@ async fn test_handles_slow_followers_gracefully() {
     let elapsed = start.elapsed();
 
     // Should return quickly despite slow follower
-    assert!(elapsed < Duration::from_millis(100), "Slow follower blocked operation: {:?}", elapsed);
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "Slow follower blocked operation: {:?}",
+        elapsed
+    );
     assert_eq!(result.durability, DurabilityLevel::Durable);
 
-    println!("✓ Slow follower handling test passed: completed in {:?}", elapsed);
+    println!(
+        "✓ Slow follower handling test passed: completed in {:?}",
+        elapsed
+    );
 }
 
 #[tokio::test]
@@ -243,8 +269,7 @@ async fn test_handles_follower_failures() {
     let latencies = std::collections::HashMap::new();
 
     let rpc_client = Arc::new(
-        VariableLatencyRpcClient::new(latencies)
-            .with_failures(vec!["broker-1".to_string()])
+        VariableLatencyRpcClient::new(latencies).with_failures(vec!["broker-1".to_string()]),
     ) as Arc<dyn ReplicationRpcClient>;
 
     let followers = vec![
@@ -270,14 +295,11 @@ async fn test_insufficient_acks_returns_local_only() {
     // Test that insufficient acks results in LocalOnly durability
     let latencies = std::collections::HashMap::new();
 
-    let rpc_client = Arc::new(
-        VariableLatencyRpcClient::new(latencies)
-            .with_failures(vec![
-                "broker-1".to_string(),
-                "broker-2".to_string(),
-                "broker-3".to_string(),
-            ])
-    ) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies).with_failures(vec![
+        "broker-1".to_string(),
+        "broker-2".to_string(),
+        "broker-3".to_string(),
+    ])) as Arc<dyn ReplicationRpcClient>;
 
     let followers = vec![
         "broker-1".to_string(),
@@ -309,7 +331,8 @@ async fn test_performance_improvement_over_join_all() {
     latencies.insert("broker-4".to_string(), Duration::from_millis(100));
     latencies.insert("broker-5".to_string(), Duration::from_millis(150));
 
-    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client =
+        Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
     let followers = vec![
         "broker-1".to_string(),
         "broker-2".to_string(),
@@ -330,19 +353,26 @@ async fn test_performance_improvement_over_join_all() {
     // join_all would wait: ~150ms (slowest follower)
     // Expected improvement: 85-87% latency reduction
 
-    assert!(elapsed < Duration::from_millis(40), "Expected <40ms but took {:?}", elapsed);
+    assert!(
+        elapsed < Duration::from_millis(40),
+        "Expected <40ms but took {:?}",
+        elapsed
+    );
     assert_eq!(result.durability, DurabilityLevel::Durable);
 
     let improvement_pct = (1.0 - (elapsed.as_millis() as f64 / 150.0)) * 100.0;
-    println!("✓ Performance test passed: {:?} vs ~150ms with join_all (~{:.0}% improvement)",
-             elapsed, improvement_pct);
+    println!(
+        "✓ Performance test passed: {:?} vs ~150ms with join_all (~{:.0}% improvement)",
+        elapsed, improvement_pct
+    );
 }
 
 #[tokio::test]
 async fn test_concurrent_replication_requests() {
     // Test that multiple concurrent replication requests work correctly
     let latencies = std::collections::HashMap::new();
-    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client =
+        Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
 
     let followers = vec![
         "broker-1".to_string(),
@@ -350,7 +380,8 @@ async fn test_concurrent_replication_requests() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client.clone(), 2, followers).await;
+    let (manager, _temp_dir) =
+        setup_test_replication_manager(rpc_client.clone(), 2, followers).await;
     let manager = Arc::new(manager);
 
     // Send 10 concurrent replication requests
@@ -374,7 +405,10 @@ async fn test_concurrent_replication_requests() {
     }
 
     assert_eq!(successes, 10, "All concurrent replications should succeed");
-    println!("✓ Concurrent replication test passed: {}/10 successful", successes);
+    println!(
+        "✓ Concurrent replication test passed: {}/10 successful",
+        successes
+    );
 }
 
 #[tokio::test]
@@ -382,7 +416,8 @@ async fn test_preserves_follower_state_updates() {
     // Test that follower states are properly updated for successful replications
     // With FuturesUnordered and early return, we update states only for completed acks
     let latencies = std::collections::HashMap::new();
-    let rpc_client = Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
+    let rpc_client =
+        Arc::new(VariableLatencyRpcClient::new(latencies)) as Arc<dyn ReplicationRpcClient>;
 
     let followers = vec![
         "broker-1".to_string(),
@@ -404,8 +439,19 @@ async fn test_preserves_follower_state_updates() {
     // With early return and min_in_sync=2, we need at least 1 follower ack (leader counts as 1)
     // Due to early return, we may have exactly the minimum number of states
     // This is correct behavior - we return as soon as we have enough acks
-    assert!(states.len() >= 1, "Expected at least 1 follower state, got {}", states.len());
-    assert!(states.len() <= 3, "Expected at most 3 follower states, got {}", states.len());
+    assert!(
+        states.len() >= 1,
+        "Expected at least 1 follower state, got {}",
+        states.len()
+    );
+    assert!(
+        states.len() <= 3,
+        "Expected at most 3 follower states, got {}",
+        states.len()
+    );
 
-    println!("✓ Follower state preservation test passed: {} states updated (early return working correctly)", states.len());
+    println!(
+        "✓ Follower state preservation test passed: {} states updated (early return working correctly)",
+        states.len()
+    );
 }

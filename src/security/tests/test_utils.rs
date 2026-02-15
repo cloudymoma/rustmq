@@ -4,33 +4,34 @@
 //! for comprehensive security testing across all components.
 
 use crate::error::RustMqError;
-use crate::security::{
-    SecurityConfig, SecurityManager, SecurityContext, SecurityMetrics,
-    AclConfig, CertificateManagementConfig, AuditConfig,
+use crate::security::acl::{
+    AclEntry, AclManager, AclOperation, AclRule, Effect, PermissionSet, ResourcePattern,
+    ResourceType,
 };
 use crate::security::auth::{
-    AuthenticationManager, AuthorizationManager, AuthContext, AuthorizedRequest,
-    Principal, Permission, AclKey, AclCacheEntry,
-};
-use crate::security::acl::{
-    AclManager, AclRule, AclEntry, AclOperation, PermissionSet,
-    ResourcePattern, ResourceType, Effect,
+    AclCacheEntry, AclKey, AuthContext, AuthenticationManager, AuthorizationManager,
+    AuthorizedRequest, Permission, Principal,
 };
 use crate::security::tls::{
-    TlsConfig, CertificateManager, CertificateInfo, RevocationList,
-    CachingClientCertVerifier, EnhancedCertificateManagementConfig, 
-    CaSettings, CertificateRole, CertificateTemplate, KeyType, KeyUsage, 
-    ExtendedKeyUsage, CertificateStatus, RevocationReason, CertificateRequest,
-    CaGenerationParams, ValidationResult, RevokedCertificate, CertificateAuditEntry,
+    CaGenerationParams, CaSettings, CachingClientCertVerifier, CertificateAuditEntry,
+    CertificateInfo, CertificateManager, CertificateRequest, CertificateRole, CertificateStatus,
+    CertificateTemplate, EnhancedCertificateManagementConfig, ExtendedKeyUsage, KeyType, KeyUsage,
+    RevocationList, RevocationReason, RevokedCertificate, TlsConfig, ValidationResult,
+};
+use crate::security::{
+    AclConfig, AuditConfig, CertificateManagementConfig, SecurityConfig, SecurityContext,
+    SecurityManager, SecurityMetrics,
 };
 use crate::types::TopicName;
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::{SystemTime, Duration};
-use tempfile::TempDir;
-use rcgen::{DistinguishedName, SanType, Certificate as RcgenCertificate, CertificateParams, KeyPair};
+use rcgen::{
+    Certificate as RcgenCertificate, CertificateParams, DistinguishedName, KeyPair, SanType,
+};
 use rustls_pki_types::CertificateDer;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 /// Test configuration factory for security components
@@ -63,7 +64,7 @@ impl SecurityTestConfig {
                 enabled: true,
                 cache_size_mb: 10, // Smaller for tests
                 cache_ttl_seconds: 60,
-                l2_shard_count: 4, // Fewer shards for tests
+                l2_shard_count: 4,         // Fewer shards for tests
                 bloom_filter_size: 10_000, // Smaller filter
                 batch_fetch_size: 10,
                 enable_audit_logging: true,
@@ -89,7 +90,9 @@ impl SecurityTestConfig {
     }
 
     /// Create enhanced certificate management config for testing
-    pub fn create_test_certificate_config(temp_dir: &TempDir) -> EnhancedCertificateManagementConfig {
+    pub fn create_test_certificate_config(
+        temp_dir: &TempDir,
+    ) -> EnhancedCertificateManagementConfig {
         EnhancedCertificateManagementConfig {
             storage_path: temp_dir.path().to_string_lossy().to_string(),
             audit_enabled: true,
@@ -97,9 +100,18 @@ impl SecurityTestConfig {
             renewal_check_interval_hours: 1, // Faster for tests
             certificate_templates: {
                 let mut templates = HashMap::new();
-                templates.insert(CertificateRole::Broker, CertificateTemplate::broker_default());
-                templates.insert(CertificateRole::Controller, CertificateTemplate::controller_default());
-                templates.insert(CertificateRole::Client, CertificateTemplate::client_default());
+                templates.insert(
+                    CertificateRole::Broker,
+                    CertificateTemplate::broker_default(),
+                );
+                templates.insert(
+                    CertificateRole::Controller,
+                    CertificateTemplate::controller_default(),
+                );
+                templates.insert(
+                    CertificateRole::Client,
+                    CertificateTemplate::client_default(),
+                );
                 templates.insert(CertificateRole::Admin, CertificateTemplate::admin_default());
                 templates
             },
@@ -121,16 +133,25 @@ impl MockCertificateGenerator {
             rcgen::KeyUsagePurpose::CrlSign,
         ];
 
-        let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
+        let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| {
+            RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            }
+        })?;
 
         params.key_pair = Some(key_pair);
 
-        let cert = RcgenCertificate::from_params(params)
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
+        let cert = RcgenCertificate::from_params(params).map_err(|e| {
+            RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            }
+        })?;
 
-        let der = cert.serialize_der()
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
+        let der = cert
+            .serialize_der()
+            .map_err(|e| RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            })?;
 
         Ok(CertificateDer::from(der))
     }
@@ -143,7 +164,7 @@ impl MockCertificateGenerator {
     ) -> Result<CertificateDer<'static>, RustMqError> {
         let mut params = CertificateParams::new(vec![common_name.to_string()]);
         params.is_ca = rcgen::IsCa::NoCa;
-        
+
         // Set key usage based on role
         match role {
             CertificateRole::Broker | CertificateRole::Controller => {
@@ -155,32 +176,37 @@ impl MockCertificateGenerator {
                     rcgen::ExtendedKeyUsagePurpose::ServerAuth,
                     rcgen::ExtendedKeyUsagePurpose::ClientAuth,
                 ];
-            },
+            }
             CertificateRole::Client | CertificateRole::Admin => {
-                params.key_usages = vec![
-                    rcgen::KeyUsagePurpose::DigitalSignature,
-                ];
-                params.extended_key_usages = vec![
-                    rcgen::ExtendedKeyUsagePurpose::ClientAuth,
-                ];
-            },
+                params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+                params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+            }
             _ => {
                 return Err(RustMqError::CertificateGeneration {
-                    reason: format!("Unsupported certificate role: {:?}", role)
+                    reason: format!("Unsupported certificate role: {:?}", role),
                 });
             }
         }
-        
-        let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
+
+        let key_pair = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| {
+            RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            }
+        })?;
+
         params.key_pair = Some(key_pair);
-        
-        let cert = RcgenCertificate::from_params(params)
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
-        
-        let der = cert.serialize_der_with_signer(ca_cert)
-            .map_err(|e| RustMqError::CertificateGeneration { reason: e.to_string() })?;
+
+        let cert = RcgenCertificate::from_params(params).map_err(|e| {
+            RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            }
+        })?;
+
+        let der = cert.serialize_der_with_signer(ca_cert).map_err(|e| {
+            RustMqError::CertificateGeneration {
+                reason: e.to_string(),
+            }
+        })?;
 
         Ok(CertificateDer::from(der))
     }
@@ -232,7 +258,6 @@ impl TestAclRuleFactory {
                 vec![AclOperation::Read, AclOperation::Write, AclOperation::Admin],
                 Effect::Allow,
             ),
-            
             // Controller rules - management access
             AclRule::new(
                 "controller-rule-1".to_string(),
@@ -241,7 +266,6 @@ impl TestAclRuleFactory {
                 vec![AclOperation::Cluster, AclOperation::Describe],
                 Effect::Allow,
             ),
-            
             // Producer rules - write access to specific topics
             AclRule::new(
                 "producer-rule-1".to_string(),
@@ -250,16 +274,19 @@ impl TestAclRuleFactory {
                 vec![AclOperation::Write, AclOperation::Describe],
                 Effect::Allow,
             ),
-            
             // Admin rules - full access to everything
             AclRule::new(
                 "admin-rule-1".to_string(),
                 "admins".to_string(),
                 ResourcePattern::new(ResourceType::Topic, "*".to_string()),
-                vec![AclOperation::Read, AclOperation::Write, AclOperation::Admin, AclOperation::Cluster],
+                vec![
+                    AclOperation::Read,
+                    AclOperation::Write,
+                    AclOperation::Admin,
+                    AclOperation::Cluster,
+                ],
                 Effect::Allow,
             ),
-            
             // Deny rule for testing
             AclRule::new(
                 "deny-rule-1".to_string(),
@@ -274,11 +301,11 @@ impl TestAclRuleFactory {
     /// Create performance test rules (larger dataset)
     pub fn create_performance_test_rules(count: usize) -> Vec<AclRule> {
         let mut rules = Vec::with_capacity(count);
-        
+
         for i in 0..count {
             let principal = format!("user-{}", i);
             let topic_pattern = format!("user-data-{}", i % 100); // Create some overlap
-            
+
             rules.push(AclRule::new(
                 format!("perf-rule-{}", i),
                 principal,
@@ -287,7 +314,7 @@ impl TestAclRuleFactory {
                 Effect::Allow,
             ));
         }
-        
+
         rules
     }
 }
@@ -309,7 +336,7 @@ impl MockAclStorage {
     pub async fn store_rules(&self, principal: &str, rules: Vec<AclRule>) {
         let mut storage = self.rules.lock().await;
         storage.insert(principal.to_string(), rules);
-        
+
         let mut ops = self.operations.lock().await;
         ops.push(format!("store_rules: {}", principal));
     }
@@ -317,20 +344,20 @@ impl MockAclStorage {
     pub async fn get_rules(&self, principal: &str) -> Option<Vec<AclRule>> {
         let storage = self.rules.lock().await;
         let result = storage.get(principal).cloned();
-        
+
         let mut ops = self.operations.lock().await;
         ops.push(format!("get_rules: {}", principal));
-        
+
         result
     }
 
     pub async fn delete_rules(&self, principal: &str) -> bool {
         let mut storage = self.rules.lock().await;
         let existed = storage.remove(principal).is_some();
-        
+
         let mut ops = self.operations.lock().await;
         ops.push(format!("delete_rules: {}", principal));
-        
+
         existed
     }
 
@@ -351,9 +378,7 @@ pub struct TestDataGenerator;
 impl TestDataGenerator {
     /// Generate test topics for authorization testing
     pub fn generate_test_topics(count: usize) -> Vec<TopicName> {
-        (0..count)
-            .map(|i| format!("test-topic-{}", i))
-            .collect()
+        (0..count).map(|i| format!("test-topic-{}", i)).collect()
     }
 
     /// Generate test principals for load testing
@@ -366,18 +391,22 @@ impl TestDataGenerator {
     /// Generate ACL keys for cache testing
     pub fn generate_acl_keys(principal_count: usize, topic_count: usize) -> Vec<AclKey> {
         let mut keys = Vec::new();
-        
+
         for p in 0..principal_count {
             for t in 0..topic_count {
                 let principal = format!("principal-{}", p);
                 let topic = format!("topic-{}", t);
-                
+
                 for permission in [Permission::Read, Permission::Write] {
-                    keys.push(AclKey::new(principal.clone().into(), topic.clone().into(), permission));
+                    keys.push(AclKey::new(
+                        principal.clone().into(),
+                        topic.clone().into(),
+                        permission,
+                    ));
                 }
             }
         }
-        
+
         keys
     }
 }
@@ -387,20 +416,17 @@ pub struct PerformanceTestUtils;
 
 impl PerformanceTestUtils {
     /// Measure average latency over multiple iterations
-    pub async fn measure_average_latency<F, Fut>(
-        iterations: usize,
-        operation: F,
-    ) -> Duration
+    pub async fn measure_average_latency<F, Fut>(iterations: usize, operation: F) -> Duration
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = ()>,
     {
         let start = std::time::Instant::now();
-        
+
         for _ in 0..iterations {
             operation().await;
         }
-        
+
         start.elapsed() / iterations as u32
     }
 
@@ -415,7 +441,7 @@ impl PerformanceTestUtils {
         let initial_memory = get_process_memory_usage();
         let result = operation().await;
         let final_memory = get_process_memory_usage();
-        
+
         (result, final_memory.saturating_sub(initial_memory))
     }
 
@@ -443,7 +469,11 @@ pub struct SecurityTestAssertions;
 impl SecurityTestAssertions {
     /// Assert that authentication succeeded
     pub fn assert_authentication_success(result: &Result<AuthContext, RustMqError>) {
-        assert!(result.is_ok(), "Authentication should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Authentication should succeed: {:?}",
+            result
+        );
     }
 
     /// Assert that authentication failed with expected error
@@ -469,7 +499,11 @@ impl SecurityTestAssertions {
 
     /// Assert that authorization was denied
     pub fn assert_authorization_denied(result: &Result<bool, RustMqError>) {
-        assert!(result.is_ok(), "Authorization check should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Authorization check should succeed: {:?}",
+            result
+        );
         assert!(!result.as_ref().unwrap(), "Permission should be denied");
     }
 
@@ -486,7 +520,7 @@ impl SecurityTestAssertions {
             hit_rate * 100.0,
             min_hit_rate * 100.0
         );
-        
+
         assert!(
             avg_latency <= max_latency,
             "Average latency {}μs exceeds maximum {}μs",

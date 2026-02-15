@@ -3,16 +3,19 @@
 //! These tests validate that the broker's graceful shutdown implementation
 //! (from broker.rs lines 374-402) works correctly and prevents data loss.
 
-use rustmq::{Config, broker::Broker};
-use rustmq::config::{BrokerConfig, NetworkConfig, WalConfig, ObjectStorageConfig, StorageType, CacheConfig, ReplicationConfig};
-use rustmq::storage::{DirectIOWal, AlignedBufferPool};
-use rustmq::storage::traits::WriteAheadLog;
 use rustmq::broker::core::PartitionMetadata;
+use rustmq::config::{
+    BrokerConfig, CacheConfig, NetworkConfig, ObjectStorageConfig, ReplicationConfig, StorageType,
+    WalConfig,
+};
+use rustmq::storage::traits::WriteAheadLog;
+use rustmq::storage::{AlignedBufferPool, DirectIOWal};
 use rustmq::types::TopicPartition;
+use rustmq::{Config, broker::Broker};
 use rustmq_client::*;
-use tempfile::TempDir;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
+use tempfile::TempDir;
 use tokio::time::Duration;
 
 // Use atomic counter to generate unique ports for each test
@@ -45,8 +48,8 @@ async fn create_test_broker_config(temp_dir: &TempDir, quic_port: u16, rpc_port:
         wal: WalConfig {
             path: wal_path,
             capacity_bytes: 10 * 1024 * 1024, // 10 MB
-            fsync_on_write: true, // Enable fsync for data safety
-            segment_size_bytes: 1024 * 1024, // 1 MB segments
+            fsync_on_write: true,             // Enable fsync for data safety
+            segment_size_bytes: 1024 * 1024,  // 1 MB segments
             buffer_size: 4096,
             upload_interval_ms: 60_000,
             flush_interval_ms: 1000,
@@ -90,13 +93,17 @@ async fn test_graceful_shutdown_preserves_all_messages() {
     let wal_path = config.wal.path.clone();
 
     // Start broker
-    let mut broker = Broker::from_config(config).await
+    let mut broker = Broker::from_config(config)
+        .await
         .expect("Failed to create broker");
 
     broker.start().await.expect("Failed to start broker");
 
     // Verify broker is running
-    assert_eq!(broker.state().await, rustmq::broker::broker::BrokerState::Running);
+    assert_eq!(
+        broker.state().await,
+        rustmq::broker::broker::BrokerState::Running
+    );
 
     // Give QUIC server time to fully start
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -113,7 +120,10 @@ async fn test_graceful_shutdown_preserves_all_messages() {
         replicas: vec![format!("test-broker-{}", quic_port)],
         in_sync_replicas: vec![format!("test-broker-{}", quic_port)],
     };
-    broker.core().add_partition(topic_partition, partition_metadata).await
+    broker
+        .core()
+        .add_partition(topic_partition, partition_metadata)
+        .await
         .expect("Failed to create partition");
     println!("✅ Created topic partition: test-shutdown-topic:0");
 
@@ -165,7 +175,10 @@ async fn test_graceful_shutdown_preserves_all_messages() {
         }
     }
 
-    println!("✅ Successfully sent {} out of {} messages", successful_sends, MESSAGE_COUNT);
+    println!(
+        "✅ Successfully sent {} out of {} messages",
+        successful_sends, MESSAGE_COUNT
+    );
 
     // Flush to ensure all messages are sent
     producer.flush().await.expect("Failed to flush producer");
@@ -181,17 +194,26 @@ async fn test_graceful_shutdown_preserves_all_messages() {
     println!("🛑 Initiating graceful shutdown...");
     let shutdown_start = std::time::Instant::now();
 
-    broker.stop().await.expect("Failed to stop broker gracefully");
+    broker
+        .stop()
+        .await
+        .expect("Failed to stop broker gracefully");
 
     let shutdown_duration = shutdown_start.elapsed();
     println!("✅ Graceful shutdown completed in {:?}", shutdown_duration);
 
     // Verify shutdown completed in reasonable time
-    assert!(shutdown_duration < Duration::from_secs(20),
-        "Shutdown took too long: {:?}", shutdown_duration);
+    assert!(
+        shutdown_duration < Duration::from_secs(20),
+        "Shutdown took too long: {:?}",
+        shutdown_duration
+    );
 
     // Verify broker is in stopped state
-    assert_eq!(broker.state().await, rustmq::broker::broker::BrokerState::Stopped);
+    assert_eq!(
+        broker.state().await,
+        rustmq::broker::broker::BrokerState::Stopped
+    );
 
     // Verify WAL contains all messages by reopening and reading
     println!("📊 Verifying WAL contents...");
@@ -206,10 +228,13 @@ async fn test_graceful_shutdown_preserves_all_messages() {
         flush_interval_ms: 1000,
     };
 
-    let wal = DirectIOWal::new(wal_config, buffer_pool).await
+    let wal = DirectIOWal::new(wal_config, buffer_pool)
+        .await
         .expect("Failed to reopen WAL");
 
-    let end_offset = wal.get_end_offset().await
+    let end_offset = wal
+        .get_end_offset()
+        .await
         .expect("Failed to get WAL end offset");
 
     println!("✅ WAL end offset: {}", end_offset);
@@ -217,7 +242,10 @@ async fn test_graceful_shutdown_preserves_all_messages() {
 
     // Note: WAL offset might be slightly different from message count due to internal record structure
     // The key assertion is that data was persisted and shutdown was clean
-    assert!(end_offset > 0, "WAL should contain persisted data after shutdown");
+    assert!(
+        end_offset > 0,
+        "WAL should contain persisted data after shutdown"
+    );
 
     println!("✅ Graceful shutdown test completed successfully!");
 }
@@ -243,11 +271,17 @@ async fn test_shutdown_timing_and_phases() {
 
     // Verify shutdown completed within expected bounds
     // Expected: WAL flush (0-5s) + Replication drain (0-10s) + Connections (1s) + overhead
-    assert!(shutdown_duration < Duration::from_secs(20),
-        "Shutdown exceeded maximum expected time: {:?}", shutdown_duration);
+    assert!(
+        shutdown_duration < Duration::from_secs(20),
+        "Shutdown exceeded maximum expected time: {:?}",
+        shutdown_duration
+    );
 
     // Verify state transitions were clean
-    assert_eq!(broker.state().await, rustmq::broker::broker::BrokerState::Stopped);
+    assert_eq!(
+        broker.state().await,
+        rustmq::broker::broker::BrokerState::Stopped
+    );
 
     println!("✅ Shutdown timing test passed: {:?}", shutdown_duration);
 }
@@ -269,9 +303,7 @@ async fn test_shutdown_prevents_new_connections() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Initiate shutdown (non-blocking)
-    let shutdown_task = tokio::spawn(async move {
-        broker.stop().await
-    });
+    let shutdown_task = tokio::spawn(async move { broker.stop().await });
 
     // Wait a moment for shutdown to begin
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -283,10 +315,8 @@ async fn test_shutdown_prevents_new_connections() {
         ..Default::default()
     };
 
-    let client_result = tokio::time::timeout(
-        Duration::from_secs(2),
-        RustMqClient::new(client_config)
-    ).await;
+    let client_result =
+        tokio::time::timeout(Duration::from_secs(2), RustMqClient::new(client_config)).await;
 
     // Wait for shutdown to complete
     shutdown_task.await.unwrap().unwrap();
@@ -314,7 +344,10 @@ async fn test_health_check_during_lifecycle() {
     // Check health in Created state
     let health = broker.health_check().await;
     assert_eq!(health.state, rustmq::broker::broker::BrokerState::Created);
-    assert!(!health.is_healthy, "Broker should not be healthy in Created state");
+    assert!(
+        !health.is_healthy,
+        "Broker should not be healthy in Created state"
+    );
 
     // Start and check health in Running state
     broker.start().await.unwrap();
@@ -322,14 +355,20 @@ async fn test_health_check_during_lifecycle() {
 
     let health = broker.health_check().await;
     assert_eq!(health.state, rustmq::broker::broker::BrokerState::Running);
-    assert!(health.is_healthy, "Broker should be healthy in Running state");
+    assert!(
+        health.is_healthy,
+        "Broker should be healthy in Running state"
+    );
 
     // Stop and check health in Stopped state
     broker.stop().await.unwrap();
 
     let health = broker.health_check().await;
     assert_eq!(health.state, rustmq::broker::broker::BrokerState::Stopped);
-    assert!(!health.is_healthy, "Broker should not be healthy in Stopped state");
+    assert!(
+        !health.is_healthy,
+        "Broker should not be healthy in Stopped state"
+    );
 
     println!("✅ Health check lifecycle test passed");
 }

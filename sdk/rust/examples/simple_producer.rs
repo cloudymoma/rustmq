@@ -28,14 +28,23 @@ async fn main() -> Result<()> {
             .topic("example-topic")
             .payload(format!("Hello, World! Message #{}", i))
             .header("message-id", &format!("msg-{}", i))
-            .header("timestamp", &std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs().to_string())
+            .header(
+                "timestamp",
+                &std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .to_string(),
+            )
             .build()
             .map_err(|e| ClientError::InvalidMessage(e))?;
 
         match producer.send(message).await {
             Ok(result) => {
-                println!("Message {} sent successfully: offset={}, partition={}", 
-                    i, result.offset, result.partition);
+                println!(
+                    "Message {} sent successfully: offset={}, partition={}",
+                    i, result.offset, result.partition
+                );
             }
             Err(e) => {
                 eprintln!("Failed to send message {}: {}", i, e);

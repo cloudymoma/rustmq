@@ -163,7 +163,12 @@ mod tests {
     fn test_panic_hook_messages() {
         // This test just verifies the message generation logic doesn't crash
         let location = panic::Location::caller();
-        let info = format!("{}:{}:{}", location.file(), location.line(), location.column());
+        let info = format!(
+            "{}:{}:{}",
+            location.file(),
+            location.line(),
+            location.column()
+        );
         assert!(!info.is_empty());
     }
 }

@@ -1,18 +1,23 @@
-use crate::{
-    Result, types::*, config::NetworkConfig,
-    security::{SecurityConfig, AuthenticationManager, AuthorizationManager, CertificateManager, SecurityMetrics},
-    error::RustMqError,
-    storage::{AlignedBufferPool, BufferPool},
-};
 use super::secure_connection::{AuthenticatedConnection, AuthenticatedConnectionPool};
+use crate::{
+    Result,
+    config::NetworkConfig,
+    error::RustMqError,
+    security::{
+        AuthenticationManager, AuthorizationManager, CertificateManager, SecurityConfig,
+        SecurityMetrics,
+    },
+    storage::{AlignedBufferPool, BufferPool},
+    types::*,
+};
 use bytes::Bytes;
-use std::sync::Arc;
-use std::net::SocketAddr;
-use std::collections::VecDeque;
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use quinn::{Endpoint, ServerConfig, Connection};
+use quinn::{Connection, Endpoint, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use std::collections::VecDeque;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct QuicServer {
@@ -48,7 +53,9 @@ impl ConnectionPool {
 
     pub async fn get_connection(&self, client_id: &str) -> Option<Connection> {
         // Lock-free read from DashMap
-        self.connections.get(client_id).map(|entry| entry.connection.clone())
+        self.connections
+            .get(client_id)
+            .map(|entry| entry.connection.clone())
     }
 
     pub async fn add_connection(&self, client_id: String, connection: Connection) {
@@ -205,7 +212,9 @@ impl TryFrom<u8> for RequestType {
             1 => Ok(RequestType::Produce),
             2 => Ok(RequestType::Fetch),
             3 => Ok(RequestType::Metadata),
-            _ => Err(crate::error::RustMqError::Network(format!("Invalid request type: {value}"))),
+            _ => Err(crate::error::RustMqError::Network(format!(
+                "Invalid request type: {value}"
+            ))),
         }
     }
 }
@@ -218,11 +227,13 @@ impl QuicServer {
         metadata_handler: Arc<dyn MetadataHandler>,
     ) -> Result<Self> {
         let server_config = Self::create_server_config(&config.quic_config)?;
-        let addr: SocketAddr = config.quic_listen.parse()
+        let addr: SocketAddr = config
+            .quic_listen
+            .parse()
             .map_err(|e| crate::error::RustMqError::Config(format!("Invalid QUIC address: {e}")))?;
-        
+
         let endpoint = Endpoint::server(server_config, addr)?;
-        
+
         let connection_pool = Arc::new(ConnectionPool::new(config.max_connections));
         let request_router = Arc::new(RequestRouter::new(
             producer_handler,
@@ -253,31 +264,38 @@ impl QuicServer {
             .with_no_client_auth()
             .with_single_cert(
                 vec![CertificateDer::from(cert_der)],
-                PrivateKeyDer::try_from(priv_key).map_err(|e| RustMqError::Config(format!("Invalid private key: {:?}", e)))?,
+                PrivateKeyDer::try_from(priv_key)
+                    .map_err(|e| RustMqError::Config(format!("Invalid private key: {:?}", e)))?,
             )?;
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config)
-                .map_err(|e| RustMqError::Config(format!("Failed to create QUIC config: {}", e)))?
+                .map_err(|e| RustMqError::Config(format!("Failed to create QUIC config: {}", e)))?,
         ));
 
-        let transport_config = Arc::get_mut(&mut server_config.transport)
-            .ok_or_else(|| RustMqError::Config("Failed to get mutable transport config - Arc has multiple strong references".to_string()))?;
+        let transport_config = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
+            RustMqError::Config(
+                "Failed to get mutable transport config - Arc has multiple strong references"
+                    .to_string(),
+            )
+        })?;
         transport_config.max_concurrent_uni_streams(quic_config.max_concurrent_uni_streams.into());
-        transport_config.max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
+        transport_config
+            .max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
         transport_config.max_idle_timeout(Some(
-            Duration::from_millis(quic_config.max_idle_timeout_ms).try_into()
-                .map_err(|e| RustMqError::Config(format!("Invalid idle timeout: {}", e)))?
+            Duration::from_millis(quic_config.max_idle_timeout_ms)
+                .try_into()
+                .map_err(|e| RustMqError::Config(format!("Invalid idle timeout: {}", e)))?,
         ));
         // Note: Some stream data configuration methods may not be available in this quinn version
         // We'll configure what's available and focus on the critical parameters
-        
+
         // Configure stream data limits if available - using try_from for proper error handling
         if let Ok(_stream_data) = quinn::VarInt::try_from(quic_config.max_stream_data) {
             // Only configure the methods that exist in this version of quinn
             // transport_config.initial_max_stream_data_uni(stream_data);
         }
-        
+
         if let Ok(_connection_data) = quinn::VarInt::try_from(quic_config.max_connection_data) {
             // transport_config.initial_max_data(connection_data);
         }
@@ -291,9 +309,11 @@ impl QuicServer {
         while let Some(conn) = self.endpoint.accept().await {
             let connection = conn.await?;
             let client_id = format!("{}", connection.remote_address());
-            
-            self.connection_pool.add_connection(client_id.clone(), connection.clone()).await;
-            
+
+            self.connection_pool
+                .add_connection(client_id.clone(), connection.clone())
+                .await;
+
             let router = self.request_router.clone();
             let pool = self.connection_pool.clone();
             let buffer_pool = self.buffer_pool.clone();
@@ -356,7 +376,8 @@ impl QuicServer {
                         }
                     }
                     Ok::<Vec<u8>, crate::error::RustMqError>(buf)
-                }.await;
+                }
+                .await;
 
                 // Return buffer to pool after processing (in both success and error paths)
                 match result {
@@ -406,19 +427,22 @@ impl SecureQuicServer {
             &security_config,
             cert_manager.clone(),
             auth_manager.clone(),
-        ).await?;
-        
-        let addr: SocketAddr = config.quic_listen.parse()
+        )
+        .await?;
+
+        let addr: SocketAddr = config
+            .quic_listen
+            .parse()
             .map_err(|e| RustMqError::Config(format!("Invalid QUIC address: {e}")))?;
-        
+
         let endpoint = Endpoint::server(server_config, addr)?;
-        
+
         let authenticated_pool = Arc::new(AuthenticatedConnectionPool::new(
             config.max_connections,
             Duration::from_millis(config.connection_timeout_ms),
             metrics.clone(),
         ));
-        
+
         let request_router = Arc::new(RequestRouter::new(
             producer_handler,
             consumer_handler,
@@ -470,26 +494,34 @@ impl SecureQuicServer {
         tls_config.alpn_protocols = vec![b"rustmq".to_vec()];
 
         // Create QUIC server config using quinn's rustls integration
-        let quic_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
-            .map_err(|e| RustMqError::Config(format!("Failed to create QUIC crypto config: {}", e)))?;
+        let quic_crypto =
+            quinn::crypto::rustls::QuicServerConfig::try_from(tls_config).map_err(|e| {
+                RustMqError::Config(format!("Failed to create QUIC crypto config: {}", e))
+            })?;
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_crypto));
 
         // Configure QUIC transport parameters
-        let transport_config = Arc::get_mut(&mut server_config.transport)
-            .ok_or_else(|| RustMqError::Config("Failed to get mutable transport config - Arc has multiple strong references".to_string()))?;
+        let transport_config = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
+            RustMqError::Config(
+                "Failed to get mutable transport config - Arc has multiple strong references"
+                    .to_string(),
+            )
+        })?;
         transport_config.max_concurrent_uni_streams(quic_config.max_concurrent_uni_streams.into());
-        transport_config.max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
+        transport_config
+            .max_concurrent_bidi_streams(quic_config.max_concurrent_bidi_streams.into());
         transport_config.max_idle_timeout(Some(
-            Duration::from_millis(quic_config.max_idle_timeout_ms).try_into()
-                .map_err(|e| RustMqError::Config(format!("Invalid idle timeout: {}", e)))?
+            Duration::from_millis(quic_config.max_idle_timeout_ms)
+                .try_into()
+                .map_err(|e| RustMqError::Config(format!("Invalid idle timeout: {}", e)))?,
         ));
 
         // Configure stream data limits if available
         if let Ok(_stream_data) = quinn::VarInt::try_from(quic_config.max_stream_data) {
             // Note: Some methods may not be available in this quinn version
         }
-        
+
         if let Ok(_connection_data) = quinn::VarInt::try_from(quic_config.max_connection_data) {
             // Note: Some methods may not be available in this quinn version
         }
@@ -498,43 +530,49 @@ impl SecureQuicServer {
     }
 
     /// Get broker certificate and private key from certificate manager
-    async fn get_broker_certificate(cert_manager: &CertificateManager) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    async fn get_broker_certificate(
+        cert_manager: &CertificateManager,
+    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         // List all certificates to find an active broker certificate
         let certificates = cert_manager.list_all_certificates().await?;
-        
+
         // Find an active broker certificate
         for cert_info in certificates {
-            if cert_info.role == crate::security::CertificateRole::Broker 
-                && cert_info.status == crate::security::CertificateStatus::Active {
-                
+            if cert_info.role == crate::security::CertificateRole::Broker
+                && cert_info.status == crate::security::CertificateStatus::Active
+            {
                 // Get certificate PEM data
                 let cert_pem = cert_info.certificate_pem.ok_or_else(|| {
                     RustMqError::Config("Broker certificate missing PEM data".to_string())
                 })?;
-                
+
                 let private_key_pem = cert_info.private_key_pem.ok_or_else(|| {
-                    RustMqError::Config("Broker certificate missing private key PEM data".to_string())
+                    RustMqError::Config(
+                        "Broker certificate missing private key PEM data".to_string(),
+                    )
                 })?;
-                
+
                 // Parse PEM to get certificate chain
                 let cert_chain = Self::parse_certificate_pem(&cert_pem)?;
-                
+
                 // Parse private key PEM
                 let private_key = Self::parse_private_key_pem(&private_key_pem)?;
-                
+
                 tracing::info!(
                     cert_id = %cert_info.id,
                     subject = %cert_info.subject,
                     "Using broker certificate from certificate manager"
                 );
-                
+
                 return Ok((cert_chain, private_key));
             }
         }
-        
-        Err(RustMqError::Config("No active broker certificate found in certificate manager".to_string()))
+
+        Err(RustMqError::Config(
+            "No active broker certificate found in certificate manager".to_string(),
+        ))
     }
-    
+
     /// Parse certificate PEM data to CertificateDer format
     fn parse_certificate_pem(cert_pem: &str) -> Result<Vec<CertificateDer<'static>>> {
         let mut cert_reader = std::io::Cursor::new(cert_pem.as_bytes());
@@ -543,12 +581,14 @@ impl SecureQuicServer {
             .collect();
 
         if cert_ders.is_empty() {
-            return Err(RustMqError::Config("No certificates found in PEM data".to_string()));
+            return Err(RustMqError::Config(
+                "No certificates found in PEM data".to_string(),
+            ));
         }
 
         Ok(cert_ders)
     }
-    
+
     /// Parse private key PEM data to PrivateKeyDer format
     fn parse_private_key_pem(key_pem: &str) -> Result<PrivateKeyDer<'static>> {
         let mut key_reader = std::io::Cursor::new(key_pem.as_bytes());
@@ -579,12 +619,17 @@ impl SecureQuicServer {
             return Ok(PrivateKeyDer::from(key));
         }
 
-        Err(RustMqError::Config("Failed to parse private key PEM - no valid key found".to_string()))
+        Err(RustMqError::Config(
+            "Failed to parse private key PEM - no valid key found".to_string(),
+        ))
     }
-    
+
     /// Create fallback self-signed certificate if certificate manager fails
-    fn create_fallback_certificate() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
-        tracing::warn!("Creating fallback self-signed certificate for broker - this should not be used in production");
+    fn create_fallback_certificate()
+    -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+        tracing::warn!(
+            "Creating fallback self-signed certificate for broker - this should not be used in production"
+        );
 
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
         let cert_der = cert.serialize_der()?;
@@ -608,7 +653,7 @@ impl SecureQuicServer {
         while let Some(conn) = self.endpoint.accept().await {
             let connection = conn.await?;
             let connection_id = format!("{}", connection.remote_address());
-            
+
             let auth_manager = self.auth_manager.clone();
             let authz_manager = self.authz_manager.clone();
             let metrics = self.metrics.clone();
@@ -626,7 +671,9 @@ impl SecureQuicServer {
                     pool.clone(),
                     router,
                     buffer_pool,
-                ).await {
+                )
+                .await
+                {
                     Ok(_) => {
                         tracing::debug!(
                             connection_id = connection_id,
@@ -641,7 +688,7 @@ impl SecureQuicServer {
                         );
                     }
                 }
-                
+
                 // Clean up connection
                 pool.remove_connection(&connection_id);
             });
@@ -663,10 +710,11 @@ impl SecureQuicServer {
     ) -> Result<()> {
         // Perform proper mTLS authentication with certificate validation
         let remote_addr = connection.remote_address();
-        
+
         // Extract client certificates from the QUIC/TLS connection
-        let (auth_context, client_certificates, server_cert_fingerprint) = 
-            Self::authenticate_connection(&connection, &auth_manager).await
+        let (auth_context, client_certificates, server_cert_fingerprint) =
+            Self::authenticate_connection(&connection, &auth_manager)
+                .await
                 .map_err(|e| {
                     tracing::error!(
                         connection_id = connection_id,
@@ -677,7 +725,7 @@ impl SecureQuicServer {
                     metrics.record_authentication_failure("mTLS authentication failed");
                     e
                 })?;
-        
+
         tracing::info!(
             connection_id = connection_id,
             principal = %auth_context.principal,
@@ -685,7 +733,7 @@ impl SecureQuicServer {
             cert_fingerprint = server_cert_fingerprint,
             "Successfully authenticated mTLS connection"
         );
-        
+
         // Create authenticated connection wrapper
         let authenticated_conn = AuthenticatedConnection::new(
             connection.clone(),
@@ -694,7 +742,8 @@ impl SecureQuicServer {
             server_cert_fingerprint,
             authz_manager.clone(),
             metrics.clone(),
-        ).await?;
+        )
+        .await?;
 
         // Add to authenticated connection pool
         pool.add_connection(connection_id.clone(), authenticated_conn.clone())?;
@@ -707,7 +756,11 @@ impl SecureQuicServer {
     async fn authenticate_connection(
         connection: &Connection,
         auth_manager: &AuthenticationManager,
-    ) -> Result<(crate::security::AuthContext, Vec<CertificateDer<'static>>, String)> {
+    ) -> Result<(
+        crate::security::AuthContext,
+        Vec<CertificateDer<'static>>,
+        String,
+    )> {
         // Extract client certificates from the QUIC/TLS connection
         // Note: In a real implementation, we'd extract these from the TLS handshake
         // For now, we'll simulate the process since quinn/rustls certificate extraction
@@ -717,7 +770,7 @@ impl SecureQuicServer {
 
         if client_certificates.is_empty() {
             return Err(RustMqError::AuthenticationFailed(
-                "No client certificate provided for mTLS authentication".to_string()
+                "No client certificate provided for mTLS authentication".to_string(),
             ));
         }
 
@@ -726,9 +779,7 @@ impl SecureQuicServer {
             .authenticate_connection(connection)
             .await
             .map_err(|e| {
-                RustMqError::AuthenticationFailed(
-                    format!("Certificate validation failed: {}", e)
-                )
+                RustMqError::AuthenticationFailed(format!("Certificate validation failed: {}", e))
             })?;
 
         // Calculate server certificate fingerprint
@@ -741,7 +792,9 @@ impl SecureQuicServer {
     ///
     /// Uses quinn's peer_identity() API to retrieve the certificate chain from the TLS session.
     /// The peer_identity returns a Box<dyn Any> which we downcast to Vec<CertificateDer>.
-    fn extract_client_certificates(connection: &Connection) -> Result<Vec<CertificateDer<'static>>> {
+    fn extract_client_certificates(
+        connection: &Connection,
+    ) -> Result<Vec<CertificateDer<'static>>> {
         // Get the peer identity from the QUIC/TLS session
         // This returns Option<Box<dyn Any>> containing the peer's certificate chain
         let identity = connection
@@ -774,7 +827,7 @@ impl SecureQuicServer {
                 "Peer identity found but certificate chain is empty"
             );
             return Err(RustMqError::AuthenticationFailed(
-                "Empty certificate chain".to_string()
+                "Empty certificate chain".to_string(),
             ));
         }
 
@@ -787,14 +840,14 @@ impl SecureQuicServer {
 
         Ok(certificates.clone())
     }
-    
+
     /// Calculate server certificate fingerprint
     fn calculate_server_cert_fingerprint(connection: &Connection) -> String {
         // TODO: Extract actual server certificate and calculate real fingerprint
         // For now, return a deterministic fingerprint based on connection info
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         connection.local_ip().hash(&mut hasher);
         format!("server-cert-{:x}", hasher.finish())
@@ -830,10 +883,14 @@ impl SecureQuicServer {
                             authenticated_conn.update_activity();
 
                             // Check authorization for the request
-                            let resource = Self::extract_resource_from_request(request_type, &request_data);
+                            let resource =
+                                Self::extract_resource_from_request(request_type, &request_data);
                             let permission = Self::get_required_permission(request_type);
 
-                            match authenticated_conn.authorize_request(&resource, permission).await {
+                            match authenticated_conn
+                                .authorize_request(&resource, permission)
+                                .await
+                            {
                                 Ok(true) => {
                                     // Process authorized request
                                     match router.route_request(request_type, request_data).await {
@@ -841,7 +898,9 @@ impl SecureQuicServer {
                                             let mut response_with_type = vec![request_type as u8];
                                             response_with_type.extend_from_slice(&response_data);
 
-                                            if let Err(e) = send.write_all(&response_with_type).await {
+                                            if let Err(e) =
+                                                send.write_all(&response_with_type).await
+                                            {
                                                 tracing::error!(
                                                     principal = %principal,
                                                     error = %e,
@@ -890,7 +949,8 @@ impl SecureQuicServer {
                         }
                     }
                     Ok::<Vec<u8>, RustMqError>(buf)
-                }.await;
+                }
+                .await;
 
                 // Return buffer to pool after processing (in both success and error paths)
                 match result {
@@ -947,7 +1007,7 @@ impl SecureQuicServer {
         let error_response = format!("Error: {}", error);
         let mut error_with_type = vec![255u8]; // Error indicator
         error_with_type.extend_from_slice(error_response.as_bytes());
-        
+
         let _ = send.write_all(&error_with_type).await;
         let _ = send.finish();
     }
@@ -955,18 +1015,18 @@ impl SecureQuicServer {
     /// Shutdown the secure server gracefully
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("Shutting down secure QUIC server");
-        
+
         // Close endpoint to stop accepting new connections
         self.endpoint.close(0u32.into(), b"shutdown");
-        
+
         // Clean up all authenticated connections
         let cleaned_connections = self.authenticated_pool.cleanup_idle_connections();
-        
+
         tracing::info!(
             cleaned_connections = cleaned_connections,
             "Secure QUIC server shutdown complete"
         );
-        
+
         Ok(())
     }
 
@@ -976,7 +1036,8 @@ impl SecureQuicServer {
 
         // Default fallback address - safe to unwrap as this is a valid constant
         const DEFAULT_ADDR: &str = "0.0.0.0:0";
-        let fallback_addr = DEFAULT_ADDR.parse()
+        let fallback_addr = DEFAULT_ADDR
+            .parse()
             .expect("DEFAULT_ADDR constant is a valid SocketAddr");
 
         SecureQuicServerStats {
@@ -1089,9 +1150,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_request_type_conversion() {
-        assert!(matches!(RequestType::try_from(1).unwrap(), RequestType::Produce));
-        assert!(matches!(RequestType::try_from(2).unwrap(), RequestType::Fetch));
-        assert!(matches!(RequestType::try_from(3).unwrap(), RequestType::Metadata));
+        assert!(matches!(
+            RequestType::try_from(1).unwrap(),
+            RequestType::Produce
+        ));
+        assert!(matches!(
+            RequestType::try_from(2).unwrap(),
+            RequestType::Fetch
+        ));
+        assert!(matches!(
+            RequestType::try_from(3).unwrap(),
+            RequestType::Metadata
+        ));
         assert!(RequestType::try_from(99).is_err());
     }
 
@@ -1137,7 +1207,8 @@ mod tests {
             Arc::new(MockProduceHandler),
             Arc::new(MockFetchHandler),
             Arc::new(MockMetadataHandler),
-        ).await;
+        )
+        .await;
 
         assert!(server.is_ok(), "SecureQuicServer creation should succeed");
     }
@@ -1174,7 +1245,9 @@ mod tests {
             Arc::new(MockProduceHandler),
             Arc::new(MockFetchHandler),
             Arc::new(MockMetadataHandler),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let stats = server.stats();
         assert_eq!(stats.pool_stats.total_connections, 0);
@@ -1201,9 +1274,13 @@ mod tests {
             &security_config,
             security_manager.certificate_manager().clone(),
             security_manager.authentication().clone(),
-        ).await;
+        )
+        .await;
 
-        assert!(server_config.is_ok(), "Server config creation should succeed");
+        assert!(
+            server_config.is_ok(),
+            "Server config creation should succeed"
+        );
     }
 
     #[tokio::test]

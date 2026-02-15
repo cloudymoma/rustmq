@@ -1,14 +1,14 @@
-use crate::{Result, storage::traits::*, config::*};
 use crate::storage::{AlignedBufferPool, BufferPool};
+use crate::{Result, config::*, storage::traits::*};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeekExt, AsyncRead, AsyncWrite};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+use tokio::fs;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 pub struct LocalObjectStorage {
     base_path: PathBuf,
@@ -21,29 +21,40 @@ impl LocalObjectStorage {
         // 4096-byte alignment for optimal I/O, 100 buffers per pool
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 100));
 
-        Ok(Self { base_path, buffer_pool })
+        Ok(Self {
+            base_path,
+            buffer_pool,
+        })
     }
 
     pub fn new_with_pool(base_path: PathBuf, buffer_pool: Arc<AlignedBufferPool>) -> Result<Self> {
-        Ok(Self { base_path, buffer_pool })
+        Ok(Self {
+            base_path,
+            buffer_pool,
+        })
     }
 
     fn key_to_path(&self, key: &str) -> Result<PathBuf> {
         // Sanitize path to prevent traversal attacks
-        let sanitized = key.chars()
+        let sanitized = key
+            .chars()
             .filter(|c| c.is_alphanumeric() || *c == '/' || *c == '-' || *c == '_' || *c == '.')
             .collect::<String>();
-        
+
         // Check for path traversal attempts
         if sanitized.contains("..") || sanitized.starts_with('/') {
-            return Err(crate::error::RustMqError::InvalidConfig("Invalid object key".to_string()));
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "Invalid object key".to_string(),
+            ));
         }
-        
+
         // Ensure key is not empty after sanitization
         if sanitized.is_empty() {
-            return Err(crate::error::RustMqError::InvalidConfig("Empty object key".to_string()));
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "Empty object key".to_string(),
+            ));
         }
-        
+
         Ok(self.base_path.join(sanitized))
     }
 }
@@ -55,11 +66,11 @@ impl ObjectStorage for LocalObjectStorage {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        
+
         let mut file = fs::File::create(&path).await?;
         file.write_all(&data).await?;
         file.sync_all().await?;
-        
+
         Ok(())
     }
 
@@ -107,7 +118,7 @@ impl ObjectStorage for LocalObjectStorage {
     async fn list(&self, prefix: &str) -> Result<Vec<String>> {
         let prefix_path = self.key_to_path(prefix)?;
         let mut results = Vec::new();
-        
+
         if prefix_path.is_dir() {
             let mut entries = fs::read_dir(&prefix_path).await?;
             while let Some(entry) = entries.next_entry().await? {
@@ -116,7 +127,7 @@ impl ObjectStorage for LocalObjectStorage {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
@@ -215,7 +226,7 @@ impl BandwidthLimiter {
 
     pub async fn acquire(&self, bytes: usize) -> Result<()> {
         use std::sync::atomic::Ordering;
-        
+
         // Try to acquire tokens without waiting first
         loop {
             let current_tokens = self.tokens.load(Ordering::SeqCst);
@@ -232,12 +243,12 @@ impl BandwidthLimiter {
             } else {
                 // Not enough tokens, refill and wait intelligently
                 self.refill_tokens().await;
-                
+
                 // Calculate wait time based on how many tokens we need
                 let needed_tokens = bytes as u64 - current_tokens;
                 let wait_ms = (needed_tokens * 1000) / self.refill_rate.max(1);
                 let wait_duration = tokio::time::Duration::from_millis(wait_ms.min(100)); // Cap at 100ms
-                
+
                 tokio::time::sleep(wait_duration).await;
             }
         }
@@ -245,7 +256,7 @@ impl BandwidthLimiter {
 
     async fn refill_tokens(&self) {
         use std::sync::atomic::Ordering;
-        
+
         let mut last_refill = self.last_refill.lock().await;
         let now = tokio::time::Instant::now();
         let elapsed = now.duration_since(*last_refill);
@@ -267,10 +278,7 @@ pub struct UploadManagerImpl {
 }
 
 impl UploadManagerImpl {
-    pub fn new(
-        storage: Arc<dyn ObjectStorage>,
-        config: ObjectStorageConfig,
-    ) -> Self {
+    pub fn new(storage: Arc<dyn ObjectStorage>, config: ObjectStorageConfig) -> Self {
         let bandwidth_limiter = Arc::new(BandwidthLimiter::new(
             100 * 1024 * 1024, // 100 MB/s capacity
             10 * 1024 * 1024,  // 10 MB/s refill rate
@@ -320,7 +328,10 @@ impl UploadManagerImpl {
             let storage = self.storage.clone();
 
             upload_futures.push(async move {
-                storage.put(&chunk_key, chunk_data).await.map(|_| (chunk_idx, chunk_key))
+                storage
+                    .put(&chunk_key, chunk_data)
+                    .await
+                    .map(|_| (chunk_idx, chunk_key))
             });
         }
 
@@ -330,7 +341,13 @@ impl UploadManagerImpl {
             match result {
                 Ok((chunk_idx, chunk_key)) => {
                     completed_chunks += 1;
-                    tracing::trace!("Chunk {} uploaded: {} ({}/{})", chunk_idx, chunk_key, completed_chunks, data.chunks(chunk_size).count());
+                    tracing::trace!(
+                        "Chunk {} uploaded: {} ({}/{})",
+                        chunk_idx,
+                        chunk_key,
+                        completed_chunks,
+                        data.chunks(chunk_size).count()
+                    );
                 }
                 Err(e) => {
                     tracing::error!("Chunk upload failed: {}", e);
@@ -374,7 +391,7 @@ impl UploadManager for UploadManagerImpl {
 
     async fn download_segment(&self, object_key: &str) -> Result<WalSegment> {
         let compressed_data = self.storage.get(object_key).await?;
-        
+
         let data = match self.config.storage_type {
             StorageType::S3 | StorageType::Gcs | StorageType::Azure => {
                 let decompressed = lz4_flex::decompress_size_prepended(&compressed_data)
@@ -392,9 +409,10 @@ impl UploadManager for UploadManagerImpl {
         }
 
         let topic = parts[1].to_string();
-        let partition = parts[2].parse::<u32>()
+        let partition = parts[2]
+            .parse::<u32>()
             .map_err(|_| crate::error::RustMqError::Storage("Invalid partition".to_string()))?;
-        
+
         let filename = parts[3];
         let offset_parts: Vec<&str> = filename.split('_').collect();
         if offset_parts.len() < 2 {
@@ -403,9 +421,12 @@ impl UploadManager for UploadManagerImpl {
             ));
         }
 
-        let start_offset = offset_parts[0].parse::<u64>()
+        let start_offset = offset_parts[0]
+            .parse::<u64>()
             .map_err(|_| crate::error::RustMqError::Storage("Invalid start offset".to_string()))?;
-        let end_offset = offset_parts[1].trim_end_matches(".seg").parse::<u64>()
+        let end_offset = offset_parts[1]
+            .trim_end_matches(".seg")
+            .parse::<u64>()
             .map_err(|_| crate::error::RustMqError::Storage("Invalid end offset".to_string()))?;
 
         Ok(WalSegment {
@@ -454,7 +475,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         limiter.acquire(100).await.unwrap(); // Should wait for refill
         let elapsed = start.elapsed();
-        
+
         assert!(elapsed >= tokio::time::Duration::from_millis(10));
     }
 
@@ -463,7 +484,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
         let config = ObjectStorageConfig {
-            storage_type: StorageType::Local { path: temp_dir.path().to_path_buf() },
+            storage_type: StorageType::Local {
+                path: temp_dir.path().to_path_buf(),
+            },
             bucket: "test".to_string(),
             region: "local".to_string(),
             endpoint: "".to_string(),
@@ -486,10 +509,16 @@ mod tests {
             },
         };
 
-        let object_key = upload_manager.upload_segment(segment.clone()).await.unwrap();
+        let object_key = upload_manager
+            .upload_segment(segment.clone())
+            .await
+            .unwrap();
         let downloaded = upload_manager.download_segment(&object_key).await.unwrap();
 
-        assert_eq!(downloaded.topic_partition.topic, segment.topic_partition.topic);
+        assert_eq!(
+            downloaded.topic_partition.topic,
+            segment.topic_partition.topic
+        );
         assert_eq!(downloaded.start_offset, segment.start_offset);
         assert_eq!(downloaded.end_offset, segment.end_offset);
     }

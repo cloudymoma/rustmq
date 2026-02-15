@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum Effect {
     /// Allow the operation
     Allow,
-    
+
     /// Deny the operation
     Deny,
 }
@@ -17,10 +17,10 @@ pub enum Effect {
 pub enum PolicyDecision {
     /// Operation is allowed
     Allow,
-    
+
     /// Operation is denied with reason
     Deny { reason: String },
-    
+
     /// No applicable policy (default deny)
     NoMatch,
 }
@@ -30,12 +30,12 @@ impl PolicyDecision {
     pub fn is_allowed(&self) -> bool {
         matches!(self, PolicyDecision::Allow)
     }
-    
+
     /// Check if the decision denies the operation
     pub fn is_denied(&self) -> bool {
         !self.is_allowed()
     }
-    
+
     /// Get the denial reason if this is a deny decision
     pub fn denial_reason(&self) -> Option<&str> {
         match self {

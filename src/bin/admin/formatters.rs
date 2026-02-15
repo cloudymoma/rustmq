@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::str::FromStr;
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,7 +23,10 @@ impl FromStr for OutputFormat {
             "json" => Ok(OutputFormat::Json),
             "yaml" => Ok(OutputFormat::Yaml),
             "csv" => Ok(OutputFormat::Csv),
-            _ => Err(format!("Invalid output format: {}. Valid formats: table, json, yaml, csv", s)),
+            _ => Err(format!(
+                "Invalid output format: {}. Valid formats: table, json, yaml, csv",
+                s
+            )),
         }
     }
 }
@@ -40,7 +43,11 @@ impl std::fmt::Display for OutputFormat {
 }
 
 /// Format output based on the specified format
-pub fn format_output<T>(data: &T, format: OutputFormat, no_color: bool) -> Result<String, Box<dyn std::error::Error>>
+pub fn format_output<T>(
+    data: &T,
+    format: OutputFormat,
+    no_color: bool,
+) -> Result<String, Box<dyn std::error::Error>>
 where
     T: Serialize,
 {
@@ -75,7 +82,9 @@ fn format_yaml_value(value: &Value, indent: usize) -> String {
             } else {
                 let items: Vec<String> = arr
                     .iter()
-                    .map(|item| format!("{}  - {}", indent_str, format_yaml_value(item, indent + 1)))
+                    .map(|item| {
+                        format!("{}  - {}", indent_str, format_yaml_value(item, indent + 1))
+                    })
                     .collect();
                 format!("\n{}", items.join("\n"))
             }
@@ -88,7 +97,12 @@ fn format_yaml_value(value: &Value, indent: usize) -> String {
                     .iter()
                     .map(|(key, val)| {
                         if matches!(val, Value::Object(_) | Value::Array(_)) {
-                            format!("{}{}: {}", indent_str, key, format_yaml_value(val, indent + 1))
+                            format!(
+                                "{}{}: {}",
+                                indent_str,
+                                key,
+                                format_yaml_value(val, indent + 1)
+                            )
                         } else {
                             format!("{}{}: {}", indent_str, key, format_yaml_value(val, indent))
                         }
@@ -106,18 +120,18 @@ fn format_yaml_value(value: &Value, indent: usize) -> String {
 
 fn format_csv<T: Serialize>(data: &T) -> Result<String, Box<dyn std::error::Error>> {
     let json_value: Value = serde_json::to_value(data)?;
-    
+
     match json_value {
         Value::Array(arr) => {
             if arr.is_empty() {
                 return Ok(String::new());
             }
-            
+
             // Extract headers from the first object
             if let Some(Value::Object(first_obj)) = arr.first() {
                 let headers: Vec<String> = first_obj.keys().cloned().collect();
                 let mut csv_lines = vec![headers.join(",")];
-                
+
                 for item in arr {
                     if let Value::Object(obj) = item {
                         let values: Vec<String> = headers
@@ -131,7 +145,7 @@ fn format_csv<T: Serialize>(data: &T) -> Result<String, Box<dyn std::error::Erro
                         csv_lines.push(values.join(","));
                     }
                 }
-                
+
                 Ok(csv_lines.join("\n"))
             } else {
                 Ok(String::new())
@@ -160,7 +174,7 @@ pub fn csv_escape_value(value: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => value.to_string(),
     };
-    
+
     if str_value.contains(',') || str_value.contains('"') || str_value.contains('\n') {
         format!("\"{}\"", str_value.replace('"', "\"\""))
     } else {
@@ -168,9 +182,12 @@ pub fn csv_escape_value(value: &Value) -> String {
     }
 }
 
-fn format_table<T: Serialize>(data: &T, no_color: bool) -> Result<String, Box<dyn std::error::Error>> {
+fn format_table<T: Serialize>(
+    data: &T,
+    no_color: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
     let json_value: Value = serde_json::to_value(data)?;
-    
+
     match json_value {
         Value::Array(arr) => format_table_array(&arr, no_color),
         Value::Object(obj) => format_table_object(&obj, no_color),
@@ -186,13 +203,11 @@ fn format_table_array(arr: &[Value], no_color: bool) -> Result<String, Box<dyn s
     // Check if all elements are objects with the same structure
     if let Some(Value::Object(first_obj)) = arr.first() {
         let headers: Vec<String> = first_obj.keys().cloned().collect();
-        
+
         // Calculate column widths
-        let mut col_widths: HashMap<String, usize> = headers
-            .iter()
-            .map(|h| (h.clone(), h.len()))
-            .collect();
-            
+        let mut col_widths: HashMap<String, usize> =
+            headers.iter().map(|h| (h.clone(), h.len())).collect();
+
         for item in arr {
             if let Value::Object(obj) = item {
                 for (key, value) in obj {
@@ -203,17 +218,21 @@ fn format_table_array(arr: &[Value], no_color: bool) -> Result<String, Box<dyn s
                 }
             }
         }
-        
+
         let mut result = Vec::new();
-        
+
         // Header row
         let header_row = headers
             .iter()
             .map(|h| format!("{:<width$}", h.to_uppercase(), width = col_widths[h]))
             .collect::<Vec<_>>()
             .join(" | ");
-        result.push(if no_color { header_row } else { format!("\x1b[1m{}\x1b[0m", header_row) });
-        
+        result.push(if no_color {
+            header_row
+        } else {
+            format!("\x1b[1m{}\x1b[0m", header_row)
+        });
+
         // Separator
         let separator = headers
             .iter()
@@ -221,14 +240,15 @@ fn format_table_array(arr: &[Value], no_color: bool) -> Result<String, Box<dyn s
             .collect::<Vec<_>>()
             .join("=+=");
         result.push(separator);
-        
+
         // Data rows
         for item in arr {
             if let Value::Object(obj) = item {
                 let row = headers
                     .iter()
                     .map(|header| {
-                        let value_str = obj.get(header)
+                        let value_str = obj
+                            .get(header)
                             .map(|v| format_table_value(v))
                             .unwrap_or_else(|| "".to_string());
                         format!("{:<width$}", value_str, width = col_widths[header])
@@ -238,7 +258,7 @@ fn format_table_array(arr: &[Value], no_color: bool) -> Result<String, Box<dyn s
                 result.push(row);
             }
         }
-        
+
         Ok(result.join("\n"))
     } else {
         // Array of non-objects, format as simple list
@@ -251,25 +271,37 @@ fn format_table_array(arr: &[Value], no_color: bool) -> Result<String, Box<dyn s
     }
 }
 
-fn format_table_object(obj: &serde_json::Map<String, Value>, no_color: bool) -> Result<String, Box<dyn std::error::Error>> {
+fn format_table_object(
+    obj: &serde_json::Map<String, Value>,
+    no_color: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
     let key_width = obj.keys().map(|k| k.len()).max().unwrap_or(0);
-    
+
     let mut result = Vec::new();
-    
+
     // Header
     let header = format!("{:<width$} | VALUE", "FIELD", width = key_width);
-    result.push(if no_color { header } else { format!("\x1b[1m{}\x1b[0m", header) });
-    
+    result.push(if no_color {
+        header
+    } else {
+        format!("\x1b[1m{}\x1b[0m", header)
+    });
+
     // Separator
     let separator = format!("{}=+={}", "=".repeat(key_width), "=".repeat(20));
     result.push(separator);
-    
+
     // Data rows
     for (key, value) in obj {
         let value_str = format_table_value(value);
-        result.push(format!("{:<width$} | {}", key, value_str, width = key_width));
+        result.push(format!(
+            "{:<width$} | {}",
+            key,
+            value_str,
+            width = key_width
+        ));
     }
-    
+
     Ok(result.join("\n"))
 }
 
@@ -288,7 +320,13 @@ fn format_table_value(value: &Value) -> String {
         }
         Value::Array(arr) => {
             if arr.len() <= 3 {
-                format!("[{}]", arr.iter().map(|v| format_table_value(v)).collect::<Vec<_>>().join(", "))
+                format!(
+                    "[{}]",
+                    arr.iter()
+                        .map(|v| format_table_value(v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             } else {
                 format!("[{} items]", arr.len())
             }
@@ -298,7 +336,11 @@ fn format_table_value(value: &Value) -> String {
 }
 
 /// Print formatted output to stdout
-pub fn print_output<T>(data: &T, format: OutputFormat, no_color: bool) -> Result<(), Box<dyn std::error::Error>>
+pub fn print_output<T>(
+    data: &T,
+    format: OutputFormat,
+    no_color: bool,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     T: Serialize,
 {
@@ -349,9 +391,12 @@ pub fn print_info(message: &str, no_color: bool) {
 
 /// Confirm destructive operation with user
 pub fn confirm_operation(operation: &str, resource: &str) -> bool {
-    print!("Are you sure you want to {} '{}'? [y/N]: ", operation, resource);
+    print!(
+        "Are you sure you want to {} '{}'? [y/N]: ",
+        operation, resource
+    );
     io::stdout().flush().unwrap();
-    
+
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_ok() {
         let input = input.trim().to_lowercase();
@@ -378,12 +423,12 @@ pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", bytes, UNITS[0])
     } else {
@@ -409,7 +454,7 @@ impl ProgressIndicator {
             no_color,
         }
     }
-    
+
     pub fn start(&self) {
         let msg = if self.no_color {
             format!("{} ...", self.message)
@@ -419,12 +464,20 @@ impl ProgressIndicator {
         print!("{}", msg);
         io::stdout().flush().unwrap();
     }
-    
+
     pub fn finish(&self, success: bool) {
         let result = if success {
-            if self.no_color { " done" } else { "\x1b[32m done\x1b[0m" }
+            if self.no_color {
+                " done"
+            } else {
+                "\x1b[32m done\x1b[0m"
+            }
         } else {
-            if self.no_color { " failed" } else { "\x1b[31m failed\x1b[0m" }
+            if self.no_color {
+                " failed"
+            } else {
+                "\x1b[31m failed\x1b[0m"
+            }
         };
         println!("{}", result);
     }

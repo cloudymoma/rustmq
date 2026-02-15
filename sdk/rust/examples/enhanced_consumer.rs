@@ -5,8 +5,8 @@ use rustmq_client::{
     error::Result,
 };
 use std::time::Duration;
-use tracing::{info, error, warn};
 use tokio::signal;
+use tracing::{error, info, warn};
 
 /// Example demonstrating the enhanced consumer features including:
 /// - Memory leak fixes (no more per-message task spawning)
@@ -85,11 +85,13 @@ async fn basic_consumption_example(consumer: &Consumer) -> Result<()> {
     for i in 0..10 {
         if let Some(consumer_message) = consumer.receive().await? {
             let message = &consumer_message.message;
-            
-            info!("Received message {}: {} from partition {}", 
-                  i, 
-                  message.payload_as_string().unwrap_or_default(),
-                  message.partition);
+
+            info!(
+                "Received message {}: {} from partition {}",
+                i,
+                message.payload_as_string().unwrap_or_default(),
+                message.partition
+            );
 
             // Simulate processing
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -115,7 +117,7 @@ async fn batch_processing_example(consumer: &Consumer) -> Result<()> {
 
     // The enhanced consumer automatically batches acknowledgments for better performance
     let mut messages = Vec::new();
-    
+
     // Collect a batch of messages
     for _ in 0..5 {
         if let Some(consumer_message) = consumer.receive().await? {
@@ -125,7 +127,7 @@ async fn batch_processing_example(consumer: &Consumer) -> Result<()> {
 
     // Process batch
     info!("Processing batch of {} messages", messages.len());
-    
+
     // Acknowledge all messages in the batch
     // The consumer will automatically batch these acknowledgments for efficiency
     for message in messages {
@@ -241,22 +243,42 @@ async fn graceful_shutdown_example(consumer: Consumer) -> Result<()> {
 #[allow(dead_code)]
 async fn print_consumer_metrics(consumer: &Consumer) {
     let metrics = consumer.metrics().await;
-    
+
     info!("Consumer Metrics:");
-    info!("  Messages received: {}", metrics.messages_received.load(std::sync::atomic::Ordering::Relaxed));
-    info!("  Messages processed: {}", metrics.messages_processed.load(std::sync::atomic::Ordering::Relaxed));
-    info!("  Messages failed: {}", metrics.messages_failed.load(std::sync::atomic::Ordering::Relaxed));
-    info!("  Bytes received: {}", metrics.bytes_received.load(std::sync::atomic::Ordering::Relaxed));
-    
+    info!(
+        "  Messages received: {}",
+        metrics
+            .messages_received
+            .load(std::sync::atomic::Ordering::Relaxed)
+    );
+    info!(
+        "  Messages processed: {}",
+        metrics
+            .messages_processed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    );
+    info!(
+        "  Messages failed: {}",
+        metrics
+            .messages_failed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    );
+    info!(
+        "  Bytes received: {}",
+        metrics
+            .bytes_received
+            .load(std::sync::atomic::Ordering::Relaxed)
+    );
+
     let lag = metrics.lag.read().await;
     info!("  Current lag: {} ms", *lag);
-    
+
     let last_receive = metrics.last_receive_time.read().await;
     if let Some(time) = *last_receive {
         let since_last = std::time::Instant::now().duration_since(time);
         info!("  Time since last receive: {:?}", since_last);
     }
-    
+
     let processing_time = metrics.processing_time_ms.read().await;
     info!("  Average processing time: {:.2} ms", *processing_time);
 }

@@ -1,6 +1,7 @@
 // Advanced log compaction and snapshot management for RustMQ OpenRaft
 // Production-ready with incremental snapshots, compression, and efficient storage
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,7 +9,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
 
 // use crate::controller::openraft_storage::{NodeId, RustMqSnapshotData, RustMqStorageConfig};
 // Temporary types until openraft_storage is fully fixed
@@ -66,7 +66,7 @@ impl Default for CompactionConfig {
         Self {
             max_log_entries: 10000,
             min_entries_to_keep: 1000,
-            compaction_interval_secs: 300, // 5 minutes
+            compaction_interval_secs: 300,        // 5 minutes
             max_snapshot_size: 100 * 1024 * 1024, // 100MB
             enable_compression: true,
             compression_level: 3,
@@ -224,7 +224,11 @@ impl LogCompactionManager {
                             loaded_count += 1;
                         }
                         Err(e) => {
-                            warn!("Failed to load snapshot metadata from {:?}: {}", entry.path(), e);
+                            warn!(
+                                "Failed to load snapshot metadata from {:?}: {}",
+                                entry.path(),
+                                e
+                            );
                         }
                     }
                 }
@@ -239,34 +243,38 @@ impl LogCompactionManager {
     async fn load_single_metadata(&self, path: &Path) -> crate::Result<SnapshotMetadata> {
         let content = tokio::fs::read_to_string(path).await?;
         let metadata: SnapshotMetadata = serde_json::from_str(&content)?;
-        
+
         // Verify snapshot integrity if enabled
         if self.config.verify_snapshots {
             self.verify_snapshot_integrity(&metadata).await?;
         }
-        
+
         Ok(metadata)
     }
 
     /// Verify snapshot file integrity
     async fn verify_snapshot_integrity(&self, metadata: &SnapshotMetadata) -> crate::Result<()> {
-        let snapshot_file = self.storage_config.data_dir
+        let snapshot_file = self
+            .storage_config
+            .data_dir
             .join("snapshots")
             .join(format!("{}.snap", metadata.snapshot_id));
 
         if !snapshot_file.exists() {
-            return Err(crate::error::RustMqError::SnapshotError(
-                format!("Snapshot file not found: {:?}", snapshot_file)
-            ));
+            return Err(crate::error::RustMqError::SnapshotError(format!(
+                "Snapshot file not found: {:?}",
+                snapshot_file
+            )));
         }
 
         let file_content = tokio::fs::read(&snapshot_file).await?;
         let computed_checksum = self.compute_checksum(&file_content);
 
         if computed_checksum != metadata.checksum {
-            return Err(crate::error::RustMqError::SnapshotError(
-                format!("Snapshot checksum mismatch for {}", metadata.snapshot_id)
-            ));
+            return Err(crate::error::RustMqError::SnapshotError(format!(
+                "Snapshot checksum mismatch for {}",
+                metadata.snapshot_id
+            )));
         }
 
         debug!("Snapshot integrity verified for {}", metadata.snapshot_id);
@@ -275,14 +283,18 @@ impl LogCompactionManager {
 
     /// Compute checksum for data
     fn compute_checksum(&self, data: &[u8]) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(data);
         format!("{:x}", hasher.finalize())
     }
 
     /// Check if compaction is needed
-    pub async fn should_compact(&self, current_log_entries: u64, last_snapshot_log_id: u64) -> bool {
+    pub async fn should_compact(
+        &self,
+        current_log_entries: u64,
+        last_snapshot_log_id: u64,
+    ) -> bool {
         // Entry-based compaction
         if current_log_entries > self.config.max_log_entries {
             return true;
@@ -312,15 +324,19 @@ impl LogCompactionManager {
     }
 
     /// Perform log compaction
-    pub async fn compact_logs(&self, current_state: &RustMqSnapshotData, last_log_id: u64) -> crate::Result<String> {
+    pub async fn compact_logs(
+        &self,
+        current_state: &RustMqSnapshotData,
+        last_log_id: u64,
+    ) -> crate::Result<String> {
         let start = Instant::now();
-        
+
         // Check if another compaction is already running
         {
             let active = self.active_compaction.lock().await;
             if active.is_some() {
                 return Err(crate::error::RustMqError::LogCompaction(
-                    "Compaction already in progress".to_string()
+                    "Compaction already in progress".to_string(),
                 ));
             }
         }
@@ -332,9 +348,11 @@ impl LogCompactionManager {
         let snapshot_id = self.generate_snapshot_id(&snapshot_type);
 
         // Create snapshot
-        let snapshot_data = self.create_snapshot(current_state, &snapshot_type, last_log_id).await?;
+        let snapshot_data = self
+            .create_snapshot(current_state, &snapshot_type, last_log_id)
+            .await?;
         let uncompressed_size = snapshot_data.len() as u64;
-        
+
         // Compress if enabled
         let compressed_data = if self.config.enable_compression {
             self.compress_data(&snapshot_data)?
@@ -343,10 +361,12 @@ impl LogCompactionManager {
         };
 
         // Save snapshot to disk
-        let snapshot_file = self.storage_config.data_dir
+        let snapshot_file = self
+            .storage_config
+            .data_dir
             .join("snapshots")
             .join(format!("{}.snap", snapshot_id));
-        
+
         tokio::fs::write(&snapshot_file, &compressed_data).await?;
 
         // Create and save metadata
@@ -397,7 +417,7 @@ impl LogCompactionManager {
     /// Determine the type of snapshot to create
     async fn determine_snapshot_type(&self, last_log_id: u64) -> SnapshotType {
         let meta_map = self.snapshot_metadata.read().await;
-        
+
         // Check if we have a recent full snapshot
         for metadata in meta_map.values() {
             if metadata.snapshot_type == SnapshotType::Full {
@@ -407,7 +427,7 @@ impl LogCompactionManager {
                 }
             }
         }
-        
+
         SnapshotType::Full
     }
 
@@ -417,7 +437,7 @@ impl LogCompactionManager {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         match snapshot_type {
             SnapshotType::Full => format!("full_{}", timestamp),
             SnapshotType::Incremental => format!("incr_{}", timestamp),
@@ -440,7 +460,8 @@ impl LogCompactionManager {
             }
             SnapshotType::Incremental => {
                 // Incremental snapshot contains only changes since last full snapshot
-                self.create_incremental_snapshot(current_state, last_log_id).await
+                self.create_incremental_snapshot(current_state, last_log_id)
+                    .await
             }
         }
     }
@@ -453,21 +474,21 @@ impl LogCompactionManager {
     ) -> crate::Result<Vec<u8>> {
         // Find the base full snapshot
         let base_snapshot = self.find_latest_full_snapshot().await;
-        
+
         if let Some(base_metadata) = base_snapshot {
             // Load base snapshot
             let base_state = self.load_snapshot_data(&base_metadata.snapshot_id).await?;
-            
+
             // Create delta
             let delta = self.compute_state_delta(&base_state, current_state);
-            
+
             // Serialize delta with metadata
             let incremental_data = IncrementalSnapshotData {
                 base_snapshot_id: base_metadata.snapshot_id.clone(),
                 last_log_id,
                 delta,
             };
-            
+
             bincode::serialize(&incremental_data).map_err(Into::into)
         } else {
             // No base snapshot found, create full snapshot instead
@@ -481,7 +502,7 @@ impl LogCompactionManager {
     /// Find the latest full snapshot
     async fn find_latest_full_snapshot(&self) -> Option<SnapshotMetadata> {
         let meta_map = self.snapshot_metadata.read().await;
-        
+
         meta_map
             .values()
             .filter(|m| m.snapshot_type == SnapshotType::Full)
@@ -491,12 +512,14 @@ impl LogCompactionManager {
 
     /// Load snapshot data from disk
     async fn load_snapshot_data(&self, snapshot_id: &str) -> crate::Result<RustMqSnapshotData> {
-        let snapshot_file = self.storage_config.data_dir
+        let snapshot_file = self
+            .storage_config
+            .data_dir
             .join("snapshots")
             .join(format!("{}.snap", snapshot_id));
 
         let compressed_data = tokio::fs::read(&snapshot_file).await?;
-        
+
         let data = if self.config.enable_compression {
             self.decompress_data(&compressed_data)?
         } else {
@@ -507,7 +530,11 @@ impl LogCompactionManager {
     }
 
     /// Compute delta between two states
-    fn compute_state_delta(&self, base: &RustMqSnapshotData, current: &RustMqSnapshotData) -> StateDelta {
+    fn compute_state_delta(
+        &self,
+        base: &RustMqSnapshotData,
+        current: &RustMqSnapshotData,
+    ) -> StateDelta {
         let mut delta = StateDelta::default();
 
         // Compute topic changes
@@ -526,9 +553,12 @@ impl LogCompactionManager {
 
         // Compute partition assignment changes
         for (tp, assignment) in &current.partition_assignments {
-            if !base.partition_assignments.contains_key(tp) 
-                || base.partition_assignments[tp] != *assignment {
-                delta.partition_changes.insert(tp.clone(), assignment.clone());
+            if !base.partition_assignments.contains_key(tp)
+                || base.partition_assignments[tp] != *assignment
+            {
+                delta
+                    .partition_changes
+                    .insert(tp.clone(), assignment.clone());
             }
         }
 
@@ -561,7 +591,9 @@ impl LogCompactionManager {
 
     /// Save snapshot metadata to disk
     async fn save_snapshot_metadata(&self, metadata: &SnapshotMetadata) -> crate::Result<()> {
-        let metadata_file = self.storage_config.data_dir
+        let metadata_file = self
+            .storage_config
+            .data_dir
             .join("snapshots")
             .join(format!("{}.meta", metadata.snapshot_id));
 
@@ -579,24 +611,28 @@ impl LogCompactionManager {
 
         if snapshots.len() > self.config.keep_snapshot_count {
             let to_remove = &snapshots[..snapshots.len() - self.config.keep_snapshot_count];
-            
+
             for metadata in to_remove {
                 info!("Cleaning up old snapshot: {}", metadata.snapshot_id);
-                
+
                 // Remove snapshot file
-                let snapshot_file = self.storage_config.data_dir
+                let snapshot_file = self
+                    .storage_config
+                    .data_dir
                     .join("snapshots")
                     .join(format!("{}.snap", metadata.snapshot_id));
-                
+
                 if snapshot_file.exists() {
                     tokio::fs::remove_file(&snapshot_file).await?;
                 }
 
                 // Remove metadata file
-                let metadata_file = self.storage_config.data_dir
+                let metadata_file = self
+                    .storage_config
+                    .data_dir
                     .join("snapshots")
                     .join(format!("{}.meta", metadata.snapshot_id));
-                
+
                 if metadata_file.exists() {
                     tokio::fs::remove_file(&metadata_file).await?;
                 }
@@ -608,14 +644,16 @@ impl LogCompactionManager {
 
     /// Compress data using zstd
     fn compress_data(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
-        zstd::encode_all(data, self.config.compression_level)
-            .map_err(|e| crate::error::RustMqError::SnapshotError(format!("Compression failed: {}", e)))
+        zstd::encode_all(data, self.config.compression_level).map_err(|e| {
+            crate::error::RustMqError::SnapshotError(format!("Compression failed: {}", e))
+        })
     }
 
     /// Decompress data using zstd
     fn decompress_data(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
-        zstd::decode_all(data)
-            .map_err(|e| crate::error::RustMqError::SnapshotError(format!("Decompression failed: {}", e)))
+        zstd::decode_all(data).map_err(|e| {
+            crate::error::RustMqError::SnapshotError(format!("Decompression failed: {}", e))
+        })
     }
 
     /// Get compaction statistics
@@ -634,23 +672,20 @@ impl LogCompactionManager {
     /// Get the latest snapshot
     pub async fn get_latest_snapshot(&self) -> Option<SnapshotMetadata> {
         let meta_map = self.snapshot_metadata.read().await;
-        meta_map
-            .values()
-            .max_by_key(|m| m.created_at)
-            .cloned()
+        meta_map.values().max_by_key(|m| m.created_at).cloned()
     }
 
     /// Start automatic compaction background task
     pub async fn start_auto_compaction(&self) -> tokio::task::JoinHandle<()> {
         let manager = Arc::new(self.clone());
         let interval = Duration::from_secs(self.config.compaction_interval_secs);
-        
+
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
-            
+
             loop {
                 interval_timer.tick().await;
-                
+
                 // This would be triggered by the main storage system
                 // For now, it's just a placeholder for the auto-compaction logic
                 debug!("Auto-compaction tick");
@@ -702,15 +737,17 @@ mod tests {
             ..Default::default()
         };
         let config = CompactionConfig::default();
-        
-        let manager = LogCompactionManager::new(config, storage_config).await.unwrap();
+
+        let manager = LogCompactionManager::new(config, storage_config)
+            .await
+            .unwrap();
         (manager, temp_dir)
     }
 
     #[tokio::test]
     async fn test_compaction_manager_creation() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_compactions, 0);
         assert_eq!(stats.snapshots_created, 0);
@@ -719,20 +756,23 @@ mod tests {
     #[tokio::test]
     async fn test_should_compact_logic() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         // Set a fake last compaction time to avoid the "never compacted before" condition
         {
             let mut stats = manager.stats.lock().await;
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             stats.last_compaction_at = Some(now - 60); // 60 seconds ago
         }
-        
+
         // Should compact when exceeding max entries
         assert!(manager.should_compact(15000, 0).await);
-        
+
         // Should not compact when below threshold (5000 - 4500 = 500 < 1000 incremental_threshold)
         assert!(!manager.should_compact(5000, 4500).await);
-        
+
         // Should compact when exceeding incremental threshold
         assert!(manager.should_compact(5000, 3000).await);
     }
@@ -740,10 +780,10 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_id_generation() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let full_id = manager.generate_snapshot_id(&SnapshotType::Full);
         let incr_id = manager.generate_snapshot_id(&SnapshotType::Incremental);
-        
+
         assert!(full_id.starts_with("full_"));
         assert!(incr_id.starts_with("incr_"));
         assert_ne!(full_id, incr_id);
@@ -752,11 +792,11 @@ mod tests {
     #[tokio::test]
     async fn test_checksum_computation() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let data = b"test data for checksum";
         let checksum1 = manager.compute_checksum(data);
         let checksum2 = manager.compute_checksum(data);
-        
+
         assert_eq!(checksum1, checksum2);
         assert_eq!(checksum1.len(), 64); // SHA256 hex string length
     }
@@ -764,12 +804,12 @@ mod tests {
     #[tokio::test]
     async fn test_compression_roundtrip() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let original_data = b"This is test data for compression testing. It should compress well due to repetition.".repeat(100);
-        
+
         let compressed = manager.compress_data(&original_data).unwrap();
         let decompressed = manager.decompress_data(&compressed).unwrap();
-        
+
         assert_eq!(original_data, decompressed);
         assert!(compressed.len() < original_data.len()); // Should be compressed
     }
@@ -777,12 +817,13 @@ mod tests {
     #[tokio::test]
     async fn test_state_delta_computation() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
+
         let mut base_state = RustMqSnapshotData::default();
         let mut current_state = RustMqSnapshotData::default();
-        
+
         // Add a topic to current state
-        current_state.topics.insert("test-topic".to_string(), 
+        current_state.topics.insert(
+            "test-topic".to_string(),
             crate::controller::service::TopicInfo {
                 name: "test-topic".to_string(),
                 partitions: 3,
@@ -793,11 +834,11 @@ mod tests {
                     compression_type: Some("lz4".to_string()),
                 },
                 created_at: chrono::Utc::now(),
-            }
+            },
         );
-        
+
         let delta = manager.compute_state_delta(&base_state, &current_state);
-        
+
         assert_eq!(delta.topic_changes.len(), 1);
         assert!(delta.topic_changes.contains_key("test-topic"));
         assert_eq!(delta.deleted_topics.len(), 0);
@@ -806,10 +847,10 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_metadata_operations() {
         let (mut manager, _temp_dir) = create_test_manager().await;
-        
-        // Disable snapshot verification for this test 
+
+        // Disable snapshot verification for this test
         manager.config.verify_snapshots = false;
-        
+
         let metadata = SnapshotMetadata {
             snapshot_id: "test_snapshot_123".to_string(),
             snapshot_type: SnapshotType::Full,
@@ -822,15 +863,22 @@ mod tests {
             topic_count: 5,
             broker_count: 3,
         };
-        
+
         // Save metadata
         manager.save_snapshot_metadata(&metadata).await.unwrap();
-        
+
         // Load metadata
-        let loaded = manager.load_single_metadata(
-            &manager.storage_config.data_dir.join("snapshots").join("test_snapshot_123.meta")
-        ).await.unwrap();
-        
+        let loaded = manager
+            .load_single_metadata(
+                &manager
+                    .storage_config
+                    .data_dir
+                    .join("snapshots")
+                    .join("test_snapshot_123.meta"),
+            )
+            .await
+            .unwrap();
+
         assert_eq!(metadata.snapshot_id, loaded.snapshot_id);
         assert_eq!(metadata.snapshot_type, loaded.snapshot_type);
         assert_eq!(metadata.last_log_id, loaded.last_log_id);

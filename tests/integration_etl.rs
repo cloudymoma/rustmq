@@ -1,9 +1,12 @@
-use rustmq::etl::processor::{EtlProcessor, MockEtlProcessor, EtlPipeline, EtlRequest, ProcessingContext, ModuleConfig, DataFormat};
+use bytes::Bytes;
 use rustmq::config::{EtlConfig, EtlInstancePoolConfig};
+use rustmq::etl::processor::{
+    DataFormat, EtlPipeline, EtlProcessor, EtlRequest, MockEtlProcessor, ModuleConfig,
+    ProcessingContext,
+};
 use rustmq::types::Record;
 use std::collections::HashMap;
-use tokio::time::{timeout, Duration};
-use bytes::Bytes;
+use tokio::time::{Duration, timeout};
 
 fn create_test_etl_config() -> EtlConfig {
     EtlConfig {
@@ -27,7 +30,7 @@ async fn test_etl_processor_creation_and_metrics() {
     let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
-    
+
     // Test initial metrics
     let metrics = processor.get_metrics();
     assert_eq!(metrics.modules_loaded, 0);
@@ -51,7 +54,10 @@ async fn test_mock_etl_processor_full_workflow() {
         enable_caching: true,
     };
 
-    let module_id = processor.load_module(vec![1, 2, 3, 4], module_config.clone()).await.unwrap();
+    let module_id = processor
+        .load_module(vec![1, 2, 3, 4], module_config.clone())
+        .await
+        .unwrap();
     assert!(!module_id.is_empty());
 
     // Test module listing
@@ -68,7 +74,10 @@ async fn test_mock_etl_processor_full_workflow() {
         chrono::Utc::now().timestamp_millis(),
     );
 
-    let result = processor.process_record(record.clone(), vec![module_id.clone()]).await.unwrap();
+    let result = processor
+        .process_record(record.clone(), vec![module_id.clone()])
+        .await
+        .unwrap();
     assert_eq!(result.original.value, record.value);
     assert_eq!(result.transformed.value, record.value); // Mock doesn't transform
     assert_eq!(result.processing_metadata.modules_applied.len(), 1);
@@ -109,7 +118,7 @@ async fn test_etl_processing_context_serialization() {
     // Test serialization/deserialization
     let serialized = serde_json::to_string(&context).unwrap();
     let deserialized: ProcessingContext = serde_json::from_str(&serialized).unwrap();
-    
+
     assert_eq!(context.topic, deserialized.topic);
     assert_eq!(context.partition, deserialized.partition);
     assert_eq!(context.offset, deserialized.offset);
@@ -129,7 +138,7 @@ async fn test_data_format_variants() {
     for format in formats {
         let serialized = serde_json::to_string(&format).unwrap();
         let deserialized: DataFormat = serde_json::from_str(&serialized).unwrap();
-        
+
         // Verify serialization round-trip works
         match (&format, &deserialized) {
             (DataFormat::Json, DataFormat::Json) => (),
@@ -141,7 +150,7 @@ async fn test_data_format_variants() {
     }
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn test_etl_request_handling() {
     let config = create_test_etl_config();
 
@@ -156,7 +165,10 @@ async fn test_etl_request_handling() {
         enable_caching: true,
     };
 
-    let module_id = processor.load_module(vec![1, 2, 3, 4], module_config).await.unwrap();
+    let module_id = processor
+        .load_module(vec![1, 2, 3, 4], module_config)
+        .await
+        .unwrap();
 
     // Create an ETL request
     let context = ProcessingContext {
@@ -182,7 +194,10 @@ async fn test_etl_request_handling() {
         request.context.timestamp,
     );
 
-    let result = processor.process_record(record, vec![module_id]).await.unwrap();
+    let result = processor
+        .process_record(record, vec![module_id])
+        .await
+        .unwrap();
     assert!(result.processing_metadata.total_execution_time_ms > 0);
 }
 
@@ -202,7 +217,10 @@ async fn test_concurrent_etl_processing() {
         enable_caching: true,
     };
 
-    let module_id = processor.load_module(vec![1, 2, 3, 4], module_config).await.unwrap();
+    let module_id = processor
+        .load_module(vec![1, 2, 3, 4], module_config)
+        .await
+        .unwrap();
 
     // Process multiple records concurrently
     let mut tasks = vec![];
@@ -216,7 +234,9 @@ async fn test_concurrent_etl_processing() {
                 vec![],
                 chrono::Utc::now().timestamp_millis(),
             );
-            processor_clone.process_record(record, vec![module_id_clone]).await
+            processor_clone
+                .process_record(record, vec![module_id_clone])
+                .await
         }));
     }
 
@@ -245,7 +265,9 @@ async fn test_etl_error_handling() {
         chrono::Utc::now().timestamp_millis(),
     );
 
-    let result = processor.process_record(record, vec!["non-existent-module".to_string()]).await;
+    let result = processor
+        .process_record(record, vec!["non-existent-module".to_string()])
+        .await;
     // Mock processor should handle this gracefully (might succeed with no transformation)
     assert!(result.is_ok());
 
@@ -279,20 +301,20 @@ async fn test_module_configuration_validation() {
     ];
 
     for (i, config) in configs.into_iter().enumerate() {
-        let module_id = processor.load_module(
-            format!("module-{}", i).into_bytes(),
-            config
-        ).await.unwrap();
-        
+        let module_id = processor
+            .load_module(format!("module-{}", i).into_bytes(), config)
+            .await
+            .unwrap();
+
         assert!(!module_id.is_empty());
-        
+
         // Verify module appears in listing
         let modules = processor.list_modules().await.unwrap();
         assert!(modules.iter().any(|m| m.id == module_id));
     }
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn test_etl_pipeline_chaining() {
     let config = create_test_etl_config();
 
@@ -307,9 +329,18 @@ async fn test_etl_pipeline_chaining() {
         enable_caching: true,
     };
 
-    let module1 = processor.load_module(b"module1".to_vec(), module_config.clone()).await.unwrap();
-    let module2 = processor.load_module(b"module2".to_vec(), module_config.clone()).await.unwrap();
-    let module3 = processor.load_module(b"module3".to_vec(), module_config).await.unwrap();
+    let module1 = processor
+        .load_module(b"module1".to_vec(), module_config.clone())
+        .await
+        .unwrap();
+    let module2 = processor
+        .load_module(b"module2".to_vec(), module_config.clone())
+        .await
+        .unwrap();
+    let module3 = processor
+        .load_module(b"module3".to_vec(), module_config)
+        .await
+        .unwrap();
 
     // Process record through multiple modules (pipeline)
     let record = Record::new(
@@ -320,11 +351,20 @@ async fn test_etl_pipeline_chaining() {
     );
 
     let modules = vec![module1, module2, module3];
-    let result = processor.process_record(record.clone(), modules.clone()).await.unwrap();
+    let result = processor
+        .process_record(record.clone(), modules.clone())
+        .await
+        .unwrap();
 
     // Verify pipeline metadata
-    assert_eq!(result.processing_metadata.modules_applied.len(), modules.len());
-    assert_eq!(result.processing_metadata.transformations_count, modules.len());
+    assert_eq!(
+        result.processing_metadata.modules_applied.len(),
+        modules.len()
+    );
+    assert_eq!(
+        result.processing_metadata.transformations_count,
+        modules.len()
+    );
     assert_eq!(result.processing_metadata.error_count, 0);
     assert!(result.processing_metadata.total_execution_time_ms > 0);
 }
@@ -335,14 +375,14 @@ async fn test_real_etl_processor_basic_functionality() {
     let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
-    
+
     // Test that processor initializes correctly
     let metrics = processor.get_metrics();
     assert_eq!(metrics.modules_loaded, 0);
-    
+
     // Test module loading with valid WASM binary would require actual WASM module
     // For now, just verify that the processor can be created and basic operations work
-    
+
     // Test execution of non-existent module (should fail gracefully)
     let context = ProcessingContext {
         topic: "test-topic".to_string(),
@@ -368,7 +408,7 @@ async fn test_etl_processor_without_wasm_feature() {
     let config = create_test_etl_config();
 
     let processor = EtlProcessor::new(config).unwrap();
-    
+
     // Test mock execution when WASM feature is disabled
     let context = ProcessingContext {
         topic: "test-topic".to_string(),
@@ -399,7 +439,7 @@ async fn test_etl_processor_memory_and_timeout_limits() {
     config.max_concurrent_executions = 1;
 
     let processor = EtlProcessor::new(config).unwrap();
-    
+
     // These limits would be tested in real WASM execution
     // For mock testing, verify that the configuration is applied
     let metrics = processor.get_metrics();

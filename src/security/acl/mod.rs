@@ -5,32 +5,29 @@
 //! for RustMQ's enterprise authorization system.
 
 pub mod manager;
-pub mod rules;
 pub mod patterns;
 pub mod policy;
-pub mod storage;
 pub mod raft;
+pub mod rules;
+pub mod storage;
 
 // Core ACL types
 pub use manager::{
-    AclManager, AclManagerTrait, Permission, AclEffect, AclCondition, ConditionOperator,
-    AclSyncPayload, GrpcNetworkHandlerAclExtension
+    AclCondition, AclEffect, AclManager, AclManagerTrait, AclSyncPayload, ConditionOperator,
+    GrpcNetworkHandlerAclExtension, Permission,
 };
-pub use rules::{AclRule, AclEntry, AclOperation, CompiledPattern};
 pub use patterns::{ResourcePattern, ResourceType};
 pub use policy::{Effect, PolicyDecision};
+pub use rules::{AclEntry, AclOperation, AclRule, CompiledPattern};
 
 // Storage types
 pub use storage::{
-    AclStorage, ObjectStorageAclStorage, AclStorageConfig, VersionedAclRule, 
-    AclRuleFilter, AclPermission, AclSnapshot, InMemoryAclStorage
+    AclPermission, AclRuleFilter, AclSnapshot, AclStorage, AclStorageConfig, InMemoryAclStorage,
+    ObjectStorageAclStorage, VersionedAclRule,
 };
 
 // Raft integration types
-pub use raft::{
-    RaftAclManager, AclRaftOperation, AclRaftResult, AclStateMachine,
-    RaftOperations
-};
+pub use raft::{AclRaftOperation, AclRaftResult, AclStateMachine, RaftAclManager, RaftOperations};
 
 // Re-export PermissionSet from auth module for backward compatibility
 pub use crate::security::auth::PermissionSet;
@@ -55,13 +52,12 @@ pub async fn create_acl_manager(
     // Create storage layer
     let storage_config = storage::AclStorageConfig::default();
     let acl_storage = std::sync::Arc::new(
-        storage::ObjectStorageAclStorage::new(object_storage, cache, storage_config).await?
+        storage::ObjectStorageAclStorage::new(object_storage, cache, storage_config).await?,
     );
 
     // Create Raft manager with dependency-injected raft operations
-    let raft_manager = std::sync::Arc::new(
-        raft::RaftAclManager::new(acl_storage, raft_ops, node_id)
-    );
+    let raft_manager =
+        std::sync::Arc::new(raft::RaftAclManager::new(acl_storage, raft_ops, node_id));
 
     // Create enhanced ACL manager
     AclManager::new(config, raft_manager, network_handler).await

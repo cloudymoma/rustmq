@@ -3,15 +3,15 @@
 //! Integrates ACL operations with RustMQ's Raft consensus mechanism to ensure
 //! consistent ACL state across the controller cluster.
 
-use super::{AclRule, AclStorage, VersionedAclRule, AclRuleFilter};
+use super::{AclRule, AclRuleFilter, AclStorage, VersionedAclRule};
 use crate::error::{Result, RustMqError};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
-use async_trait::async_trait;
 use uuid::Uuid;
-use std::collections::HashMap;
 
 // ==================== Raft Operations Trait ====================
 
@@ -79,10 +79,7 @@ pub enum AclRaftResult {
         version: u64,
     },
     /// Operation failed
-    Failure {
-        operation_id: String,
-        error: String,
-    },
+    Failure { operation_id: String, error: String },
     /// Batch operation result
     BatchResult {
         batch_id: String,
@@ -97,7 +94,11 @@ pub struct AclStateMachine {
     /// Last applied Raft index
     last_applied_index: Arc<AsyncRwLock<u64>>,
     /// Pending operations waiting for consensus
-    pending_operations: Arc<AsyncRwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<Result<AclRaftResult>>>>>,
+    pending_operations: Arc<
+        AsyncRwLock<
+            std::collections::HashMap<String, tokio::sync::oneshot::Sender<Result<AclRaftResult>>>,
+        >,
+    >,
 }
 
 impl AclStateMachine {
@@ -111,17 +112,27 @@ impl AclStateMachine {
     }
 
     /// Apply an ACL operation through the state machine
-    fn apply_operation(&self, operation: AclRaftOperation) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AclRaftResult>> + Send + '_>> {
-        Box::pin(async move {
-            self.apply_operation_inner(operation).await
-        })
+    fn apply_operation(
+        &self,
+        operation: AclRaftOperation,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AclRaftResult>> + Send + '_>>
+    {
+        Box::pin(async move { self.apply_operation_inner(operation).await })
     }
-    
+
     async fn apply_operation_inner(&self, operation: AclRaftOperation) -> Result<AclRaftResult> {
         match operation {
-            AclRaftOperation::CreateRule { rule, created_by, description } => {
+            AclRaftOperation::CreateRule {
+                rule,
+                created_by,
+                description,
+            } => {
                 let operation_id = Uuid::new_v4().to_string();
-                match self.storage.create_rule(rule, &created_by, &description).await {
+                match self
+                    .storage
+                    .create_rule(rule, &created_by, &description)
+                    .await
+                {
                     Ok(rule_id) => {
                         let version = self.storage.get_version().await?;
                         Ok(AclRaftResult::Success {
@@ -136,9 +147,18 @@ impl AclStateMachine {
                     }),
                 }
             }
-            AclRaftOperation::UpdateRule { rule_id, rule, updated_by, description } => {
+            AclRaftOperation::UpdateRule {
+                rule_id,
+                rule,
+                updated_by,
+                description,
+            } => {
                 let operation_id = Uuid::new_v4().to_string();
-                match self.storage.update_rule(&rule_id, rule, &updated_by, &description).await {
+                match self
+                    .storage
+                    .update_rule(&rule_id, rule, &updated_by, &description)
+                    .await
+                {
                     Ok(_) => {
                         let version = self.storage.get_version().await?;
                         Ok(AclRaftResult::Success {
@@ -153,9 +173,17 @@ impl AclStateMachine {
                     }),
                 }
             }
-            AclRaftOperation::DeleteRule { rule_id, deleted_by, description } => {
+            AclRaftOperation::DeleteRule {
+                rule_id,
+                deleted_by,
+                description,
+            } => {
                 let operation_id = Uuid::new_v4().to_string();
-                match self.storage.delete_rule(&rule_id, &deleted_by, &description).await {
+                match self
+                    .storage
+                    .delete_rule(&rule_id, &deleted_by, &description)
+                    .await
+                {
                     Ok(_) => {
                         let version = self.storage.get_version().await?;
                         Ok(AclRaftResult::Success {
@@ -170,14 +198,26 @@ impl AclStateMachine {
                     }),
                 }
             }
-            AclRaftOperation::BatchOperation { operations, batch_id, description: _ } => {
+            AclRaftOperation::BatchOperation {
+                operations,
+                batch_id,
+                description: _,
+            } => {
                 let mut results = Vec::new();
                 for op in operations {
                     // Handle batch operations non-recursively
                     let result = match op {
-                        AclRaftOperation::CreateRule { rule, created_by, description } => {
+                        AclRaftOperation::CreateRule {
+                            rule,
+                            created_by,
+                            description,
+                        } => {
                             let operation_id = uuid::Uuid::new_v4().to_string();
-                            match self.storage.create_rule(rule, &created_by, &description).await {
+                            match self
+                                .storage
+                                .create_rule(rule, &created_by, &description)
+                                .await
+                            {
                                 Ok(rule_id) => {
                                     let version = self.storage.get_version().await?;
                                     AclRaftResult::Success {
@@ -192,9 +232,18 @@ impl AclStateMachine {
                                 },
                             }
                         }
-                        AclRaftOperation::UpdateRule { rule_id, rule, updated_by, description } => {
+                        AclRaftOperation::UpdateRule {
+                            rule_id,
+                            rule,
+                            updated_by,
+                            description,
+                        } => {
                             let operation_id = uuid::Uuid::new_v4().to_string();
-                            match self.storage.update_rule(&rule_id, rule, &updated_by, &description).await {
+                            match self
+                                .storage
+                                .update_rule(&rule_id, rule, &updated_by, &description)
+                                .await
+                            {
                                 Ok(_) => {
                                     let version = self.storage.get_version().await?;
                                     AclRaftResult::Success {
@@ -209,9 +258,17 @@ impl AclStateMachine {
                                 },
                             }
                         }
-                        AclRaftOperation::DeleteRule { rule_id, deleted_by, description } => {
+                        AclRaftOperation::DeleteRule {
+                            rule_id,
+                            deleted_by,
+                            description,
+                        } => {
                             let operation_id = uuid::Uuid::new_v4().to_string();
-                            match self.storage.delete_rule(&rule_id, &deleted_by, &description).await {
+                            match self
+                                .storage
+                                .delete_rule(&rule_id, &deleted_by, &description)
+                                .await
+                            {
                                 Ok(_) => {
                                     let version = self.storage.get_version().await?;
                                     AclRaftResult::Success {
@@ -287,7 +344,9 @@ impl RaftAclManager {
     async fn submit_operation(&self, operation: AclRaftOperation) -> Result<AclRaftResult> {
         // Check if this node is the leader
         if !self.raft_ops.is_leader().await {
-            return Err(RustMqError::NotLeader("ACL operations must be submitted to the leader".to_string()));
+            return Err(RustMqError::NotLeader(
+                "ACL operations must be submitted to the leader".to_string(),
+            ));
         }
 
         let operation_id = Uuid::new_v4().to_string();
@@ -302,8 +361,9 @@ impl RaftAclManager {
         }
 
         // Serialize the operation for the Raft log
-        let operation_data = serde_json::to_vec(&operation)
-            .map_err(|e| RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
+        let operation_data = serde_json::to_vec(&operation).map_err(|e| {
+            RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string())))
+        })?;
 
         // Submit ACL operation to Raft log through the abstraction
         self.raft_ops.append_acl_operation(operation_data).await?;
@@ -311,7 +371,9 @@ impl RaftAclManager {
         // Wait for the operation to be applied
         match rx.await {
             Ok(result) => result,
-            Err(_) => Err(RustMqError::AclEvaluation("Operation was cancelled".to_string())),
+            Err(_) => Err(RustMqError::AclEvaluation(
+                "Operation was cancelled".to_string(),
+            )),
         }
     }
 
@@ -323,8 +385,9 @@ impl RaftAclManager {
     /// * `entry_data` - Serialized ACL operation data from Raft log
     pub async fn apply_log_entry(&self, entry_data: &[u8]) -> Result<()> {
         // Deserialize the ACL operation
-        let operation: AclRaftOperation = serde_json::from_slice(entry_data)
-            .map_err(|e| RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
+        let operation: AclRaftOperation = serde_json::from_slice(entry_data).map_err(|e| {
+            RustMqError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string())))
+        })?;
 
         // Apply the operation through the state machine
         self.state_machine.apply_operation(operation).await?;
@@ -351,8 +414,13 @@ impl RaftAclManager {
         let snapshot_data: AclSnapshotData = serde_json::from_slice(data)
             .map_err(|e| RustMqError::Config(format!("Failed to deserialize snapshot: {}", e)))?;
 
-        self.state_machine.storage.restore_snapshot(snapshot_data.snapshot).await?;
-        self.state_machine.set_last_applied_index(snapshot_data.last_applied_index).await;
+        self.state_machine
+            .storage
+            .restore_snapshot(snapshot_data.snapshot)
+            .await?;
+        self.state_machine
+            .set_last_applied_index(snapshot_data.last_applied_index)
+            .await;
 
         Ok(())
     }
@@ -366,7 +434,12 @@ impl RaftAclManager {
 /// ACL manager interface that routes operations through Raft
 #[async_trait]
 impl super::manager::AclManagerTrait for RaftAclManager {
-    async fn create_acl_rule(&self, rule: AclRule, created_by: &str, description: &str) -> Result<String> {
+    async fn create_acl_rule(
+        &self,
+        rule: AclRule,
+        created_by: &str,
+        description: &str,
+    ) -> Result<String> {
         let operation = AclRaftOperation::CreateRule {
             rule,
             created_by: created_by.to_string(),
@@ -374,13 +447,24 @@ impl super::manager::AclManagerTrait for RaftAclManager {
         };
 
         match self.submit_operation(operation).await? {
-            AclRaftResult::Success { rule_id: Some(rule_id), .. } => Ok(rule_id),
+            AclRaftResult::Success {
+                rule_id: Some(rule_id),
+                ..
+            } => Ok(rule_id),
             AclRaftResult::Failure { error, .. } => Err(RustMqError::AclEvaluation(error)),
-            _ => Err(RustMqError::AclEvaluation("Unexpected result type".to_string())),
+            _ => Err(RustMqError::AclEvaluation(
+                "Unexpected result type".to_string(),
+            )),
         }
     }
 
-    async fn update_acl_rule(&self, rule_id: &str, rule: AclRule, updated_by: &str, description: &str) -> Result<()> {
+    async fn update_acl_rule(
+        &self,
+        rule_id: &str,
+        rule: AclRule,
+        updated_by: &str,
+        description: &str,
+    ) -> Result<()> {
         let operation = AclRaftOperation::UpdateRule {
             rule_id: rule_id.to_string(),
             rule,
@@ -391,11 +475,18 @@ impl super::manager::AclManagerTrait for RaftAclManager {
         match self.submit_operation(operation).await? {
             AclRaftResult::Success { .. } => Ok(()),
             AclRaftResult::Failure { error, .. } => Err(RustMqError::AclEvaluation(error)),
-            _ => Err(RustMqError::AclEvaluation("Unexpected result type".to_string())),
+            _ => Err(RustMqError::AclEvaluation(
+                "Unexpected result type".to_string(),
+            )),
         }
     }
 
-    async fn delete_acl_rule(&self, rule_id: &str, deleted_by: &str, description: &str) -> Result<()> {
+    async fn delete_acl_rule(
+        &self,
+        rule_id: &str,
+        deleted_by: &str,
+        description: &str,
+    ) -> Result<()> {
         let operation = AclRaftOperation::DeleteRule {
             rule_id: rule_id.to_string(),
             deleted_by: deleted_by.to_string(),
@@ -405,7 +496,9 @@ impl super::manager::AclManagerTrait for RaftAclManager {
         match self.submit_operation(operation).await? {
             AclRaftResult::Success { .. } => Ok(()),
             AclRaftResult::Failure { error, .. } => Err(RustMqError::AclEvaluation(error)),
-            _ => Err(RustMqError::AclEvaluation("Unexpected result type".to_string())),
+            _ => Err(RustMqError::AclEvaluation(
+                "Unexpected result type".to_string(),
+            )),
         }
     }
 
@@ -421,7 +514,10 @@ impl super::manager::AclManagerTrait for RaftAclManager {
 
     async fn get_rules_for_principal(&self, principal: &str) -> Result<Vec<VersionedAclRule>> {
         // Read operations can go directly to storage
-        self.state_machine.storage.get_rules_for_principal(principal).await
+        self.state_machine
+            .storage
+            .get_rules_for_principal(principal)
+            .await
     }
 
     async fn get_acl_version(&self) -> Result<u64> {
@@ -429,7 +525,10 @@ impl super::manager::AclManagerTrait for RaftAclManager {
     }
 
     async fn get_acls_since_version(&self, version: u64) -> Result<Vec<VersionedAclRule>> {
-        self.state_machine.storage.get_rules_since_version(version).await
+        self.state_machine
+            .storage
+            .get_rules_since_version(version)
+            .await
     }
 
     async fn validate_integrity(&self) -> Result<bool> {
@@ -447,8 +546,8 @@ struct AclSnapshotData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::acl::{ResourcePattern, ResourceType, Effect, AclOperation};
-    use crate::security::acl::storage::{ObjectStorageAclStorage, AclStorageConfig};
+    use crate::security::acl::storage::{AclStorageConfig, ObjectStorageAclStorage};
+    use crate::security::acl::{AclOperation, Effect, ResourcePattern, ResourceType};
     use crate::storage::cache::LruCache;
     use crate::storage::object_storage::LocalObjectStorage;
     use tempfile::TempDir;
@@ -486,11 +585,16 @@ mod tests {
 
     async fn create_test_raft_manager() -> (RaftAclManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let object_storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
+        let object_storage =
+            Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
         let cache = Arc::new(LruCache::new(1024 * 1024));
         let config = AclStorageConfig::default();
 
-        let storage = Arc::new(ObjectStorageAclStorage::new(object_storage, cache, config).await.unwrap());
+        let storage = Arc::new(
+            ObjectStorageAclStorage::new(object_storage, cache, config)
+                .await
+                .unwrap(),
+        );
 
         // Mock raft operations
         let raft_ops = Arc::new(MockRaftOperations::new());
@@ -522,7 +626,11 @@ mod tests {
         let deserialized: AclRaftOperation = serde_json::from_slice(&serialized).unwrap();
 
         match deserialized {
-            AclRaftOperation::CreateRule { rule: deserialized_rule, created_by, description } => {
+            AclRaftOperation::CreateRule {
+                rule: deserialized_rule,
+                created_by,
+                description,
+            } => {
                 assert_eq!(deserialized_rule.id, rule.id);
                 assert_eq!(created_by, "admin");
                 assert_eq!(description, "Test rule");
@@ -584,7 +692,11 @@ mod tests {
         let deserialized: AclRaftOperation = serde_json::from_slice(&serialized).unwrap();
 
         match deserialized {
-            AclRaftOperation::BatchOperation { operations, batch_id, .. } => {
+            AclRaftOperation::BatchOperation {
+                operations,
+                batch_id,
+                ..
+            } => {
                 assert_eq!(operations.len(), 2);
                 assert_eq!(batch_id, "batch-1");
             }
@@ -596,7 +708,7 @@ mod tests {
     async fn test_snapshot_serialization() {
         use crate::security::acl::storage::AclSnapshot;
         use std::collections::HashMap;
-        
+
         let snapshot = AclSnapshot {
             rules: vec![],
             version_counter: 42,

@@ -1,13 +1,13 @@
 //! Basic tests for ControllerRaftService gRPC implementation
-//! 
+//!
 //! This test suite focuses on testing the gRPC interface and protobuf conversion
 //! for the 8 RPC methods of the ControllerRaftService.
 
-use rustmq::proto::{controller, common};
+use async_trait::async_trait;
+use chrono::Utc;
+use rustmq::proto::{common, controller};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use chrono::Utc;
-use async_trait::async_trait;
 
 // Import the gRPC service trait
 use controller::controller_raft_service_server::ControllerRaftService;
@@ -29,12 +29,14 @@ impl MockControllerRaftService {
     }
 
     pub fn with_term(self, term: u64) -> Self {
-        self.current_term.store(term, std::sync::atomic::Ordering::SeqCst);
+        self.current_term
+            .store(term, std::sync::atomic::Ordering::SeqCst);
         self
     }
 
     pub fn as_leader(self) -> Self {
-        self.is_leader.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.is_leader
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self
     }
 }
@@ -46,19 +48,20 @@ impl ControllerRaftService for MockControllerRaftService {
         request: Request<controller::RequestVoteRequest>,
     ) -> std::result::Result<Response<controller::RequestVoteResponse>, Status> {
         let req = request.into_inner();
-        
+
         // Basic validation
         if req.candidate_id.is_empty() {
             return Err(Status::invalid_argument("Empty candidate ID"));
         }
-        
+
         let current_term = self.current_term.load(std::sync::atomic::Ordering::SeqCst);
         let vote_granted = req.term >= current_term && req.candidate_id != self.node_id;
-        
+
         if req.term > current_term {
-            self.current_term.store(req.term, std::sync::atomic::Ordering::SeqCst);
+            self.current_term
+                .store(req.term, std::sync::atomic::Ordering::SeqCst);
         }
-        
+
         let response = controller::RequestVoteResponse {
             term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
             vote_granted,
@@ -83,16 +86,21 @@ impl ControllerRaftService for MockControllerRaftService {
         let req = request.into_inner();
         let current_term = self.current_term.load(std::sync::atomic::Ordering::SeqCst);
         let success = req.term >= current_term;
-        
+
         if req.term > current_term {
-            self.current_term.store(req.term, std::sync::atomic::Ordering::SeqCst);
+            self.current_term
+                .store(req.term, std::sync::atomic::Ordering::SeqCst);
         }
-        
+
         let response = controller::AppendEntriesResponse {
             term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
             success,
             follower_id: self.node_id.clone(),
-            match_index: if success { req.prev_log_index + req.entries.len() as u64 } else { 0 },
+            match_index: if success {
+                req.prev_log_index + req.entries.len() as u64
+            } else {
+                0
+            },
             metadata: None,
             conflict_index: if success { 0 } else { req.prev_log_index },
             conflict_term: 0,
@@ -114,7 +122,7 @@ impl ControllerRaftService for MockControllerRaftService {
         request: Request<controller::InstallSnapshotRequest>,
     ) -> std::result::Result<Response<controller::InstallSnapshotResponse>, Status> {
         let req = request.into_inner();
-        
+
         let response = controller::InstallSnapshotResponse {
             term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
             success: true,
@@ -142,7 +150,7 @@ impl ControllerRaftService for MockControllerRaftService {
         let req = request.into_inner();
         let current_term = self.current_term.load(std::sync::atomic::Ordering::SeqCst);
         let vote_granted = req.term >= current_term;
-        
+
         let response = controller::PreVoteResponse {
             term: current_term,
             vote_granted,
@@ -163,12 +171,20 @@ impl ControllerRaftService for MockControllerRaftService {
         let req = request.into_inner();
         let is_leader = self.is_leader.load(std::sync::atomic::Ordering::SeqCst);
         let success = is_leader && req.current_leader_id == self.node_id;
-        
+
         let response = controller::TransferLeadershipResponse {
             success,
             error_code: if success { 0 } else { 1 },
-            error_message: if success { String::new() } else { "Not leader".to_string() },
-            new_leader_id: if success { req.target_leader_id } else { String::new() },
+            error_message: if success {
+                String::new()
+            } else {
+                "Not leader".to_string()
+            },
+            new_leader_id: if success {
+                req.target_leader_id
+            } else {
+                String::new()
+            },
             new_term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
             metadata: None,
             transfer_time_ms: if success { 100 } else { 0 },
@@ -278,11 +294,15 @@ impl ControllerRaftService for MockControllerRaftService {
     ) -> std::result::Result<Response<controller::AddNodeResponse>, Status> {
         let req = request.into_inner();
         let success = !req.node_id.is_empty() && req.node_address.contains(':');
-        
+
         let response = controller::AddNodeResponse {
             success,
             error_code: if success { 0 } else { 1 },
-            error_message: if success { String::new() } else { "Invalid node info".to_string() },
+            error_message: if success {
+                String::new()
+            } else {
+                "Invalid node info".to_string()
+            },
             metadata: None,
             configuration_index: if success { 1 } else { 0 },
             configuration_term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
@@ -297,11 +317,15 @@ impl ControllerRaftService for MockControllerRaftService {
     ) -> std::result::Result<Response<controller::RemoveNodeResponse>, Status> {
         let req = request.into_inner();
         let success = !req.node_id.is_empty() && req.node_id != self.node_id;
-        
+
         let response = controller::RemoveNodeResponse {
             success,
             error_code: if success { 0 } else { 1 },
-            error_message: if success { String::new() } else { "Cannot remove self".to_string() },
+            error_message: if success {
+                String::new()
+            } else {
+                "Cannot remove self".to_string()
+            },
             metadata: None,
             configuration_index: if success { 1 } else { 0 },
             configuration_term: self.current_term.load(std::sync::atomic::Ordering::SeqCst),
@@ -326,7 +350,7 @@ fn current_timestamp() -> prost_types::Timestamp {
 #[tokio::test]
 async fn test_request_vote_success() {
     let service = create_test_service();
-    
+
     let proto_request = controller::RequestVoteRequest {
         term: 2,
         candidate_id: "candidate-1".to_string(),
@@ -343,7 +367,7 @@ async fn test_request_vote_success() {
 
     let result = service.request_vote(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert!(response.term >= 2);
     assert_eq!(response.voter_id, "test-controller-1");
@@ -353,7 +377,7 @@ async fn test_request_vote_success() {
 #[tokio::test]
 async fn test_request_vote_stale_term() {
     let service = create_test_service().with_term(5);
-    
+
     let stale_request = controller::RequestVoteRequest {
         term: 3, // Lower than current term (5)
         candidate_id: "stale-candidate".to_string(),
@@ -370,7 +394,7 @@ async fn test_request_vote_stale_term() {
 
     let result = service.request_vote(Request::new(stale_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert!(!response.vote_granted); // Should reject stale term
     assert_eq!(response.term, 5); // Should return current term
@@ -379,7 +403,7 @@ async fn test_request_vote_stale_term() {
 #[tokio::test]
 async fn test_request_vote_validation() {
     let service = create_test_service();
-    
+
     // Test empty candidate ID
     let invalid_request = controller::RequestVoteRequest {
         term: 1,
@@ -403,7 +427,7 @@ async fn test_request_vote_validation() {
 #[tokio::test]
 async fn test_pre_vote_optimization() {
     let service = create_test_service();
-    
+
     let proto_request = controller::PreVoteRequest {
         term: 2,
         candidate_id: "candidate-1".to_string(),
@@ -419,7 +443,7 @@ async fn test_pre_vote_optimization() {
 
     let result = service.pre_vote(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert_eq!(response.voter_id, "test-controller-1");
     assert!(response.vote_granted);
@@ -428,7 +452,7 @@ async fn test_pre_vote_optimization() {
 #[tokio::test]
 async fn test_append_entries_heartbeat() {
     let service = create_test_service();
-    
+
     let proto_request = controller::AppendEntriesRequest {
         term: 1,
         leader_id: "leader-1".to_string(),
@@ -448,7 +472,7 @@ async fn test_append_entries_heartbeat() {
 
     let result = service.append_entries(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert_eq!(response.follower_id, "test-controller-1");
     assert!(response.success);
@@ -457,7 +481,7 @@ async fn test_append_entries_heartbeat() {
 #[tokio::test]
 async fn test_append_entries_with_logs() {
     let service = create_test_service();
-    
+
     let log_entry = controller::LogEntry {
         index: 1,
         term: 1,
@@ -491,7 +515,7 @@ async fn test_append_entries_with_logs() {
 
     let result = service.append_entries(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert_eq!(response.follower_id, "test-controller-1");
     assert!(response.success);
@@ -501,9 +525,9 @@ async fn test_append_entries_with_logs() {
 #[tokio::test]
 async fn test_install_snapshot_success() {
     let service = create_test_service();
-    
+
     let snapshot_data = b"snapshot-data-chunk-1";
-    
+
     let proto_request = controller::InstallSnapshotRequest {
         term: 1,
         leader_id: "leader-1".to_string(),
@@ -526,7 +550,7 @@ async fn test_install_snapshot_success() {
 
     let result = service.install_snapshot(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert_eq!(response.follower_id, "test-controller-1");
     assert_eq!(response.bytes_received, snapshot_data.len() as u64);
@@ -536,7 +560,7 @@ async fn test_install_snapshot_success() {
 #[tokio::test]
 async fn test_transfer_leadership_success() {
     let service = create_test_service().as_leader();
-    
+
     let proto_request = controller::TransferLeadershipRequest {
         current_leader_id: "test-controller-1".to_string(),
         target_leader_id: "new-leader".to_string(),
@@ -546,9 +570,11 @@ async fn test_transfer_leadership_success() {
         force_transfer: false,
     };
 
-    let result = service.transfer_leadership(Request::new(proto_request)).await;
+    let result = service
+        .transfer_leadership(Request::new(proto_request))
+        .await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert!(response.success);
     assert_eq!(response.new_leader_id, "new-leader");
@@ -557,7 +583,7 @@ async fn test_transfer_leadership_success() {
 #[tokio::test]
 async fn test_get_cluster_info_basic() {
     let service = create_test_service();
-    
+
     let proto_request = controller::GetClusterInfoRequest {
         metadata: None,
         include_node_details: false,
@@ -567,7 +593,7 @@ async fn test_get_cluster_info_basic() {
 
     let result = service.get_cluster_info(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert_eq!(response.cluster_id, "test-cluster");
     assert_eq!(response.nodes.len(), 1);
@@ -576,7 +602,7 @@ async fn test_get_cluster_info_basic() {
 #[tokio::test]
 async fn test_add_node_success() {
     let service = create_test_service();
-    
+
     let proto_request = controller::AddNodeRequest {
         node_id: "new-node-1".to_string(),
         node_address: "192.168.1.100:9090".to_string(),
@@ -589,7 +615,7 @@ async fn test_add_node_success() {
 
     let result = service.add_node(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert!(response.success);
     assert_eq!(response.configuration_index, 1);
@@ -598,7 +624,7 @@ async fn test_add_node_success() {
 #[tokio::test]
 async fn test_remove_node_success() {
     let service = create_test_service();
-    
+
     let proto_request = controller::RemoveNodeRequest {
         node_id: "node-to-remove".to_string(),
         force_removal: false,
@@ -608,7 +634,7 @@ async fn test_remove_node_success() {
 
     let result = service.remove_node(Request::new(proto_request)).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap().into_inner();
     assert!(response.success);
     assert_eq!(response.configuration_index, 1);
@@ -637,7 +663,9 @@ async fn test_concurrent_vote_requests() {
                 election_timeout_ms: 5000,
             };
 
-            service_clone.request_vote(Request::new(proto_request)).await
+            service_clone
+                .request_vote(Request::new(proto_request))
+                .await
         });
         handles.push(handle);
     }

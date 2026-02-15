@@ -1,3 +1,4 @@
+use crate::error::{Result, RustMqError};
 /// Private Key Encryption Module
 ///
 /// This module provides **mandatory** secure encryption and decryption of private keys using
@@ -37,15 +38,13 @@
 /// 3. **Password Storage**: Use environment variables or secrets manager, NEVER hardcode
 /// 4. **Password Loss**: Encrypted keys are irrecoverable if password is lost
 /// 5. **Mandatory Encryption**: ALL private keys must be encrypted - no plaintext keys allowed
-
 use aes_gcm::{
+    Aes256Gcm, Key, Nonce,
     aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce, Key
 };
 use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
 use rand::RngCore;
-use crate::error::{Result, RustMqError};
+use sha2::Sha256;
 use tracing::warn;
 
 /// Header identifying encrypted private key format (24 bytes with null terminator)
@@ -99,7 +98,9 @@ const MIN_ENCRYPTED_SIZE: usize = HEADER.len() + SALT_SIZE + NONCE_SIZE + TAG_SI
 pub fn encrypt_private_key(plaintext_pem: &str, password: &str) -> Result<Vec<u8>> {
     // Validate password
     if password.is_empty() {
-        return Err(RustMqError::Config("Password cannot be empty for key encryption".to_string()));
+        return Err(RustMqError::Config(
+            "Password cannot be empty for key encryption".to_string(),
+        ));
     }
 
     if password.len() < 8 {
@@ -118,7 +119,7 @@ pub fn encrypt_private_key(plaintext_pem: &str, password: &str) -> Result<Vec<u8
         password.as_bytes(),
         &salt,
         PBKDF2_ITERATIONS,
-        &mut derived_key
+        &mut derived_key,
     );
 
     // Generate random nonce (unique per encryption - CRITICAL for GCM security)
@@ -128,15 +129,14 @@ pub fn encrypt_private_key(plaintext_pem: &str, password: &str) -> Result<Vec<u8
 
     // Encrypt using AES-256-GCM
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
-    let ciphertext = cipher.encrypt(nonce, plaintext_pem.as_bytes())
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext_pem.as_bytes())
         .map_err(|e| RustMqError::Encryption {
-            reason: format!("AES-GCM encryption failed: {}", e)
+            reason: format!("AES-GCM encryption failed: {}", e),
         })?;
 
     // Construct encrypted blob: header + salt + nonce + ciphertext (includes auth tag)
-    let mut result = Vec::with_capacity(
-        HEADER.len() + SALT_SIZE + NONCE_SIZE + ciphertext.len()
-    );
+    let mut result = Vec::with_capacity(HEADER.len() + SALT_SIZE + NONCE_SIZE + ciphertext.len());
     result.extend_from_slice(HEADER);
     result.extend_from_slice(&salt);
     result.extend_from_slice(&nonce_bytes);
@@ -188,7 +188,7 @@ pub fn decrypt_private_key(encrypted_data: &[u8], password: &str) -> Result<Stri
                 "Encrypted data too short: {} bytes (minimum {} bytes required)",
                 encrypted_data.len(),
                 MIN_ENCRYPTED_SIZE
-            )
+            ),
         });
     }
 
@@ -196,7 +196,8 @@ pub fn decrypt_private_key(encrypted_data: &[u8], password: &str) -> Result<Stri
     let (header, rest) = encrypted_data.split_at(HEADER.len());
     if header != HEADER {
         return Err(RustMqError::Encryption {
-            reason: "Invalid encryption header - data may be corrupted or in plaintext format".to_string()
+            reason: "Invalid encryption header - data may be corrupted or in plaintext format"
+                .to_string(),
         });
     }
 
@@ -213,21 +214,24 @@ pub fn decrypt_private_key(encrypted_data: &[u8], password: &str) -> Result<Stri
         password.as_bytes(),
         salt,
         PBKDF2_ITERATIONS,
-        &mut derived_key
+        &mut derived_key,
     );
 
     // Decrypt using AES-256-GCM
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&derived_key));
-    let plaintext = cipher.decrypt(nonce, ciphertext)
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
         .map_err(|e| RustMqError::Encryption {
-            reason: format!("Decryption failed - wrong password or corrupted data: {}", e)
+            reason: format!(
+                "Decryption failed - wrong password or corrupted data: {}",
+                e
+            ),
         })?;
 
     // Convert to UTF-8 string
-    String::from_utf8(plaintext)
-        .map_err(|e| RustMqError::Encryption {
-            reason: format!("Decrypted data is not valid UTF-8: {}", e)
-        })
+    String::from_utf8(plaintext).map_err(|e| RustMqError::Encryption {
+        reason: format!("Decrypted data is not valid UTF-8: {}", e),
+    })
 }
 
 /// Verify that data is properly encrypted
@@ -253,13 +257,16 @@ pub fn decrypt_private_key(encrypted_data: &[u8], password: &str) -> Result<Stri
 pub fn verify_encrypted(data: &[u8]) -> Result<()> {
     if data.len() < HEADER.len() {
         return Err(RustMqError::Encryption {
-            reason: "Private key is not encrypted - all keys must be encrypted for security".to_string()
+            reason: "Private key is not encrypted - all keys must be encrypted for security"
+                .to_string(),
         });
     }
 
     if &data[..HEADER.len()] != HEADER {
         return Err(RustMqError::Encryption {
-            reason: "Private key is not encrypted - plaintext keys are not allowed for security reasons".to_string()
+            reason:
+                "Private key is not encrypted - plaintext keys are not allowed for security reasons"
+                    .to_string(),
         });
     }
 
@@ -285,22 +292,22 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
-        let encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         assert!(encrypted.len() > MIN_ENCRYPTED_SIZE);
         assert!(is_encrypted(&encrypted));
 
-        let decrypted = decrypt_private_key(&encrypted, TEST_PASSWORD)
-            .expect("Decryption should succeed");
+        let decrypted =
+            decrypt_private_key(&encrypted, TEST_PASSWORD).expect("Decryption should succeed");
 
         assert_eq!(decrypted, TEST_PEM);
     }
 
     #[test]
     fn test_wrong_password_fails() {
-        let encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         let result = decrypt_private_key(&encrypted, "wrong-password");
         assert!(result.is_err());
@@ -314,8 +321,8 @@ mod tests {
 
     #[test]
     fn test_tampered_data_fails() {
-        let mut encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let mut encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Tamper with ciphertext (beyond header+salt+nonce)
         let tamper_pos = HEADER.len() + SALT_SIZE + NONCE_SIZE + 10;
@@ -327,8 +334,8 @@ mod tests {
 
     #[test]
     fn test_truncated_data_fails() {
-        let encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         let truncated = &encrypted[..MIN_ENCRYPTED_SIZE - 1];
         let result = decrypt_private_key(truncated, TEST_PASSWORD);
@@ -343,8 +350,8 @@ mod tests {
 
     #[test]
     fn test_invalid_header_fails() {
-        let mut encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let mut encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Corrupt header
         encrypted[0] = b'X';
@@ -380,10 +387,10 @@ mod tests {
 
     #[test]
     fn test_unique_salts_for_same_key() {
-        let encrypted1 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
-        let encrypted2 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted1 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
+        let encrypted2 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Extract salts (after header)
         let salt1 = &encrypted1[HEADER.len()..HEADER.len() + SALT_SIZE];
@@ -395,10 +402,10 @@ mod tests {
 
     #[test]
     fn test_unique_nonces_for_same_key() {
-        let encrypted1 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
-        let encrypted2 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted1 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
+        let encrypted2 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Extract nonces (after header + salt)
         let nonce_offset = HEADER.len() + SALT_SIZE;
@@ -406,24 +413,30 @@ mod tests {
         let nonce2 = &encrypted2[nonce_offset..nonce_offset + NONCE_SIZE];
 
         // Nonces must be different
-        assert_ne!(nonce1, nonce2, "Nonces should be unique for each encryption");
+        assert_ne!(
+            nonce1, nonce2,
+            "Nonces should be unique for each encryption"
+        );
     }
 
     #[test]
     fn test_different_ciphertext_for_same_plaintext() {
-        let encrypted1 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
-        let encrypted2 = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted1 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
+        let encrypted2 =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Entire encrypted blobs should be different (probabilistic encryption)
-        assert_ne!(encrypted1, encrypted2, "Encrypted data should be different each time");
+        assert_ne!(
+            encrypted1, encrypted2,
+            "Encrypted data should be different each time"
+        );
     }
 
     #[test]
     fn test_is_encrypted_detection() {
-        let encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         assert!(is_encrypted(&encrypted));
         assert!(!is_encrypted(TEST_PEM.as_bytes()));
@@ -433,8 +446,8 @@ mod tests {
 
     #[test]
     fn test_encryption_overhead() {
-        let encrypted = encrypt_private_key(TEST_PEM, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(TEST_PEM, TEST_PASSWORD).expect("Encryption should succeed");
 
         // Overhead = header + salt + nonce + tag
         let expected_min_overhead = HEADER.len() + SALT_SIZE + NONCE_SIZE + TAG_SIZE;
@@ -446,14 +459,15 @@ mod tests {
     #[test]
     fn test_large_key_encryption() {
         // Test with larger key data
-        let large_pem = "-----BEGIN PRIVATE KEY-----\n".to_string() +
-            &"A".repeat(10000) + "\n-----END PRIVATE KEY-----";
+        let large_pem = "-----BEGIN PRIVATE KEY-----\n".to_string()
+            + &"A".repeat(10000)
+            + "\n-----END PRIVATE KEY-----";
 
-        let encrypted = encrypt_private_key(&large_pem, TEST_PASSWORD)
-            .expect("Encryption should succeed");
+        let encrypted =
+            encrypt_private_key(&large_pem, TEST_PASSWORD).expect("Encryption should succeed");
 
-        let decrypted = decrypt_private_key(&encrypted, TEST_PASSWORD)
-            .expect("Decryption should succeed");
+        let decrypted =
+            decrypt_private_key(&encrypted, TEST_PASSWORD).expect("Decryption should succeed");
 
         assert_eq!(decrypted, large_pem);
     }

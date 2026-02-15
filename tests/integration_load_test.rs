@@ -6,14 +6,17 @@
 //! cargo test --release --test integration_load_test -- --ignored
 //! ```
 
-use rustmq::{Config, broker::Broker};
-use rustmq::config::{BrokerConfig, NetworkConfig, WalConfig, ObjectStorageConfig, StorageType, CacheConfig, ReplicationConfig};
 use rustmq::broker::core::PartitionMetadata;
+use rustmq::config::{
+    BrokerConfig, CacheConfig, NetworkConfig, ObjectStorageConfig, ReplicationConfig, StorageType,
+    WalConfig,
+};
 use rustmq::types::TopicPartition;
+use rustmq::{Config, broker::Broker};
 use rustmq_client::*;
-use tempfile::TempDir;
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use tempfile::TempDir;
 use tokio::time::{Duration, Instant};
 
 // Use atomic counter to generate unique ports for each test
@@ -46,7 +49,7 @@ async fn create_test_broker_config(temp_dir: &TempDir, quic_port: u16, rpc_port:
         wal: WalConfig {
             path: wal_path,
             capacity_bytes: 100 * 1024 * 1024, // 100 MB for load test
-            fsync_on_write: false, // Disable fsync for performance test
+            fsync_on_write: false,             // Disable fsync for performance test
             segment_size_bytes: 10 * 1024 * 1024, // 10 MB segments
             buffer_size: 8192,
             upload_interval_ms: 60_000,
@@ -93,7 +96,8 @@ async fn test_10k_messages_per_second_for_one_minute() {
     let config = create_test_broker_config(&temp_dir, quic_port, rpc_port).await;
 
     // Start broker
-    let mut broker = Broker::from_config(config).await
+    let mut broker = Broker::from_config(config)
+        .await
         .expect("Failed to create broker");
 
     broker.start().await.expect("Failed to start broker");
@@ -114,7 +118,10 @@ async fn test_10k_messages_per_second_for_one_minute() {
         replicas: vec![format!("load-test-broker-{}", quic_port)],
         in_sync_replicas: vec![format!("load-test-broker-{}", quic_port)],
     };
-    broker.core().add_partition(topic_partition, partition_metadata).await
+    broker
+        .core()
+        .add_partition(topic_partition, partition_metadata)
+        .await
         .expect("Failed to create partition for load test");
     println!("✅ Created topic partition: load-test-topic:0");
 
@@ -233,7 +240,8 @@ async fn test_10k_messages_per_second_for_one_minute() {
                 let current_sent = sent.load(Ordering::Relaxed);
                 let current_failed = failed.load(Ordering::Relaxed);
                 if second % 10 == 0 || second == TEST_DURATION_SECS - 1 {
-                    println!("📊 Progress [{:2}s]: Sent: {}, Failed: {}, Rate: ~{} msg/s",
+                    println!(
+                        "📊 Progress [{:2}s]: Sent: {}, Failed: {}, Rate: ~{} msg/s",
                         second + 1,
                         current_sent,
                         current_failed,
@@ -282,12 +290,21 @@ async fn test_10k_messages_per_second_for_one_minute() {
     // Print results
     println!("\n📈 Load Test Results:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Target:          {:8} messages", TARGET_MSG_PER_SEC * TEST_DURATION_SECS as usize);
+    println!(
+        "Target:          {:8} messages",
+        TARGET_MSG_PER_SEC * TEST_DURATION_SECS as usize
+    );
     println!("Sent:            {:8} messages", final_sent);
     println!("Failed:          {:8} messages", final_failed);
-    println!("Success Rate:    {:8.2}%", (final_sent as f64 / (final_sent + final_failed) as f64) * 100.0);
+    println!(
+        "Success Rate:    {:8.2}%",
+        (final_sent as f64 / (final_sent + final_failed) as f64) * 100.0
+    );
     println!("Duration:        {:8.2}s", test_duration.as_secs_f64());
-    println!("Actual Rate:     {:8.0} msg/s", final_sent as f64 / test_duration.as_secs_f64());
+    println!(
+        "Actual Rate:     {:8.0} msg/s",
+        final_sent as f64 / test_duration.as_secs_f64()
+    );
     println!("\nLatency Percentiles:");
     println!("P50:             {:8.2} ms", p50 as f64 / 1000.0);
     println!("P95:             {:8.2} ms", p95 as f64 / 1000.0);
@@ -307,9 +324,13 @@ async fn test_10k_messages_per_second_for_one_minute() {
 
     // Success rate should be very high (allow for some network errors)
     let success_rate = (final_sent as f64 / (final_sent + final_failed) as f64) * 100.0;
-    assert!(success_rate > 95.0,
+    assert!(
+        success_rate > 95.0,
         "Success rate too low: {:.2}% (sent: {}, failed: {})",
-        success_rate, final_sent, final_failed);
+        success_rate,
+        final_sent,
+        final_failed
+    );
 
     // Should achieve at least 80% of target throughput
     let actual_rate = final_sent as f64 / test_duration.as_secs_f64();
@@ -317,12 +338,16 @@ async fn test_10k_messages_per_second_for_one_minute() {
     let throughput_ratio = (actual_rate / target_rate) * 100.0;
 
     println!("\n✅ Load test completed successfully!");
-    println!("   Throughput: {:.1}% of target ({:.0} msg/s actual vs {} msg/s target)",
-        throughput_ratio, actual_rate, TARGET_MSG_PER_SEC);
+    println!(
+        "   Throughput: {:.1}% of target ({:.0} msg/s actual vs {} msg/s target)",
+        throughput_ratio, actual_rate, TARGET_MSG_PER_SEC
+    );
 
     // Note: This assertion is informational - real throughput depends on hardware
     if throughput_ratio < 80.0 {
-        println!("⚠️  Warning: Throughput below 80% of target. This may be due to test hardware limitations.");
+        println!(
+            "⚠️  Warning: Throughput below 80% of target. This may be due to test hardware limitations."
+        );
     }
 }
 
@@ -355,7 +380,10 @@ async fn test_burst_load_handling() {
         replicas: vec![format!("load-test-broker-{}", quic_port)],
         in_sync_replicas: vec![format!("load-test-broker-{}", quic_port)],
     };
-    broker.core().add_partition(topic_partition, partition_metadata).await
+    broker
+        .core()
+        .add_partition(topic_partition, partition_metadata)
+        .await
         .expect("Failed to create partition for burst test");
     println!("✅ Created topic partition: burst-test-topic:0");
 
@@ -410,7 +438,10 @@ async fn test_burst_load_handling() {
     println!("📊 Burst Results:");
     println!("   Sent: {} messages", burst_sent);
     println!("   Duration: {:?}", burst_duration);
-    println!("   Rate: {:.0} msg/s", burst_sent as f64 / burst_duration.as_secs_f64());
+    println!(
+        "   Rate: {:.0} msg/s",
+        burst_sent as f64 / burst_duration.as_secs_f64()
+    );
 
     producer.close().await.unwrap();
     client.close().await.unwrap();
@@ -418,8 +449,10 @@ async fn test_burst_load_handling() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     broker.stop().await.unwrap();
 
-    assert!(burst_sent > BURST_SIZE * 90 / 100,
-        "Should handle at least 90% of burst messages");
+    assert!(
+        burst_sent > BURST_SIZE * 90 / 100,
+        "Should handle at least 90% of burst messages"
+    );
 
     println!("✅ Burst load test passed!");
 }

@@ -1,14 +1,13 @@
+use bytes::Bytes;
 /// Benchmarks for FuturesUnordered optimizations
 ///
 /// Measures the performance improvements of FuturesUnordered over join_all
 /// for both replication and object storage operations.
-
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rustmq::config::{ObjectStorageConfig, StorageType};
 use rustmq::storage::object_storage::{LocalObjectStorage, UploadManagerImpl};
 use rustmq::storage::traits::{ObjectStorage, UploadManager, WalSegment};
-use rustmq::config::{ObjectStorageConfig, StorageType};
 use rustmq::types::TopicPartition;
-use bytes::Bytes;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -30,9 +29,12 @@ fn bench_multipart_upload_parallel(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("parallel", label), &size, |b, &size| {
             b.to_async(Runtime::new().unwrap()).iter(|| async {
                 let temp_dir = TempDir::new().unwrap();
-                let storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
+                let storage =
+                    Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
                 let config = ObjectStorageConfig {
-                    storage_type: StorageType::Local { path: temp_dir.path().to_path_buf() },
+                    storage_type: StorageType::Local {
+                        path: temp_dir.path().to_path_buf(),
+                    },
                     bucket: "test".to_string(),
                     region: "local".to_string(),
                     endpoint: "".to_string(),
@@ -101,7 +103,8 @@ fn bench_concurrent_chunk_uploads(c: &mut Criterion) {
                     use futures::stream::{FuturesUnordered, StreamExt};
 
                     let temp_dir = TempDir::new().unwrap();
-                    let storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
+                    let storage =
+                        Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
 
                     let chunk_size = 5 * 1024 * 1024;
                     let mut futures = FuturesUnordered::new();
@@ -111,9 +114,7 @@ fn bench_concurrent_chunk_uploads(c: &mut Criterion) {
                         let data = Bytes::from(vec![0u8; chunk_size]);
                         let storage_clone = storage.clone();
 
-                        futures.push(async move {
-                            storage_clone.put(&key, data).await
-                        });
+                        futures.push(async move { storage_clone.put(&key, data).await });
                     }
 
                     while let Some(result) = futures.next().await {
@@ -127,7 +128,8 @@ fn bench_concurrent_chunk_uploads(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches,
+criterion_group!(
+    benches,
     bench_multipart_upload_parallel,
     bench_replication_latencies,
     bench_concurrent_chunk_uploads

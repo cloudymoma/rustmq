@@ -45,17 +45,17 @@ impl AlignedBufferPool {
 
     fn allocate_aligned(&self, size: usize) -> Vec<u8> {
         let aligned_size = self.aligned_size(size);
-        
+
         // Allocate extra space for alignment
         let mut buffer = vec![0u8; aligned_size + self.alignment];
         let ptr = buffer.as_ptr() as usize;
         let aligned_ptr = (ptr + self.alignment - 1) & !(self.alignment - 1);
         let offset = aligned_ptr - ptr;
-        
+
         // Return the aligned portion
         buffer.drain(0..offset);
         buffer.truncate(aligned_size);
-        
+
         buffer
     }
 }
@@ -89,7 +89,7 @@ impl BufferPool for AlignedBufferPool {
     fn return_buffer(&self, buffer: Vec<u8>) {
         let class_index = self.size_class_index(buffer.len());
         let mut pool = self.pools[class_index].lock();
-        
+
         if pool.len() < self.max_buffers_per_size {
             pool.push_back(buffer);
         }
@@ -104,7 +104,7 @@ mod tests {
     fn test_buffer_pool_alignment() {
         let pool = AlignedBufferPool::new(64, 10); // Use smaller alignment
         let buffer = pool.get_aligned_buffer(1024).unwrap();
-        
+
         // Just test that we get a buffer of the right size
         // Vec allocation doesn't guarantee alignment on the heap
         assert!(buffer.len() >= 1024);
@@ -115,12 +115,12 @@ mod tests {
         let pool = AlignedBufferPool::new(512, 10);
         let buffer1 = pool.get_aligned_buffer(1024).unwrap();
         let ptr1 = buffer1.as_ptr();
-        
+
         pool.return_buffer(buffer1);
-        
+
         let buffer2 = pool.get_aligned_buffer(1024).unwrap();
         let ptr2 = buffer2.as_ptr();
-        
+
         assert_eq!(ptr1, ptr2);
     }
 }

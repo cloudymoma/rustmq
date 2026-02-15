@@ -1,16 +1,16 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::HashSet;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto");
-    
+
     // Configure paths
     let proto_root = Path::new("proto");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let src_proto_dir = Path::new("src/proto");
-    
+
     // Ensure the proto output directory exists in src
     if !src_proto_dir.exists() {
         fs::create_dir_all(src_proto_dir)?;
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Discover all .proto files recursively
     let proto_files = discover_proto_files(proto_root)?;
-    
+
     if proto_files.is_empty() {
         println!("cargo:warning=No .proto files found in proto/ directory");
         return Ok(());
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configure tonic-build with comprehensive settings
     let mut config = tonic_build::configure();
-    
+
     // Enable both client and server code generation for maximum flexibility
     config = config
         .build_server(true)
@@ -41,11 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_transport(true)
         .out_dir(src_proto_dir)
         .emit_rerun_if_changed(false); // We handle this manually above
-    
+
     // ZERO-COPY OPTIMIZATION: Enable bytes::Bytes for all protobuf bytes fields
     // This eliminates allocations during deserialization by using reference-counted buffers
     config = config.bytes([".rustmq", "."]); // Apply to all RustMQ messages
-    
+
     // Configure file descriptor sets for reflection support
     config = config
         .file_descriptor_set_path(out_dir.join("proto_descriptor.bin"))
@@ -55,10 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compile the protobuf files
     println!("Compiling protobuf files...");
-    config.compile(
-        &proto_files,
-        &[proto_root]
-    ).map_err(|e| {
+    config.compile(&proto_files, &[proto_root]).map_err(|e| {
         eprintln!("Failed to compile protobuf files: {}", e);
         eprintln!("Proto files: {:?}", proto_files);
         eprintln!("Include paths: {:?}", &[proto_root]);
@@ -70,10 +67,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Successfully compiled {} protobuf files", proto_files.len());
     println!("Generated Rust code in: {}", src_proto_dir.display());
-    
+
     // Verify generated files exist
     verify_generated_files(src_proto_dir)?;
-    
+
     Ok(())
 }
 
@@ -82,19 +79,19 @@ fn discover_proto_files(proto_root: &Path) -> Result<Vec<PathBuf>, Box<dyn std::
     let mut proto_files = Vec::new();
     let mut visited_dirs = HashSet::new();
     discover_proto_files_recursive(proto_root, &mut proto_files, &mut visited_dirs)?;
-    
+
     // Sort for deterministic build order
     proto_files.sort();
     Ok(proto_files)
 }
 
 fn discover_proto_files_recursive(
-    dir: &Path, 
+    dir: &Path,
     proto_files: &mut Vec<PathBuf>,
-    visited_dirs: &mut HashSet<PathBuf>
+    visited_dirs: &mut HashSet<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let canonical_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    
+
     // Prevent infinite loops from symlinks
     if visited_dirs.contains(&canonical_dir) {
         return Ok(());
@@ -102,14 +99,17 @@ fn discover_proto_files_recursive(
     visited_dirs.insert(canonical_dir);
 
     if !dir.exists() {
-        println!("cargo:warning=Proto directory does not exist: {}", dir.display());
+        println!(
+            "cargo:warning=Proto directory does not exist: {}",
+            dir.display()
+        );
         return Ok(());
     }
 
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_dir() {
             // Recursively search subdirectories
             discover_proto_files_recursive(&path, proto_files, visited_dirs)?;
@@ -117,7 +117,7 @@ fn discover_proto_files_recursive(
             proto_files.push(path);
         }
     }
-    
+
     Ok(())
 }
 
@@ -125,11 +125,11 @@ fn discover_proto_files_recursive(
 fn generate_module_structure(
     src_proto_dir: &Path,
     proto_files: &[PathBuf],
-    _proto_root: &Path
+    _proto_root: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Extract package names from proto files to understand the structure
     let mut packages = HashSet::new();
-    
+
     for proto_file in proto_files {
         if let Some(package) = extract_package_from_proto_file(proto_file)? {
             packages.insert(package);
@@ -143,14 +143,16 @@ fn generate_module_structure(
 
     // Generate the main mod.rs file that re-exports all modules
     generate_main_module_file(src_proto_dir, &packages)?;
-    
+
     Ok(())
 }
 
 /// Extract the package name from a .proto file
-fn extract_package_from_proto_file(proto_file: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+fn extract_package_from_proto_file(
+    proto_file: &Path,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(proto_file)?;
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("package ") && trimmed.ends_with(';') {
@@ -162,36 +164,36 @@ fn extract_package_from_proto_file(proto_file: &Path) -> Result<Option<String>, 
             return Ok(Some(package));
         }
     }
-    
+
     Ok(None)
 }
 
 /// Generate a package-specific module file
 fn generate_package_module(
     src_proto_dir: &Path,
-    package: &str
+    package: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Convert package name to module path (e.g., "rustmq.common" -> "common")
     let module_name = package.split('.').next_back().unwrap_or(package);
     let module_file = src_proto_dir.join(format!("{}.rs", module_name));
-    
+
     // tonic-build will generate the actual module content
     // We just need to ensure the file exists for proper module resolution
     if !module_file.exists() {
         println!("Creating module file: {}", module_file.display());
     }
-    
+
     Ok(())
 }
 
 /// Generate the main mod.rs file that re-exports all generated modules
 fn generate_main_module_file(
     src_proto_dir: &Path,
-    packages: &HashSet<String>
+    packages: &HashSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mod_file = src_proto_dir.join("mod.rs");
     let mut content = String::new();
-    
+
     content.push_str("//! Generated protobuf modules for RustMQ\n");
     content.push_str("//! \n");
     content.push_str("//! This module contains all generated protobuf types and services.\n");
@@ -204,7 +206,13 @@ fn generate_main_module_file(
     // Extract unique module names and sort them for deterministic output
     let mut module_names: Vec<String> = packages
         .iter()
-        .map(|package| package.split('.').next_back().unwrap_or(package).to_string())
+        .map(|package| {
+            package
+                .split('.')
+                .next_back()
+                .unwrap_or(package)
+                .to_string()
+        })
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -217,36 +225,44 @@ fn generate_main_module_file(
         content.push_str(&format!("pub mod {};\n", module_name));
         content.push('\n');
     }
-    
+
     content.push_str("// Re-export commonly used types for convenience\n");
     content.push_str("pub use common::*;\n");
     content.push('\n');
-    
+
     // Generate convenience re-exports
     content.push_str("// Service re-exports\n");
     if module_names.contains(&"broker".to_string()) {
-        content.push_str("pub use broker::broker_replication_service_server::BrokerReplicationServiceServer;\n");
-        content.push_str("pub use broker::broker_replication_service_client::BrokerReplicationServiceClient;\n");
+        content.push_str(
+            "pub use broker::broker_replication_service_server::BrokerReplicationServiceServer;\n",
+        );
+        content.push_str(
+            "pub use broker::broker_replication_service_client::BrokerReplicationServiceClient;\n",
+        );
     }
     if module_names.contains(&"controller".to_string()) {
-        content.push_str("pub use controller::controller_raft_service_server::ControllerRaftServiceServer;\n");
-        content.push_str("pub use controller::controller_raft_service_client::ControllerRaftServiceClient;\n");
+        content.push_str(
+            "pub use controller::controller_raft_service_server::ControllerRaftServiceServer;\n",
+        );
+        content.push_str(
+            "pub use controller::controller_raft_service_client::ControllerRaftServiceClient;\n",
+        );
     }
 
     fs::write(&mod_file, content)?;
     println!("Generated main module file: {}", mod_file.display());
-    
+
     Ok(())
 }
 
 /// Verify that the expected generated files exist
 fn verify_generated_files(src_proto_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mod_file = src_proto_dir.join("mod.rs");
-    
+
     if !mod_file.exists() {
         return Err(format!("Expected generated file not found: {}", mod_file.display()).into());
     }
-    
+
     println!("✅ Build verification successful - all expected files generated");
     Ok(())
 }

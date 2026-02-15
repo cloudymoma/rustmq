@@ -1,15 +1,15 @@
 use rustmq::broker::core::*;
-use rustmq::storage::traits::*;
-use rustmq::replication::traits::*;
-use rustmq::network::traits::*;
-use rustmq::types::*;
 use rustmq::error::Result;
+use rustmq::network::traits::*;
+use rustmq::replication::traits::*;
+use rustmq::storage::traits::*;
+use rustmq::types::*;
 
+use async_trait::async_trait;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use async_trait::async_trait;
-use smallvec::SmallVec;
 
 // Mock implementations for integration testing
 struct MockWal {
@@ -140,11 +140,17 @@ impl ObjectStorage for MockObjectStorage {
         Ok(storage.contains_key(key))
     }
 
-    async fn open_read_stream(&self, key: &str) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+    async fn open_read_stream(
+        &self,
+        key: &str,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
         Err(rustmq::error::RustMqError::NotFound("mock".to_string()))
     }
 
-    async fn open_write_stream(&self, key: &str) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
+    async fn open_write_stream(
+        &self,
+        key: &str,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
         Err(rustmq::error::RustMqError::NotFound("mock".to_string()))
     }
 }
@@ -190,7 +196,7 @@ impl Cache for MockCache {
         let cache = self.cache.read().await;
         Ok(cache.len())
     }
-    
+
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -253,7 +259,15 @@ impl NetworkHandler for MockNetworkHandler {
     }
 }
 
-async fn create_test_broker() -> Arc<MessageBrokerCore<MockWal, MockObjectStorage, MockCache, MockReplicationManager, MockNetworkHandler>> {
+async fn create_test_broker() -> Arc<
+    MessageBrokerCore<
+        MockWal,
+        MockObjectStorage,
+        MockCache,
+        MockReplicationManager,
+        MockNetworkHandler,
+    >,
+> {
     let wal = Arc::new(MockWal::new());
     let object_storage = Arc::new(MockObjectStorage::new());
     let cache = Arc::new(MockCache::new());
@@ -293,7 +307,10 @@ async fn test_end_to_end_produce_consume_workflow() {
     let mut consumer = core.create_consumer("test-group".to_string());
 
     // Subscribe consumer to topics
-    consumer.subscribe(vec!["test-topic".to_string()]).await.unwrap();
+    consumer
+        .subscribe(vec!["test-topic".to_string()])
+        .await
+        .unwrap();
 
     // Produce a single record
     let produce_record = ProduceRecord {
@@ -303,7 +320,10 @@ async fn test_end_to_end_produce_consume_workflow() {
         value: b"Hello, World!".to_vec(),
         headers: {
             let mut h = SmallVec::new();
-            h.push(Header::new("content-type".to_string(), b"text/plain".to_vec()));
+            h.push(Header::new(
+                "content-type".to_string(),
+                b"text/plain".to_vec(),
+            ));
             h
         },
         acks: AcknowledgmentLevel::Leader,
@@ -323,7 +343,10 @@ async fn test_end_to_end_produce_consume_workflow() {
     assert_eq!(consumed_record.offset, 0);
     assert_eq!(consumed_record.topic_partition.topic, "test-topic");
     assert_eq!(consumed_record.topic_partition.partition, 0);
-    assert_eq!(consumed_record.key.as_ref().map(|k| k.as_ref()), Some(b"key1".as_ref()));
+    assert_eq!(
+        consumed_record.key.as_ref().map(|k| k.as_ref()),
+        Some(b"key1".as_ref())
+    );
     assert_eq!(consumed_record.value.as_ref(), b"Hello, World!");
     assert_eq!(consumed_record.headers.len(), 1);
     assert_eq!(consumed_record.headers[0].key, "content-type");
@@ -381,7 +404,10 @@ async fn test_consumer_seek_functionality() {
     let producer = core.create_producer();
     let mut consumer = core.create_consumer("test-group".to_string());
 
-    consumer.subscribe(vec!["test-topic".to_string()]).await.unwrap();
+    consumer
+        .subscribe(vec!["test-topic".to_string()])
+        .await
+        .unwrap();
 
     // Produce multiple records
     for i in 0..5 {
@@ -416,7 +442,10 @@ async fn test_offset_commit_functionality() {
     let core = create_test_broker().await;
     let mut consumer = core.create_consumer("test-group".to_string());
 
-    consumer.subscribe(vec!["test-topic".to_string()]).await.unwrap();
+    consumer
+        .subscribe(vec!["test-topic".to_string()])
+        .await
+        .unwrap();
 
     let topic_partition = TopicPartition {
         topic: "test-topic".to_string(),
@@ -446,10 +475,16 @@ async fn test_multiple_consumers_same_group() {
     let mut consumer2 = core.create_consumer("test-group".to_string());
 
     // Both consumers subscribe to the same topic
-    consumer1.subscribe(vec!["test-topic".to_string()]).await.unwrap();
-    consumer2.subscribe(vec!["test-topic".to_string()]).await.unwrap();
+    consumer1
+        .subscribe(vec!["test-topic".to_string()])
+        .await
+        .unwrap();
+    consumer2
+        .subscribe(vec!["test-topic".to_string()])
+        .await
+        .unwrap();
 
-    // Both should be able to poll (though in a real system, 
+    // Both should be able to poll (though in a real system,
     // partition assignment would coordinate between them)
     let _records1 = consumer1.poll(100).await.unwrap();
     let _records2 = consumer2.poll(100).await.unwrap();
@@ -522,7 +557,9 @@ async fn test_partition_metadata_operations() {
     };
 
     // Add partition
-    core.add_partition(topic_partition.clone(), metadata.clone()).await.unwrap();
+    core.add_partition(topic_partition.clone(), metadata.clone())
+        .await
+        .unwrap();
 
     // Get partition metadata
     let retrieved_metadata = core.get_partition_metadata(&topic_partition).await.unwrap();

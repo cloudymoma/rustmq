@@ -5,14 +5,13 @@
 //! principal extraction, and request-level authorization.
 
 use crate::{
-    error::RustMqError,
-    security::{
-        AuthContext, AuthorizationManager, Permission,
-        SecurityMetrics,
-    },
-    security::auth::authorization::ConnectionAclCache,
     Result,
+    error::RustMqError,
+    security::auth::authorization::ConnectionAclCache,
+    security::{AuthContext, AuthorizationManager, Permission, SecurityMetrics},
 };
+use dashmap::DashMap;
+use parking_lot::RwLock;
 use quinn::Connection;
 use rustls_pki_types::CertificateDer;
 use std::{
@@ -21,8 +20,6 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use dashmap::DashMap;
-use parking_lot::RwLock;
 
 /// Authenticated connection wrapper that provides security context and authorization
 /// for all requests made over a QUIC connection with mTLS authentication
@@ -107,21 +104,23 @@ impl AuthenticatedConnection {
     }
 
     /// Check if the authenticated principal has permission for a specific resource and operation
-    pub async fn authorize_request(
-        &self,
-        resource: &str,
-        operation: Permission,
-    ) -> Result<bool> {
+    pub async fn authorize_request(&self, resource: &str, operation: Permission) -> Result<bool> {
         self.update_activity();
-        
+
         let start = std::time::Instant::now();
-        
-        let result = self.authz_manager
-            .check_permission(&self.acl_cache, &self.auth_context.principal, resource, operation)
+
+        let result = self
+            .authz_manager
+            .check_permission(
+                &self.acl_cache,
+                &self.auth_context.principal,
+                resource,
+                operation,
+            )
             .await;
 
         let duration = start.elapsed();
-        
+
         match &result {
             Ok(authorized) => {
                 if *authorized {
@@ -154,12 +153,16 @@ impl AuthenticatedConnection {
     /// Get connection statistics including network and security metrics
     pub fn connection_stats(&self) -> AuthenticatedConnectionStats {
         let security_metadata = self.security_metadata();
-        
+
         AuthenticatedConnectionStats {
             remote_address: self.connection.remote_address(),
-            connection_age: security_metadata.connection_established_at.elapsed()
+            connection_age: security_metadata
+                .connection_established_at
+                .elapsed()
                 .unwrap_or(Duration::from_secs(0)),
-            last_activity_age: security_metadata.last_activity.elapsed()
+            last_activity_age: security_metadata
+                .last_activity
+                .elapsed()
                 .unwrap_or(Duration::from_secs(0)),
             security_metadata,
         }
@@ -173,7 +176,7 @@ impl AuthenticatedConnection {
     /// Close the connection gracefully
     pub fn close(&self, error_code: u32, reason: &[u8]) {
         self.connection.close(error_code.into(), reason);
-        
+
         tracing::info!(
             principal = %self.auth_context.principal,
             remote_addr = %self.remote_address(),
@@ -232,12 +235,16 @@ impl ConnectionSecurityMetadata {
 
     /// Get connection age
     pub fn connection_age(&self) -> Duration {
-        self.connection_established_at.elapsed().unwrap_or(Duration::from_secs(0))
+        self.connection_established_at
+            .elapsed()
+            .unwrap_or(Duration::from_secs(0))
     }
 
     /// Get time since last activity
     pub fn idle_time(&self) -> Duration {
-        self.last_activity.elapsed().unwrap_or(Duration::from_secs(0))
+        self.last_activity
+            .elapsed()
+            .unwrap_or(Duration::from_secs(0))
     }
 }
 
@@ -290,7 +297,11 @@ pub struct AuthenticatedConnectionPool {
 
 impl AuthenticatedConnectionPool {
     /// Create a new authenticated connection pool
-    pub fn new(max_connections: usize, max_idle_time: Duration, metrics: Arc<SecurityMetrics>) -> Self {
+    pub fn new(
+        max_connections: usize,
+        max_idle_time: Duration,
+        metrics: Arc<SecurityMetrics>,
+    ) -> Self {
         Self {
             connections: Arc::new(DashMap::new()),
             lru_tracker: RwLock::new(VecDeque::new()),
@@ -301,7 +312,11 @@ impl AuthenticatedConnectionPool {
     }
 
     /// Add an authenticated connection to the pool
-    pub fn add_connection(&self, connection_id: String, connection: AuthenticatedConnection) -> Result<()> {
+    pub fn add_connection(
+        &self,
+        connection_id: String,
+        connection: AuthenticatedConnection,
+    ) -> Result<()> {
         // Check if we need to evict before adding
         if self.connections.len() >= self.max_connections {
             // Try to find and evict an idle connection first
@@ -315,7 +330,8 @@ impl AuthenticatedConnectionPool {
             while let Some((old_id, last_activity)) = lru.pop_front() {
                 // Check if connection still exists
                 if let Some(conn_entry) = self.connections.get(&old_id) {
-                    let idle_time = now.duration_since(last_activity)
+                    let idle_time = now
+                        .duration_since(last_activity)
                         .unwrap_or(Duration::from_secs(0));
 
                     if idle_time > self.max_idle_time {
@@ -339,7 +355,7 @@ impl AuthenticatedConnectionPool {
 
             if !evicted && self.connections.len() >= self.max_connections {
                 return Err(RustMqError::Network(
-                    "Connection pool full and no idle connections to evict".to_string()
+                    "Connection pool full and no idle connections to evict".to_string(),
                 ));
             }
         }
@@ -363,7 +379,9 @@ impl AuthenticatedConnectionPool {
     /// Get an authenticated connection from the pool
     pub fn get_connection(&self, connection_id: &str) -> Option<AuthenticatedConnection> {
         // Lock-free read from DashMap
-        self.connections.get(connection_id).map(|entry| entry.clone())
+        self.connections
+            .get(connection_id)
+            .map(|entry| entry.clone())
     }
 
     /// Remove a connection from the pool
@@ -397,7 +415,8 @@ impl AuthenticatedConnectionPool {
             let connection_id = entry.key();
             let connection = entry.value();
             let metadata = connection.security_metadata();
-            let idle_time = now.duration_since(metadata.last_activity)
+            let idle_time = now
+                .duration_since(metadata.last_activity)
                 .unwrap_or(Duration::from_secs(0));
 
             if idle_time > self.max_idle_time {
@@ -431,7 +450,9 @@ impl AuthenticatedConnectionPool {
     /// Get connection pool statistics
     pub fn stats(&self) -> ConnectionPoolStats {
         let total_connections = self.connections.len();
-        let healthy_connections = self.connections.iter()
+        let healthy_connections = self
+            .connections
+            .iter()
             .filter(|entry| entry.value().connection_stats().is_healthy())
             .count();
 
@@ -460,8 +481,8 @@ impl ConnectionPoolStats {
         // 1. Not at capacity
         // 2. Most connections are healthy
         self.total_connections < self.max_connections
-            && (self.total_connections == 0 || 
-                (self.healthy_connections as f32 / self.total_connections as f32) > 0.8)
+            && (self.total_connections == 0
+                || (self.healthy_connections as f32 / self.total_connections as f32) > 0.8)
     }
 }
 
@@ -495,15 +516,11 @@ mod tests {
             certificate_management: Default::default(),
             audit: Default::default(),
         };
-        
+
         let security_manager = SecurityManager::new(config).await.unwrap();
         let metrics = security_manager.metrics().clone();
-        
-        let pool = AuthenticatedConnectionPool::new(
-            2,
-            Duration::from_secs(60),
-            metrics,
-        );
+
+        let pool = AuthenticatedConnectionPool::new(2, Duration::from_secs(60), metrics);
 
         let stats = pool.stats();
         assert_eq!(stats.total_connections, 0);
@@ -519,10 +536,10 @@ mod tests {
             certificate_management: Default::default(),
             audit: Default::default(),
         };
-        
+
         let security_manager = SecurityManager::new(config).await.unwrap();
         let metrics = security_manager.metrics().clone();
-        
+
         let pool = AuthenticatedConnectionPool::new(
             10,
             Duration::from_millis(1), // Very short idle time for testing

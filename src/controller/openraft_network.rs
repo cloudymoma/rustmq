@@ -2,30 +2,34 @@
 // Production-ready with gRPC, connection pooling, and performance metrics
 
 use async_trait::async_trait;
+use bincode;
+use bytes::Bytes;
 use openraft::{
+    LogId, Snapshot, Vote,
+    error::NetworkError,
     network::{RPCOption, RaftNetwork, RaftNetworkFactory},
-    error::NetworkError, Snapshot, Vote, LogId,
     raft::{
-        AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse,
-        VoteRequest, VoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
-use tonic::{transport::{Channel, Endpoint}, Request, Response, Status};
+use tonic::{
+    Request, Response, Status,
+    transport::{Channel, Endpoint},
+};
 use tracing::{debug, error, info, warn};
-use bincode;
-use bytes::Bytes;
 
-use crate::controller::openraft_storage::{NodeId, RustMqTypeConfig, RustMqNode, RustMqSnapshotData};
+use crate::controller::openraft_storage::{
+    NodeId, RustMqNode, RustMqSnapshotData, RustMqTypeConfig,
+};
 use crate::proto::controller::{
+    SimpleAppendEntriesRequest, SimpleAppendEntriesResponse, SimpleInstallSnapshotRequest,
+    SimpleInstallSnapshotResponse, SimpleVoteRequest, SimpleVoteResponse,
     raft_service_client::RaftServiceClient,
-    SimpleVoteRequest, SimpleVoteResponse,
-    SimpleAppendEntriesRequest, SimpleAppendEntriesResponse,
-    SimpleInstallSnapshotRequest, SimpleInstallSnapshotResponse,
 };
 
 /// Network configuration for RustMQ Raft cluster
@@ -95,7 +99,7 @@ impl ConnectionPool {
     pub async fn remove_node(&self, node_id: &NodeId) {
         let mut addresses = self.node_addresses.write().await;
         addresses.remove(node_id);
-        
+
         let mut connections = self.connections.write().await;
         connections.remove(node_id);
     }
@@ -120,14 +124,26 @@ impl ConnectionPool {
     /// Create a new connection to a node
     async fn create_connection(&self, node_id: &NodeId) -> Result<Channel, NetworkError> {
         let addresses = self.node_addresses.read().await;
-        let address = addresses.get(node_id)
-            .ok_or_else(|| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::NotFound, format!("No address found for node {}", node_id))))?;
+        let address = addresses.get(node_id).ok_or_else(|| {
+            NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No address found for node {}", node_id),
+            ))
+        })?;
 
-        debug!("Creating new gRPC connection to node {} at {}", node_id, address);
+        debug!(
+            "Creating new gRPC connection to node {} at {}",
+            node_id, address
+        );
 
         // Build gRPC endpoint
         let mut endpoint = Endpoint::from_shared(address.clone())
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Invalid endpoint {}: {}", address, e))))?
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid endpoint {}: {}", address, e),
+                ))
+            })?
             .timeout(Duration::from_millis(self.config.request_timeout_ms))
             .connect_timeout(Duration::from_millis(self.config.connect_timeout_ms))
             .keep_alive_timeout(Duration::from_secs(self.config.keep_alive_interval_secs))
@@ -137,17 +153,28 @@ impl ConnectionPool {
         // Add TLS configuration if enabled
         if self.config.enable_tls {
             let tls_config = self.build_tls_config()?;
-            endpoint = endpoint.tls_config(tls_config)
-                .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::Other, format!("TLS configuration error: {}", e))))?;
+            endpoint = endpoint.tls_config(tls_config).map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("TLS configuration error: {}", e),
+                ))
+            })?;
         }
 
         // Establish connection
-        let channel = endpoint.connect().await
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, format!("Failed to connect to {}: {}", address, e))))?;
+        let channel = endpoint.connect().await.map_err(|e| {
+            NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                format!("Failed to connect to {}: {}", address, e),
+            ))
+        })?;
 
         // Store connection in pool
         let mut connections = self.connections.write().await;
-        connections.entry(*node_id).or_insert_with(Vec::new).push(channel.clone());
+        connections
+            .entry(*node_id)
+            .or_insert_with(Vec::new)
+            .push(channel.clone());
 
         info!("Successfully connected to node {} at {}", node_id, address);
         Ok(channel)
@@ -158,17 +185,29 @@ impl ConnectionPool {
         let mut tls = tonic::transport::ClientTlsConfig::new();
 
         if let Some(ca_file) = &self.config.ca_file {
-            let ca_cert = std::fs::read_to_string(ca_file)
-                .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::NotFound, format!("Failed to read CA file {}: {}", ca_file, e))))?;
+            let ca_cert = std::fs::read_to_string(ca_file).map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Failed to read CA file {}: {}", ca_file, e),
+                ))
+            })?;
             tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(ca_cert));
         }
 
         if let (Some(cert_file), Some(key_file)) = (&self.config.cert_file, &self.config.key_file) {
-            let cert = std::fs::read_to_string(cert_file)
-                .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::NotFound, format!("Failed to read cert file {}: {}", cert_file, e))))?;
-            let key = std::fs::read_to_string(key_file)
-                .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::NotFound, format!("Failed to read key file {}: {}", key_file, e))))?;
-            
+            let cert = std::fs::read_to_string(cert_file).map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Failed to read cert file {}: {}", cert_file, e),
+                ))
+            })?;
+            let key = std::fs::read_to_string(key_file).map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Failed to read key file {}: {}", key_file, e),
+                ))
+            })?;
+
             let identity = tonic::transport::Identity::from_pem(cert, key);
             tls = tls.identity(identity);
         }
@@ -181,7 +220,7 @@ impl ConnectionPool {
         let connections = self.connections.read().await;
         let total_connections: usize = connections.values().map(|v| v.len()).sum();
         let connected_nodes = connections.len();
-        
+
         ConnectionPoolStats {
             total_connections,
             connected_nodes,
@@ -266,21 +305,21 @@ impl RustMqNetwork {
         // Add to connection pool
         let address = format!("http://{}:{}", node.addr, node.rpc_port);
         self.connection_pool.add_node(node_id, address).await;
-        
+
         // Add to nodes mapping
         let mut nodes = self.nodes.write().await;
         nodes.insert(node_id, node);
-        
+
         info!("Added node {} to cluster", node_id);
     }
 
     /// Remove a node from the cluster
     pub async fn remove_node(&self, node_id: &NodeId) {
         self.connection_pool.remove_node(node_id).await;
-        
+
         let mut nodes = self.nodes.write().await;
         nodes.remove(node_id);
-        
+
         info!("Removed node {} from cluster", node_id);
     }
 
@@ -302,7 +341,7 @@ impl RustMqNetwork {
         max_retries: usize,
     ) -> Result<AppendEntriesResponse<NodeId>, NetworkError> {
         let mut last_error = None;
-        
+
         for attempt in 0..=max_retries {
             match self.send_append_entries_internal(target, &req).await {
                 Ok(response) => return Ok(response),
@@ -310,14 +349,18 @@ impl RustMqNetwork {
                     last_error = Some(e);
                     if attempt < max_retries {
                         let delay = Duration::from_millis(100 * (1 << attempt)); // Exponential backoff
-                        warn!("Append entries to node {} failed on attempt {}, retrying in {:?}", 
-                              target, attempt + 1, delay);
+                        warn!(
+                            "Append entries to node {} failed on attempt {}, retrying in {:?}",
+                            target,
+                            attempt + 1,
+                            delay
+                        );
                         tokio::time::sleep(delay).await;
                     }
                 }
             }
         }
-        
+
         Err(last_error.unwrap())
     }
 
@@ -327,15 +370,25 @@ impl RustMqNetwork {
         req: &AppendEntriesRequest<RustMqTypeConfig>,
     ) -> Result<SimpleAppendEntriesRequest, NetworkError> {
         // Serialize prev_log_id
-        let prev_log_id_bytes = req.prev_log_id
+        let prev_log_id_bytes = req
+            .prev_log_id
             .as_ref()
             .map(|log_id| bincode::serialize(log_id))
             .transpose()
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to serialize prev_log_id: {}", e))))?;
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to serialize prev_log_id: {}", e),
+                ))
+            })?;
 
         // Serialize entries
-        let entries_bytes = bincode::serialize(&req.entries)
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to serialize entries: {}", e))))?;
+        let entries_bytes = bincode::serialize(&req.entries).map_err(|e| {
+            NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize entries: {}", e),
+            ))
+        })?;
 
         Ok(SimpleAppendEntriesRequest {
             term: 0, // Simplified for now
@@ -356,8 +409,12 @@ impl RustMqNetwork {
         } else {
             // Parse conflict log id if present
             let conflict_log_id = if !grpc_response.conflict_log_id.is_empty() {
-                bincode::deserialize(&grpc_response.conflict_log_id)
-                    .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to deserialize conflict_log_id: {}", e))))?   
+                bincode::deserialize(&grpc_response.conflict_log_id).map_err(|e| {
+                    NetworkError::new(&std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to deserialize conflict_log_id: {}", e),
+                    ))
+                })?
             } else {
                 None
             };
@@ -373,32 +430,44 @@ impl RustMqNetwork {
     ) -> Result<AppendEntriesResponse<NodeId>, NetworkError> {
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
-        
-        debug!("Sending append entries to node {}: {} entries", target, req.entries.len());
-        
+
+        debug!(
+            "Sending append entries to node {}: {} entries",
+            target,
+            req.entries.len()
+        );
+
         // Create gRPC client
         let mut client = RaftServiceClient::new(channel);
-        
+
         // Convert request to gRPC format
         let grpc_req = self.convert_append_entries_request(req)?;
-        
+
         // Make the actual gRPC call
         let grpc_response = client
             .append_entries(tonic::Request::new(grpc_req))
             .await
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionAborted, format!("gRPC append_entries failed: {}", e))))?;
-        
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    format!("gRPC append_entries failed: {}", e),
+                ))
+            })?;
+
         // Convert response back to OpenRaft format
         let response = self.convert_append_entries_response(grpc_response.into_inner())?;
-        
+
         let elapsed = start.elapsed();
-        debug!("Append entries to node {} completed in {:?}", target, elapsed);
-        
+        debug!(
+            "Append entries to node {} completed in {:?}",
+            target, elapsed
+        );
+
         // Update metrics
         let mut metrics = self.metrics.lock().await;
         let entries_size = req.entries.len() * 256; // Estimate
         metrics.record_append_entries(entries_size, 128);
-        
+
         Ok(response)
     }
 
@@ -411,7 +480,12 @@ impl RustMqNetwork {
     ) -> Result<VoteResponse<NodeId>, NetworkError> {
         tokio::time::timeout(timeout, self.send_vote_internal(target, &req))
             .await
-            .map_err(|_| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::TimedOut, format!("Vote request to node {} timed out", target))))?
+            .map_err(|_| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("Vote request to node {} timed out", target),
+                ))
+            })?
     }
 
     /// Convert OpenRaft VoteRequest to gRPC format
@@ -420,11 +494,17 @@ impl RustMqNetwork {
         req: &VoteRequest<NodeId>,
     ) -> Result<SimpleVoteRequest, NetworkError> {
         // Serialize last_log_id
-        let last_log_id_bytes = req.last_log_id
+        let last_log_id_bytes = req
+            .last_log_id
             .as_ref()
             .map(|log_id| bincode::serialize(log_id))
             .transpose()
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to serialize last_log_id: {}", e))))?;
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to serialize last_log_id: {}", e),
+                ))
+            })?;
 
         Ok(SimpleVoteRequest {
             term: 0, // Simplified for now
@@ -442,7 +522,7 @@ impl RustMqNetwork {
         VoteResponse {
             vote_granted: grpc_response.vote_granted,
             vote: original_vote, // Use original vote
-            last_log_id: None, // Not provided in simple format
+            last_log_id: None,   // Not provided in simple format
         }
     }
 
@@ -454,31 +534,39 @@ impl RustMqNetwork {
     ) -> Result<VoteResponse<NodeId>, NetworkError> {
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
-        
-        debug!("Sending vote request to node {}: vote={:?}", target, req.vote);
-        
+
+        debug!(
+            "Sending vote request to node {}: vote={:?}",
+            target, req.vote
+        );
+
         // Create gRPC client
         let mut client = RaftServiceClient::new(channel);
-        
+
         // Convert request to gRPC format
         let grpc_req = self.convert_vote_request(req)?;
-        
+
         // Make the actual gRPC call
         let grpc_response = client
             .vote(tonic::Request::new(grpc_req))
             .await
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionAborted, format!("gRPC vote failed: {}", e))))?;
-        
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    format!("gRPC vote failed: {}", e),
+                ))
+            })?;
+
         // Convert response back to OpenRaft format
         let response = self.convert_vote_response(grpc_response.into_inner(), req.vote.clone());
-        
+
         let elapsed = start.elapsed();
         debug!("Vote request to node {} completed in {:?}", target, elapsed);
-        
+
         // Update metrics
         let mut metrics = self.metrics.lock().await;
         metrics.record_vote_request(256, 128);
-        
+
         Ok(response)
     }
 
@@ -488,8 +576,12 @@ impl RustMqNetwork {
         req: &InstallSnapshotRequest<RustMqTypeConfig>,
     ) -> Result<SimpleInstallSnapshotRequest, NetworkError> {
         // Serialize snapshot meta
-        let meta_bytes = bincode::serialize(&req.meta)
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to serialize snapshot meta: {}", e))))?;
+        let meta_bytes = bincode::serialize(&req.meta).map_err(|e| {
+            NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize snapshot meta: {}", e),
+            ))
+        })?;
 
         Ok(SimpleInstallSnapshotRequest {
             term: 0, // Simplified for now
@@ -520,33 +612,44 @@ impl RustMqNetwork {
     ) -> Result<InstallSnapshotResponse<NodeId>, NetworkError> {
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
-        
-        info!("Installing snapshot to node {}: snapshot_id={}", 
-              target, req.meta.snapshot_id);
-        
+
+        info!(
+            "Installing snapshot to node {}: snapshot_id={}",
+            target, req.meta.snapshot_id
+        );
+
         // Create gRPC client
         let mut client = RaftServiceClient::new(channel);
-        
+
         // Convert request to gRPC format
         let grpc_req = self.convert_install_snapshot_request(&req)?;
-        
+
         // Make the actual gRPC call
         let grpc_response = client
             .install_snapshot(tonic::Request::new(grpc_req))
             .await
-            .map_err(|e| NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionAborted, format!("gRPC install_snapshot failed: {}", e))))?;
-        
+            .map_err(|e| {
+                NetworkError::new(&std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    format!("gRPC install_snapshot failed: {}", e),
+                ))
+            })?;
+
         // Convert response back to OpenRaft format
-        let response = self.convert_install_snapshot_response(grpc_response.into_inner(), req.vote.clone());
-        
+        let response =
+            self.convert_install_snapshot_response(grpc_response.into_inner(), req.vote.clone());
+
         let elapsed = start.elapsed();
-        info!("Snapshot installation to node {} completed in {:?}", target, elapsed);
-        
+        info!(
+            "Snapshot installation to node {} completed in {:?}",
+            target, elapsed
+        );
+
         // Update metrics
         let snapshot_size = req.data.len();
         let mut metrics = self.metrics.lock().await;
         metrics.record_install_snapshot(snapshot_size, 256);
-        
+
         Ok(response)
     }
 }
@@ -556,11 +659,17 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
         &mut self,
         req: AppendEntriesRequest<RustMqTypeConfig>,
         _option: RPCOption,
-    ) -> Result<AppendEntriesResponse<NodeId>, openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>> {
+    ) -> Result<
+        AppendEntriesResponse<NodeId>,
+        openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>,
+    > {
         // For now, use a simplified approach that works with all nodes
         // In a production system, the target would be determined by the Raft algorithm
-        info!("Received append_entries request with {} entries", req.entries.len());
-        
+        info!(
+            "Received append_entries request with {} entries",
+            req.entries.len()
+        );
+
         // For this implementation, we'll return success as it's part of the receiving side
         // The actual network sending is handled by the RaftNetworkFactory
         Ok(AppendEntriesResponse::Success)
@@ -570,9 +679,16 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
         &mut self,
         req: InstallSnapshotRequest<RustMqTypeConfig>,
         _option: RPCOption,
-    ) -> Result<InstallSnapshotResponse<NodeId>, openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>>> {
+    ) -> Result<
+        InstallSnapshotResponse<NodeId>,
+        openraft::error::RPCError<
+            NodeId,
+            RustMqNode,
+            openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>,
+        >,
+    > {
         info!("Received install_snapshot request");
-        
+
         // Return successful response
         Ok(InstallSnapshotResponse {
             vote: req.vote.clone(),
@@ -583,9 +699,12 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
         &mut self,
         req: VoteRequest<NodeId>,
         _option: RPCOption,
-    ) -> Result<VoteResponse<NodeId>, openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>> {
+    ) -> Result<
+        VoteResponse<NodeId>,
+        openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>,
+    > {
         info!("Received vote request");
-        
+
         // For this implementation, grant the vote
         Ok(VoteResponse {
             vote: req.vote.clone(),
@@ -612,10 +731,10 @@ impl RaftNetworkFactory<RustMqTypeConfig> for RustMqNetworkFactory {
 
     async fn new_client(&mut self, target: NodeId, node: &RustMqNode) -> Self::Network {
         let network = RustMqNetwork::new(target, self.config.clone());
-        
+
         // Add the target node to the network
         network.add_node(target, node.clone()).await;
-        
+
         network
     }
 }
@@ -638,7 +757,7 @@ impl NetworkHealthChecker {
     /// Start periodic health checks
     pub async fn start_health_checks(&self) {
         let mut interval = tokio::time::interval(self.check_interval);
-        
+
         loop {
             interval.tick().await;
             self.perform_health_check().await;
@@ -648,12 +767,12 @@ impl NetworkHealthChecker {
     /// Perform a single health check
     async fn perform_health_check(&self) {
         let nodes = self.network.nodes.read().await.clone();
-        
+
         for (node_id, _node) in nodes {
             if node_id == self.network.node_id {
                 continue; // Skip self
             }
-            
+
             match self.check_node_health(node_id).await {
                 Ok(_) => {
                     debug!("Health check passed for node {}", node_id);
@@ -668,7 +787,10 @@ impl NetworkHealthChecker {
     /// Check health of a specific node
     async fn check_node_health(&self, node_id: NodeId) -> Result<(), NetworkError> {
         // Attempt to get a connection to verify network connectivity
-        self.network.connection_pool.get_connection(&node_id).await?;
+        self.network
+            .connection_pool
+            .get_connection(&node_id)
+            .await?;
         Ok(())
     }
 }
@@ -682,10 +804,10 @@ mod tests {
     async fn test_connection_pool_creation() {
         let config = RustMqNetworkConfig::default();
         let pool = ConnectionPool::new(config);
-        
+
         // Add a node
         pool.add_node(1, "http://localhost:9094".to_string()).await;
-        
+
         // Check stats
         let stats = pool.get_stats().await;
         assert_eq!(stats.connected_nodes, 0); // No actual connections yet
@@ -695,16 +817,16 @@ mod tests {
     async fn test_network_creation() {
         let config = RustMqNetworkConfig::default();
         let network = RustMqNetwork::new(1, config);
-        
+
         // Add a node
         let node = RustMqNode {
             addr: "localhost".to_string(),
             rpc_port: 9094,
             data: "test-node".to_string(),
         };
-        
+
         network.add_node(2, node).await;
-        
+
         // Check that node was added
         let nodes = network.nodes.read().await;
         assert_eq!(nodes.len(), 1);
@@ -715,7 +837,7 @@ mod tests {
     async fn test_network_metrics() {
         let config = RustMqNetworkConfig::default();
         let network = RustMqNetwork::new(1, config);
-        
+
         // Get initial metrics
         let metrics = network.get_metrics().await;
         assert_eq!(metrics.append_entries_sent, 0);
@@ -727,13 +849,13 @@ mod tests {
     async fn test_network_factory() {
         let config = RustMqNetworkConfig::default();
         let mut factory = RustMqNetworkFactory::new(config);
-        
+
         let node = RustMqNode {
             addr: "localhost".to_string(),
             rpc_port: 9094,
             data: "test-node".to_string(),
         };
-        
+
         let network = factory.new_client(2, &node).await;
         assert_eq!(network.node_id, 2);
     }
@@ -742,12 +864,9 @@ mod tests {
     async fn test_health_checker() {
         let config = RustMqNetworkConfig::default();
         let network = Arc::new(RustMqNetwork::new(1, config));
-        
-        let health_checker = NetworkHealthChecker::new(
-            network.clone(), 
-            Duration::from_secs(1)
-        );
-        
+
+        let health_checker = NetworkHealthChecker::new(network.clone(), Duration::from_secs(1));
+
         // Perform a single health check (should not crash)
         health_checker.perform_health_check().await;
     }
@@ -757,9 +876,9 @@ mod tests {
         let mut config = RustMqNetworkConfig::default();
         config.enable_tls = true;
         config.ca_file = Some("test_ca.pem".to_string());
-        
+
         let pool = ConnectionPool::new(config);
-        
+
         // This would fail in a real scenario without proper cert files,
         // but we're just testing that the configuration is set up correctly
         assert!(pool.config.enable_tls);

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::controller::service::{TopicInfo, TopicConfig};
+use crate::controller::service::{TopicConfig, TopicInfo};
 use crate::types::*;
 
 /// Node ID type for RustMQ cluster (using u64 for OpenRaft compatibility)
@@ -79,11 +79,19 @@ impl WorkingStateMachine {
     }
 
     /// Apply application data to state machine
-    pub async fn apply_command(&self, app_data: WorkingAppData) -> crate::Result<WorkingAppDataResponse> {
+    pub async fn apply_command(
+        &self,
+        app_data: WorkingAppData,
+    ) -> crate::Result<WorkingAppDataResponse> {
         let mut state = self.state.write().await;
-        
+
         match app_data {
-            WorkingAppData::CreateTopic { name, partitions, replication_factor, config } => {
+            WorkingAppData::CreateTopic {
+                name,
+                partitions,
+                replication_factor,
+                config,
+            } => {
                 if state.topics.contains_key(&name) {
                     Ok(WorkingAppDataResponse {
                         success: false,
@@ -98,9 +106,9 @@ impl WorkingStateMachine {
                         config,
                         created_at: chrono::Utc::now(),
                     };
-                    
+
                     state.topics.insert(name.clone(), topic_info);
-                    
+
                     Ok(WorkingAppDataResponse {
                         success: true,
                         error_message: None,
@@ -108,12 +116,12 @@ impl WorkingStateMachine {
                     })
                 }
             }
-            
+
             WorkingAppData::DeleteTopic { name } => {
                 if state.topics.remove(&name).is_some() {
                     // Remove partition assignments
                     state.partition_assignments.retain(|tp, _| tp.topic != name);
-                    
+
                     Ok(WorkingAppDataResponse {
                         success: true,
                         error_message: None,
@@ -127,17 +135,17 @@ impl WorkingStateMachine {
                     })
                 }
             }
-            
+
             WorkingAppData::AddBroker { broker } => {
                 state.brokers.insert(broker.id.clone(), broker.clone());
-                
+
                 Ok(WorkingAppDataResponse {
                     success: true,
                     error_message: None,
                     data: Some(format!("Broker {} added", broker.id)),
                 })
             }
-            
+
             WorkingAppData::RemoveBroker { broker_id } => {
                 if state.brokers.remove(&broker_id).is_some() {
                     Ok(WorkingAppDataResponse {
@@ -165,7 +173,7 @@ impl WorkingStateMachine {
     pub async fn update_last_applied(&self, log_id: u64) {
         let mut last_applied = self.last_applied.write().await;
         *last_applied = log_id;
-        
+
         let mut state = self.state.write().await;
         state.last_applied_log = log_id;
     }
@@ -219,15 +227,18 @@ impl WorkingRaftManager {
     pub async fn become_leader(&self) {
         let mut is_leader = self.is_leader.write().await;
         *is_leader = true;
-        
+
         let mut term = self.current_term.write().await;
         *term += 1;
-        
+
         info!("Node {} became leader for term {}", self.node_id, *term);
     }
 
     /// Apply a command if leader
-    pub async fn apply_command(&self, cmd: WorkingAppData) -> crate::Result<WorkingAppDataResponse> {
+    pub async fn apply_command(
+        &self,
+        cmd: WorkingAppData,
+    ) -> crate::Result<WorkingAppDataResponse> {
         if !self.is_leader().await {
             return Ok(WorkingAppDataResponse {
                 success: false,
@@ -237,11 +248,13 @@ impl WorkingRaftManager {
         }
 
         let result = self.state_machine.apply_command(cmd).await?;
-        
+
         // Update last applied log
         let current_log = self.state_machine.get_last_applied().await;
-        self.state_machine.update_last_applied(current_log + 1).await;
-        
+        self.state_machine
+            .update_last_applied(current_log + 1)
+            .await;
+
         Ok(result)
     }
 
@@ -312,7 +325,10 @@ impl WorkingRaftIntegrationHelper {
     }
 
     /// Remove broker through Raft consensus
-    pub async fn remove_broker(&self, broker_id: BrokerId) -> crate::Result<WorkingAppDataResponse> {
+    pub async fn remove_broker(
+        &self,
+        broker_id: BrokerId,
+    ) -> crate::Result<WorkingAppDataResponse> {
         let cmd = WorkingAppData::RemoveBroker { broker_id };
         self.raft_manager.apply_command(cmd).await
     }
@@ -372,22 +388,22 @@ impl WorkingOpenRaftManager {
     /// Create a new working manager
     pub async fn new(config: WorkingRaftConfig) -> crate::Result<Self> {
         let helper = WorkingRaftIntegrationHelper::new(config.node_id, config.peers.clone());
-        
-        Ok(Self {
-            config,
-            helper,
-        })
+
+        Ok(Self { config, helper })
     }
 
     /// Start the manager (simplified)
     pub async fn start(&self) -> crate::Result<()> {
-        info!("Starting working OpenRaft manager for node {}", self.config.node_id);
-        
+        info!(
+            "Starting working OpenRaft manager for node {}",
+            self.config.node_id
+        );
+
         // In a single-node setup, automatically become leader
         if self.config.peers.is_empty() {
             self.helper.become_leader().await;
         }
-        
+
         Ok(())
     }
 
@@ -399,7 +415,9 @@ impl WorkingOpenRaftManager {
         replication_factor: u32,
         config: TopicConfig,
     ) -> crate::Result<WorkingAppDataResponse> {
-        self.helper.create_topic(name, partitions, replication_factor, config).await
+        self.helper
+            .create_topic(name, partitions, replication_factor, config)
+            .await
     }
 
     /// Delete a topic
@@ -413,7 +431,10 @@ impl WorkingOpenRaftManager {
     }
 
     /// Remove a broker
-    pub async fn remove_broker(&self, broker_id: BrokerId) -> crate::Result<WorkingAppDataResponse> {
+    pub async fn remove_broker(
+        &self,
+        broker_id: BrokerId,
+    ) -> crate::Result<WorkingAppDataResponse> {
         self.helper.remove_broker(broker_id).await
     }
 
@@ -429,7 +450,10 @@ impl WorkingOpenRaftManager {
 
     /// Stop the manager
     pub async fn stop(&self) -> crate::Result<()> {
-        info!("Stopping working OpenRaft manager for node {}", self.config.node_id);
+        info!(
+            "Stopping working OpenRaft manager for node {}",
+            self.config.node_id
+        );
         Ok(())
     }
 }
@@ -441,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn test_working_raft_integration_helper() {
         let helper = WorkingRaftIntegrationHelper::new(1, vec![]);
-        
+
         // Become leader for testing
         helper.become_leader().await;
         assert!(helper.is_leader().await);
@@ -453,12 +477,10 @@ mod tests {
             compression_type: Some("lz4".to_string()),
         };
 
-        let result = helper.create_topic(
-            "test-topic".to_string(),
-            3,
-            2,
-            config,
-        ).await.unwrap();
+        let result = helper
+            .create_topic("test-topic".to_string(), 3, 2, config)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.error_message.is_none());
@@ -512,29 +534,27 @@ mod tests {
     async fn test_working_openraft_manager() {
         let config = WorkingRaftConfig::default();
         let manager = WorkingOpenRaftManager::new(config).await.unwrap();
-        
+
         manager.start().await.unwrap();
         assert!(manager.is_leader().await);
-        
+
         // Test topic operations
         let topic_config = TopicConfig {
             retention_ms: Some(86400000),
             segment_bytes: Some(1073741824),
             compression_type: Some("lz4".to_string()),
         };
-        
-        let result = manager.create_topic(
-            "manager-test-topic".to_string(),
-            3,
-            2,
-            topic_config,
-        ).await.unwrap();
-        
+
+        let result = manager
+            .create_topic("manager-test-topic".to_string(), 3, 2, topic_config)
+            .await
+            .unwrap();
+
         assert!(result.success);
-        
+
         let metadata = manager.get_cluster_metadata().await;
         assert_eq!(metadata.topics.len(), 1);
-        
+
         manager.stop().await.unwrap();
     }
 }

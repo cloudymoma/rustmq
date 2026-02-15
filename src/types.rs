@@ -1,19 +1,19 @@
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
-use std::fmt;
 use bytes::Bytes;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
+use std::fmt;
 
 // Custom serde implementations for Bytes to maintain serialization compatibility
 mod bytes_serde {
     use super::*;
-    
+
     pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         serializer.serialize_bytes(bytes)
     }
-    
+
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
         D: Deserializer<'de>,
@@ -25,7 +25,7 @@ mod bytes_serde {
 
 mod option_bytes_serde {
     use super::*;
-    
+
     pub fn serialize<S>(opt_bytes: &Option<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -35,7 +35,7 @@ mod option_bytes_serde {
             None => serializer.serialize_none(),
         }
     }
-    
+
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Bytes>, D::Error>
     where
         D: Deserializer<'de>,
@@ -73,7 +73,7 @@ pub struct Record {
     pub key: Option<Bytes>,
     #[serde(with = "bytes_serde")]
     pub value: Bytes,
-    pub headers: Headers,  // SmallVec<[Header; 4]> - avoids heap alloc for <4 headers
+    pub headers: Headers, // SmallVec<[Header; 4]> - avoids heap alloc for <4 headers
     pub timestamp: i64,
 }
 
@@ -83,23 +83,33 @@ impl Record {
         Self {
             key: key.map(Bytes::from),
             value: Bytes::from(value),
-            headers: SmallVec::from_vec(headers),  // Convert Vec to SmallVec
+            headers: SmallVec::from_vec(headers), // Convert Vec to SmallVec
             timestamp,
         }
     }
 
     /// Create a new Record with Bytes data (zero-copy)
-    pub fn from_bytes(key: Option<Bytes>, value: Bytes, headers: Vec<Header>, timestamp: i64) -> Self {
+    pub fn from_bytes(
+        key: Option<Bytes>,
+        value: Bytes,
+        headers: Vec<Header>,
+        timestamp: i64,
+    ) -> Self {
         Self {
             key,
             value,
-            headers: SmallVec::from_vec(headers),  // Convert Vec to SmallVec
+            headers: SmallVec::from_vec(headers), // Convert Vec to SmallVec
             timestamp,
         }
     }
 
     /// Create a new Record with Headers (SmallVec) directly - most efficient
-    pub fn with_headers(key: Option<Bytes>, value: Bytes, headers: Headers, timestamp: i64) -> Self {
+    pub fn with_headers(
+        key: Option<Bytes>,
+        value: Bytes,
+        headers: Headers,
+        timestamp: i64,
+    ) -> Self {
         Self {
             key,
             value,
@@ -107,17 +117,17 @@ impl Record {
             timestamp,
         }
     }
-    
+
     /// Get the key as a Vec<u8> (copies data)
     pub fn key_as_vec(&self) -> Option<Vec<u8>> {
         self.key.as_ref().map(|k| k.to_vec())
     }
-    
+
     /// Get the value as a Vec<u8> (copies data)
     pub fn value_as_vec(&self) -> Vec<u8> {
         self.value.to_vec()
     }
-    
+
     /// Get a zero-copy slice of the value
     pub fn value_slice(&self, range: std::ops::Range<usize>) -> Bytes {
         self.value.slice(range)
@@ -139,15 +149,12 @@ impl Header {
             value: Bytes::from(value),
         }
     }
-    
+
     /// Create a new Header with Bytes value (zero-copy)
     pub fn from_bytes(key: String, value: Bytes) -> Self {
-        Self {
-            key,
-            value,
-        }
+        Self { key, value }
     }
-    
+
     /// Get the value as a Vec<u8> (copies data)
     pub fn value_as_vec(&self) -> Vec<u8> {
         self.value.to_vec()
@@ -378,9 +385,10 @@ impl TryFrom<u8> for RequestType {
             1 => Ok(RequestType::Produce),
             2 => Ok(RequestType::Fetch),
             3 => Ok(RequestType::Metadata),
-            _ => Err(crate::error::RustMqError::InvalidOperation(
-                format!("Invalid request type: {}", value)
-            )),
+            _ => Err(crate::error::RustMqError::InvalidOperation(format!(
+                "Invalid request type: {}",
+                value
+            ))),
         }
     }
 }

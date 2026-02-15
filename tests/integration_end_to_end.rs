@@ -1,16 +1,16 @@
+use bytes::Bytes;
+use rustmq::config::{EtlConfig, ReplicationConfig, ScalingConfig, WalConfig};
 use rustmq::controller::service::{ControllerService, CreateTopicRequest, TopicConfig};
+use rustmq::etl::processor::{DataFormat, EtlPipeline, MockEtlProcessor, ModuleConfig};
+use rustmq::network::grpc_server::{BrokerReplicationRpc, BrokerReplicationServiceImpl};
 use rustmq::replication::ReplicationManager;
 use rustmq::replication::manager::MockReplicationRpcClient;
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
-use rustmq::etl::processor::{MockEtlProcessor, EtlPipeline, ModuleConfig, DataFormat};
-use rustmq::network::grpc_server::{BrokerReplicationServiceImpl, BrokerReplicationRpc};
-use rustmq::storage::{DirectIOWal, AlignedBufferPool};
-use rustmq::config::{ScalingConfig, ReplicationConfig, WalConfig, EtlConfig};
+use rustmq::storage::{AlignedBufferPool, DirectIOWal};
 use rustmq::types::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::time::{timeout, Duration};
-use bytes::Bytes;
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_full_system_integration() {
@@ -39,11 +39,7 @@ async fn test_full_system_integration() {
         health_check_timeout_ms: 30_000,
     };
 
-    let controller = ControllerService::new(
-        "controller-1".to_string(),
-        vec![],
-        scaling_config
-    );
+    let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 
     // Become leader
     controller.start_election().await.unwrap();
@@ -137,10 +133,10 @@ async fn test_full_system_integration() {
         enable_caching: true,
     };
 
-    let module_id = etl_processor.load_module(
-        b"data-transformation-module".to_vec(),
-        module_config
-    ).await.unwrap();
+    let module_id = etl_processor
+        .load_module(b"data-transformation-module".to_vec(), module_config)
+        .await
+        .unwrap();
 
     // End-to-end message flow test
     let original_record = Record::new(
@@ -151,12 +147,15 @@ async fn test_full_system_integration() {
     );
 
     // 1. Process through ETL pipeline
-    let processed_record = etl_processor.process_record(
-        original_record.clone(),
-        vec![module_id]
-    ).await.unwrap();
+    let processed_record = etl_processor
+        .process_record(original_record.clone(), vec![module_id])
+        .await
+        .unwrap();
 
-    assert_eq!(processed_record.processing_metadata.modules_applied.len(), 1);
+    assert_eq!(
+        processed_record.processing_metadata.modules_applied.len(),
+        1
+    );
     assert_eq!(processed_record.processing_metadata.error_count, 0);
 
     // 2. Replicate the processed record
@@ -167,9 +166,15 @@ async fn test_full_system_integration() {
         crc32: 0,
     };
 
-    let replication_result = replication_manager.replicate_record(&wal_record).await.unwrap();
+    let replication_result = replication_manager
+        .replicate_record(&wal_record)
+        .await
+        .unwrap();
     assert_eq!(replication_result.offset, 0);
-    assert!(matches!(replication_result.durability, DurabilityLevel::Durable));
+    assert!(matches!(
+        replication_result.durability,
+        DurabilityLevel::Durable
+    ));
 
     // 3. Verify cluster metadata consistency
     let metadata = controller.get_cluster_metadata().await.unwrap();
@@ -199,7 +204,10 @@ async fn test_full_system_integration() {
         leader_id: "broker-1".to_string(),
     };
 
-    let grpc_response = grpc_service.replicate_data(replicate_request).await.unwrap();
+    let grpc_response = grpc_service
+        .replicate_data(replicate_request)
+        .await
+        .unwrap();
     assert!(grpc_response.success);
 
     // 5. Test heartbeat mechanism
@@ -213,7 +221,10 @@ async fn test_full_system_integration() {
         high_watermark: 1,
     };
 
-    let heartbeat_response = grpc_service.send_heartbeat(heartbeat_request).await.unwrap();
+    let heartbeat_response = grpc_service
+        .send_heartbeat(heartbeat_request)
+        .await
+        .unwrap();
     assert!(heartbeat_response.success);
     assert!(heartbeat_response.follower_state.is_some());
 
@@ -248,7 +259,7 @@ async fn test_failure_recovery_scenarios() {
     let controller = ControllerService::new(
         "controller-1".to_string(),
         vec![], // No peer controllers for simplified test scenario
-        scaling_config
+        scaling_config,
     );
 
     // Test 1: Leader election after startup
@@ -326,11 +337,10 @@ async fn test_failure_recovery_scenarios() {
     );
 
     // Process with non-existent module - should handle gracefully
-    let result = etl_processor.process_record(
-        test_record,
-        vec!["non-existent-module".to_string()]
-    ).await;
-    
+    let result = etl_processor
+        .process_record(test_record, vec!["non-existent-module".to_string()])
+        .await;
+
     // Mock processor handles this gracefully
     assert!(result.is_ok());
 
@@ -364,7 +374,7 @@ async fn test_concurrent_system_operations() {
     let controller = Arc::new(ControllerService::new(
         "controller-1".to_string(),
         vec![],
-        scaling_config
+        scaling_config,
     ));
 
     controller.start_election().await.unwrap();
@@ -374,10 +384,9 @@ async fn test_concurrent_system_operations() {
     for i in 0..3 {
         let controller_clone = controller.clone();
         slot_tasks.push(tokio::spawn(async move {
-            controller_clone.acquire_decommission_slot(
-                format!("broker-{}", i),
-                format!("admin-{}", i)
-            ).await
+            controller_clone
+                .acquire_decommission_slot(format!("broker-{}", i), format!("admin-{}", i))
+                .await
         }));
     }
 
@@ -474,10 +483,10 @@ async fn test_concurrent_system_operations() {
         enable_caching: true,
     };
 
-    let module_id = etl_processor.load_module(
-        b"concurrent-module".to_vec(),
-        module_config
-    ).await.unwrap();
+    let module_id = etl_processor
+        .load_module(b"concurrent-module".to_vec(), module_config)
+        .await
+        .unwrap();
 
     let mut etl_tasks = vec![];
     for i in 0..5 {
@@ -517,11 +526,7 @@ async fn test_system_configuration_updates() {
         health_check_timeout_ms: 30_000,
     };
 
-    let controller = ControllerService::new(
-        "controller-1".to_string(),
-        vec![],
-        scaling_config
-    );
+    let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 
     // Test runtime configuration updates
     let new_config = ScalingConfig {
@@ -536,20 +541,20 @@ async fn test_system_configuration_updates() {
     assert!(result.is_ok());
 
     // Test that the configuration update is effective
-    let slot1 = controller.acquire_decommission_slot(
-        "broker-1".to_string(),
-        "admin-1".to_string()
-    ).await.unwrap();
+    let slot1 = controller
+        .acquire_decommission_slot("broker-1".to_string(), "admin-1".to_string())
+        .await
+        .unwrap();
 
-    let slot2 = controller.acquire_decommission_slot(
-        "broker-2".to_string(),
-        "admin-1".to_string()
-    ).await.unwrap();
+    let slot2 = controller
+        .acquire_decommission_slot("broker-2".to_string(), "admin-1".to_string())
+        .await
+        .unwrap();
 
-    let slot3 = controller.acquire_decommission_slot(
-        "broker-3".to_string(),
-        "admin-1".to_string()
-    ).await.unwrap();
+    let slot3 = controller
+        .acquire_decommission_slot("broker-3".to_string(), "admin-1".to_string())
+        .await
+        .unwrap();
 
     // Should now be able to acquire 3 slots (updated from 1)
     assert!(!slot1.operation_id.is_empty());
@@ -583,11 +588,7 @@ async fn test_data_consistency_across_components() {
         health_check_timeout_ms: 30_000,
     };
 
-    let controller = ControllerService::new(
-        "controller-1".to_string(),
-        vec![],
-        scaling_config
-    );
+    let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 
     controller.start_election().await.unwrap();
 
@@ -658,13 +659,19 @@ async fn test_data_consistency_across_components() {
         crc32: 0,
     };
 
-    let replication_result = replication_manager.replicate_record(&wal_record).await.unwrap();
+    let replication_result = replication_manager
+        .replicate_record(&wal_record)
+        .await
+        .unwrap();
     assert_eq!(replication_result.offset, 0);
 
     // Verify high watermark is consistent - it should be set to the local offset after replication
     let hwm = replication_manager.get_high_watermark().await.unwrap();
     // For single-replica setup, high watermark should be set to the replicated record's offset
-    assert_eq!(hwm, 0, "High watermark should match replicated record offset in single-replica setup");
+    assert_eq!(
+        hwm, 0,
+        "High watermark should match replicated record offset in single-replica setup"
+    );
 
     // Verify metadata is still consistent after operations
     let final_metadata = controller.get_cluster_metadata().await.unwrap();

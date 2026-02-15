@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rustmq::network::ConnectionPool;
 use std::sync::Arc;
 use tokio::runtime::Runtime;

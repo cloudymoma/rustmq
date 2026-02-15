@@ -10,14 +10,16 @@
 
 use crate::{
     config::{
-        TlsConfig, TlsMode, AuthConfig, AuthMethod, SecurityConfig,
-        PrincipalExtractionConfig, AclClientConfig,
+        AclClientConfig, AuthConfig, AuthMethod, PrincipalExtractionConfig, SecurityConfig,
+        TlsConfig, TlsMode,
     },
     error::{ClientError, Result},
 };
-use rustls::{RootCertStore, ClientConfig as RustlsClientConfig};
-use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use dashmap::DashMap;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::BufReader,
@@ -26,8 +28,6 @@ use std::{
 };
 use tokio::sync::RwLock as AsyncRwLock;
 use x509_parser::prelude::*;
-use dashmap::DashMap;
-use serde::{Serialize, Deserialize};
 
 /// Principal type for identity management
 pub type Principal = Arc<str>;
@@ -64,17 +64,23 @@ pub struct PermissionSet {
 impl PermissionSet {
     /// Check if the permission set allows reading from a topic
     pub fn can_read_topic(&self, topic: &str) -> bool {
-        self.read_topics.iter().any(|pattern| matches_pattern(topic, pattern))
+        self.read_topics
+            .iter()
+            .any(|pattern| matches_pattern(topic, pattern))
     }
 
     /// Check if the permission set allows writing to a topic
     pub fn can_write_topic(&self, topic: &str) -> bool {
-        self.write_topics.iter().any(|pattern| matches_pattern(topic, pattern))
+        self.write_topics
+            .iter()
+            .any(|pattern| matches_pattern(topic, pattern))
     }
 
     /// Check if the permission set allows admin operations
     pub fn can_admin(&self, operation: &str) -> bool {
-        self.admin_operations.iter().any(|pattern| matches_pattern(operation, pattern))
+        self.admin_operations
+            .iter()
+            .any(|pattern| matches_pattern(operation, pattern))
     }
 }
 
@@ -144,7 +150,8 @@ impl SecurityManager {
         let principal = self.principal_extractor.extract_principal(&cert_info)?;
 
         // Validate certificate
-        self.certificate_validator.validate_certificate(&cert_der, tls_config)?;
+        self.certificate_validator
+            .validate_certificate(&cert_der, tls_config)?;
 
         // Get permissions from ACL cache
         let permissions = self.acl_cache.get_permissions(&principal).await?;
@@ -205,10 +212,8 @@ impl SecurityManager {
     fn load_certificate_from_pem(&self, pem_data: &str) -> Result<Vec<u8>> {
         let mut reader = BufReader::new(pem_data.as_bytes());
         let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
-        let certs = certs.map_err(|e| {
-            ClientError::InvalidCertificate {
-                reason: format!("Failed to parse certificate PEM: {}", e),
-            }
+        let certs = certs.map_err(|e| ClientError::InvalidCertificate {
+            reason: format!("Failed to parse certificate PEM: {}", e),
         })?;
 
         if certs.is_empty() {
@@ -222,11 +227,10 @@ impl SecurityManager {
 
     /// Extract certificate information
     fn extract_certificate_info(&self, cert_der: &[u8]) -> Result<CertificateInfo> {
-        let (_, cert) = X509Certificate::from_der(cert_der).map_err(|e| {
-            ClientError::InvalidCertificate {
+        let (_, cert) =
+            X509Certificate::from_der(cert_der).map_err(|e| ClientError::InvalidCertificate {
                 reason: format!("Failed to parse certificate: {}", e),
-            }
-        })?;
+            })?;
 
         let subject = cert.subject().to_string();
         let issuer = cert.issuer().to_string();
@@ -239,28 +243,32 @@ impl SecurityManager {
         let fingerprint = hex::encode(ring::digest::digest(&ring::digest::SHA256, cert_der));
 
         let mut attributes = HashMap::new();
-        
+
         // Extract subject attributes
         for rdn in cert.subject().iter() {
             for attr in rdn.iter() {
                 if let Ok(value) = attr.as_str() {
                     let attr_type = attr.attr_type();
-                    let oid_name = if attr_type == &x509_parser::oid_registry::OID_X509_COMMON_NAME {
+                    let oid_name = if attr_type == &x509_parser::oid_registry::OID_X509_COMMON_NAME
+                    {
                         "CN"
                     } else if attr_type == &x509_parser::oid_registry::OID_X509_ORGANIZATION_NAME {
                         "O"
-                    } else if attr_type == &x509_parser::oid_registry::OID_X509_ORGANIZATIONAL_UNIT {
+                    } else if attr_type == &x509_parser::oid_registry::OID_X509_ORGANIZATIONAL_UNIT
+                    {
                         "OU"
                     } else if attr_type == &x509_parser::oid_registry::OID_X509_COUNTRY_NAME {
                         "C"
                     } else if attr_type == &x509_parser::oid_registry::OID_X509_LOCALITY_NAME {
                         "L"
-                    } else if attr_type == &x509_parser::oid_registry::OID_X509_STATE_OR_PROVINCE_NAME {
+                    } else if attr_type
+                        == &x509_parser::oid_registry::OID_X509_STATE_OR_PROVINCE_NAME
+                    {
                         "ST"
                     } else {
                         continue;
                     };
-                    
+
                     attributes.insert(oid_name.to_string(), value.to_string());
                 }
             }
@@ -286,9 +294,9 @@ impl SecurityManager {
         }
 
         // Validate TLS configuration
-        tls_config.validate().map_err(|e| {
-            ClientError::InvalidConfig(format!("Invalid TLS configuration: {}", e))
-        })?;
+        tls_config
+            .validate()
+            .map_err(|e| ClientError::InvalidConfig(format!("Invalid TLS configuration: {}", e)))?;
 
         let mut root_store = RootCertStore::empty();
 
@@ -297,38 +305,38 @@ impl SecurityManager {
             self.load_ca_certificates(&mut root_store, ca_cert_pem)?;
         } else if !tls_config.insecure_skip_verify {
             // Load system root certificates
-            root_store.extend(
-                webpki_roots::TLS_SERVER_ROOTS.iter().cloned()
-            );
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         }
 
-        let config_builder = RustlsClientConfig::builder()
-            .with_root_certificates(root_store);
+        let config_builder = RustlsClientConfig::builder().with_root_certificates(root_store);
 
         // Configure client authentication if mTLS is enabled
         let rustls_config = if tls_config.requires_client_cert() {
             let client_cert_chain = self.load_client_certificate_chain(tls_config)?;
             let client_key = self.load_client_private_key(tls_config)?;
-            
+
             config_builder
                 .with_client_auth_cert(client_cert_chain, client_key)
-                .map_err(|e| ClientError::Tls(format!("Failed to configure client certificate: {}", e)))?
+                .map_err(|e| {
+                    ClientError::Tls(format!("Failed to configure client certificate: {}", e))
+                })?
         } else {
-            config_builder
-                .with_no_client_auth()
+            config_builder.with_no_client_auth()
         };
 
         Ok(rustls_config)
     }
 
     /// Load CA certificates into root store
-    fn load_ca_certificates(&self, root_store: &mut RootCertStore, ca_cert_pem: &str) -> Result<()> {
+    fn load_ca_certificates(
+        &self,
+        root_store: &mut RootCertStore,
+        ca_cert_pem: &str,
+    ) -> Result<()> {
         let mut reader = BufReader::new(ca_cert_pem.as_bytes());
         let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
-        let certs = certs.map_err(|e| {
-            ClientError::InvalidCertificate {
-                reason: format!("Failed to parse CA certificate PEM: {}", e),
-            }
+        let certs = certs.map_err(|e| ClientError::InvalidCertificate {
+            reason: format!("Failed to parse CA certificate PEM: {}", e),
         })?;
 
         for cert in certs {
@@ -343,17 +351,19 @@ impl SecurityManager {
     }
 
     /// Load client certificate chain
-    fn load_client_certificate_chain(&self, tls_config: &TlsConfig) -> Result<Vec<CertificateDer<'static>>> {
-        let client_cert_pem = tls_config.client_cert.as_ref().ok_or_else(|| {
-            ClientError::InvalidConfig("Client certificate required".to_string())
-        })?;
+    fn load_client_certificate_chain(
+        &self,
+        tls_config: &TlsConfig,
+    ) -> Result<Vec<CertificateDer<'static>>> {
+        let client_cert_pem = tls_config
+            .client_cert
+            .as_ref()
+            .ok_or_else(|| ClientError::InvalidConfig("Client certificate required".to_string()))?;
 
         let mut reader = BufReader::new(client_cert_pem.as_bytes());
         let certs: std::result::Result<Vec<_>, _> = certs(&mut reader).collect();
-        let certs = certs.map_err(|e| {
-            ClientError::InvalidCertificate {
-                reason: format!("Failed to parse client certificate PEM: {}", e),
-            }
+        let certs = certs.map_err(|e| ClientError::InvalidCertificate {
+            reason: format!("Failed to parse client certificate PEM: {}", e),
         })?;
 
         Ok(certs.into_iter().map(CertificateDer::from).collect())
@@ -361,12 +371,13 @@ impl SecurityManager {
 
     /// Load client private key
     fn load_client_private_key(&self, tls_config: &TlsConfig) -> Result<PrivateKeyDer<'static>> {
-        let client_key_pem = tls_config.client_key.as_ref().ok_or_else(|| {
-            ClientError::InvalidConfig("Client private key required".to_string())
-        })?;
+        let client_key_pem = tls_config
+            .client_key
+            .as_ref()
+            .ok_or_else(|| ClientError::InvalidConfig("Client private key required".to_string()))?;
 
         let mut reader = BufReader::new(client_key_pem.as_bytes());
-        
+
         // Try PKCS#8 format first
         let keys: std::result::Result<Vec<_>, _> = pkcs8_private_keys(&mut reader).collect();
         if let Ok(mut keys) = keys {
@@ -416,14 +427,16 @@ impl PrincipalExtractor {
             cert_info.attributes.get("CN").cloned()
         } else {
             None
-        }.or_else(|| {
+        }
+        .or_else(|| {
             if self.config.use_subject_alt_name {
                 // TODO: Extract from SAN
                 None
             } else {
                 None
             }
-        }).unwrap_or_else(|| {
+        })
+        .unwrap_or_else(|| {
             // Fallback to subject
             cert_info.subject.clone()
         });
@@ -435,7 +448,8 @@ impl PrincipalExtractor {
         };
 
         // Intern the string for memory efficiency
-        let principal = self.string_pool
+        let principal = self
+            .string_pool
             .entry(normalized.clone())
             .or_insert_with(|| Arc::from(normalized.as_str()))
             .clone();
@@ -495,7 +509,7 @@ impl AclCache {
     pub async fn get_permissions_enhanced(&self, principal: &Principal) -> Result<PermissionSet> {
         // Advanced: Smart caching with metrics
         let start = Instant::now();
-        
+
         if !self.config.enabled {
             return Ok(PermissionSet::default());
         }
@@ -517,8 +531,11 @@ impl AclCache {
 
         // Cache miss - fetch with batch optimization
         let permissions = if self.config.batch_requests {
-            self.fetch_permissions_batch(&[principal.clone()]).await?
-                .into_iter().next().unwrap_or_default()
+            self.fetch_permissions_batch(&[principal.clone()])
+                .await?
+                .into_iter()
+                .next()
+                .unwrap_or_default()
         } else {
             self.fetch_permissions_from_server(principal).await?
         };
@@ -527,7 +544,7 @@ impl AclCache {
         {
             let mut cache = self.cache.write().await;
             cache.insert(principal.clone(), (permissions.clone(), Instant::now()));
-            
+
             // Advanced: Intelligent cache management
             if cache.len() > self.config.cache_size {
                 self.cleanup_cache_enhanced(&mut cache).await;
@@ -541,7 +558,7 @@ impl AclCache {
 
         Ok(permissions)
     }
-    
+
     /// Legacy get permissions method
     pub async fn get_permissions(&self, principal: &Principal) -> Result<PermissionSet> {
         if !self.config.enabled {
@@ -566,7 +583,7 @@ impl AclCache {
         {
             let mut cache = self.cache.write().await;
             cache.insert(principal.clone(), (permissions.clone(), Instant::now()));
-            
+
             // Clean up old entries if cache is full
             if cache.len() > self.config.cache_size {
                 self.cleanup_cache(&mut cache).await;
@@ -580,16 +597,19 @@ impl AclCache {
     async fn fetch_permissions_from_server(&self, _principal: &Principal) -> Result<PermissionSet> {
         // TODO: Implement server communication for ACL lookup
         // This would typically make a gRPC call to the controller
-        
+
         // For now, return default permissions
         Ok(PermissionSet::default())
     }
 
     /// Advanced: Batch permission fetching for performance
-    async fn fetch_permissions_batch(&self, principals: &[Principal]) -> Result<Vec<PermissionSet>> {
+    async fn fetch_permissions_batch(
+        &self,
+        principals: &[Principal],
+    ) -> Result<Vec<PermissionSet>> {
         // TODO: Implement batch ACL lookup with controller
         // This would significantly reduce network overhead
-        
+
         // For now, fetch individually
         let mut results = Vec::new();
         for principal in principals {
@@ -597,32 +617,35 @@ impl AclCache {
         }
         Ok(results)
     }
-    
+
     /// Advanced: Intelligent cache cleanup with LRU and usage patterns
-    async fn cleanup_cache_enhanced(&self, cache: &mut HashMap<Principal, (PermissionSet, Instant)>) {
+    async fn cleanup_cache_enhanced(
+        &self,
+        cache: &mut HashMap<Principal, (PermissionSet, Instant)>,
+    ) {
         let cache_ttl = Duration::from_secs(self.config.cache_ttl_seconds);
         let now = Instant::now();
-        
+
         // Remove expired entries first
         cache.retain(|_, (_, cached_at)| now.duration_since(*cached_at) < cache_ttl);
-        
+
         // If still over capacity, remove oldest entries (LRU approximation)
         if cache.len() > self.config.cache_size {
             let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.1)).collect();
             entries.sort_by(|a, b| a.1.cmp(&b.1)); // Sort by cache time
-            
+
             let to_remove = cache.len() - (self.config.cache_size * 3 / 4); // Remove 25% extra
             for (principal, _) in entries.iter().take(to_remove) {
                 cache.remove(principal);
             }
         }
     }
-    
+
     /// Clean up expired cache entries (legacy)
     async fn cleanup_cache(&self, cache: &mut HashMap<Principal, (PermissionSet, Instant)>) {
         let cache_ttl = Duration::from_secs(self.config.cache_ttl_seconds);
         let now = Instant::now();
-        
+
         cache.retain(|_, (_, cached_at)| now.duration_since(*cached_at) < cache_ttl);
     }
 }
@@ -642,16 +665,16 @@ impl CacheMetrics {
         self.hits += 1;
         self.total_hit_time += duration;
     }
-    
+
     fn record_miss(&mut self, duration: Duration) {
         self.misses += 1;
         self.total_miss_time += duration;
     }
-    
+
     fn record_eviction(&mut self) {
         self.evictions += 1;
     }
-    
+
     pub fn hit_rate(&self) -> f64 {
         if self.hits + self.misses == 0 {
             0.0
@@ -659,7 +682,7 @@ impl CacheMetrics {
             self.hits as f64 / (self.hits + self.misses) as f64
         }
     }
-    
+
     pub fn average_hit_time(&self) -> Duration {
         if self.hits == 0 {
             Duration::ZERO
@@ -715,13 +738,13 @@ impl SecurityMetrics {
     pub fn get_auth_stats(&self) -> HashMap<String, (u64, u64)> {
         let attempts = self.authentication_attempts.read().unwrap();
         let successes = self.authentication_successes.read().unwrap();
-        
+
         let mut stats = HashMap::new();
         for (method, attempt_count) in attempts.iter() {
             let success_count = successes.get(method).copied().unwrap_or(0);
             stats.insert(method.clone(), (*attempt_count, success_count));
         }
-        
+
         stats
     }
 
@@ -731,7 +754,7 @@ impl SecurityMetrics {
         let misses = *self.acl_cache_misses.read().unwrap();
         (hits, misses)
     }
-    
+
     /// Record certificate validation time (Advanced)
     pub fn record_certificate_validation_time(&self, duration: Duration) {
         if let Ok(mut times) = self.certificate_validation_times.write() {
@@ -741,7 +764,7 @@ impl SecurityMetrics {
                 times.drain(0..500);
             }
         }
-        
+
         // Check if we're meeting performance targets (245μs)
         if duration <= Duration::from_micros(245) {
             if let Ok(mut target_met) = self.performance_target_met.write() {
@@ -749,7 +772,7 @@ impl SecurityMetrics {
             }
         }
     }
-    
+
     /// Record ACL lookup time (Advanced)
     pub fn record_acl_lookup_time(&self, duration: Duration) {
         if let Ok(mut times) = self.acl_lookup_times.write() {
@@ -760,33 +783,33 @@ impl SecurityMetrics {
             }
         }
     }
-    
+
     /// Record WebPKI validation (Advanced)
     pub fn record_webpki_validation(&self) {
         if let Ok(mut count) = self.webpki_validation_count.write() {
             *count += 1;
         }
     }
-    
+
     /// Get advanced performance statistics
     pub fn get_performance_stats(&self) -> PerformanceStats {
         let cert_times = self.certificate_validation_times.read().unwrap();
         let acl_times = self.acl_lookup_times.read().unwrap();
         let webpki_count = *self.webpki_validation_count.read().unwrap();
         let target_met = *self.performance_target_met.read().unwrap();
-        
+
         let avg_cert_time = if cert_times.is_empty() {
             Duration::ZERO
         } else {
             cert_times.iter().sum::<Duration>() / cert_times.len() as u32
         };
-        
+
         let avg_acl_time = if acl_times.is_empty() {
             Duration::ZERO
         } else {
             acl_times.iter().sum::<Duration>() / acl_times.len() as u32
         };
-        
+
         PerformanceStats {
             average_cert_validation_time: avg_cert_time,
             average_acl_lookup_time: avg_acl_time,
@@ -814,7 +837,7 @@ pub fn matches_pattern(text: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    
+
     if pattern.contains('*') {
         let parts: Vec<&str> = pattern.split('*').collect();
         if parts.len() == 2 {
@@ -823,7 +846,7 @@ pub fn matches_pattern(text: &str, pattern: &str) -> bool {
             return text.starts_with(prefix) && text.ends_with(suffix);
         }
     }
-    
+
     text == pattern
 }
 
@@ -857,14 +880,14 @@ mod tests {
     fn test_tls_config_validation() {
         let mut config = TlsConfig::default();
         config.mode = TlsMode::MutualAuth;
-        
+
         // Should fail without certificates
         assert!(config.validate().is_err());
-        
+
         config.client_cert = Some("cert".to_string());
         config.client_key = Some("key".to_string());
         config.ca_cert = Some("ca".to_string());
-        
+
         // Should pass with all required components
         assert!(config.validate().is_ok());
     }
