@@ -99,7 +99,7 @@ impl TopicFilterEngine {
                 }
                 FilterType::Wildcard => {
                     let glob_pattern = GlobPattern::new(&filter.pattern).map_err(|e| {
-                        RustMqError::ConfigurationError(format!(
+                        RustMqError::Config(format!(
                             "Invalid glob pattern '{}': {}",
                             filter.pattern, e
                         ))
@@ -116,7 +116,7 @@ impl TopicFilterEngine {
                         .case_insensitive(!filter.case_sensitive)
                         .build()
                         .map_err(|e| {
-                            RustMqError::ConfigurationError(format!(
+                            RustMqError::Config(format!(
                                 "Invalid regex pattern '{}': {}",
                                 filter.pattern, e
                             ))
@@ -339,13 +339,13 @@ impl ConditionalRuleEngine {
             let compiled_regex = if rule.operator == ComparisonOperator::Matches {
                 match &rule.value {
                     JsonValue::String(pattern) => Some(Regex::new(pattern).map_err(|e| {
-                        RustMqError::ConfigurationError(format!(
+                        RustMqError::Config(format!(
                             "Invalid regex pattern in conditional rule: {}",
                             e
                         ))
                     })?),
                     _ => {
-                        return Err(RustMqError::ConfigurationError(
+                        return Err(RustMqError::Config(
                             "Regex operator requires string value".to_string(),
                         ));
                     }

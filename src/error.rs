@@ -22,9 +22,6 @@ pub enum RustMqError {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("Configuration error: {0}")]
-    ConfigurationError(String),
-
     #[error("Wal error: {0}")]
     Wal(String),
 
@@ -63,9 +60,6 @@ pub enum RustMqError {
 
     #[error("Broker not found: {0}")]
     BrokerNotFound(String),
-
-    #[error("Operation timeout")]
-    OperationTimeout,
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
@@ -240,9 +234,6 @@ pub enum RustMqError {
 
     #[error("Raft network error: {0}")]
     RaftNetwork(String),
-
-    #[error("Invalid configuration: {0}")]
-    InvalidConfiguration(String),
 
     #[error("Consensus timeout: {0}")]
     ConsensusTimeout(String),

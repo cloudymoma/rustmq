@@ -315,7 +315,7 @@ fn bench_error_code_mapping(c: &mut Criterion) {
         RustMqError::TopicAlreadyExists("existing-topic".to_string()),
         RustMqError::ResourceExhausted("memory".to_string()),
         RustMqError::PermissionDenied("access denied".to_string()),
-        RustMqError::OperationTimeout,
+        RustMqError::Timeout("operation timeout".to_string()),
     ];
 
     c.bench_function("error_code_mapping", |b| {

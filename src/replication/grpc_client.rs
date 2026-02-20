@@ -212,7 +212,7 @@ impl GrpcReplicationRpcClient {
                 Err(e) => {
                     // Check if error is retryable
                     let is_retryable =
-                        matches!(e, RustMqError::Network(_) | RustMqError::OperationTimeout);
+                        matches!(e, RustMqError::Network(_) | RustMqError::Timeout(_));
 
                     if !is_retryable || attempt >= self.config.max_retries {
                         error!(
@@ -412,7 +412,7 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
                 client.send_heartbeat(tonic::Request::new(proto_request)),
             )
             .await
-            .map_err(|_| RustMqError::OperationTimeout)?
+            .map_err(|_| RustMqError::Timeout("Heartbeat timeout".to_string()))?
             .map_err(Self::status_to_error)?;
 
             // Convert proto response to internal response
@@ -479,7 +479,7 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
                     client.transfer_leadership(tonic::Request::new(proto_request)),
                 )
                 .await
-                .map_err(|_| RustMqError::OperationTimeout)?
+                .map_err(|_| RustMqError::Timeout("Leadership transfer timeout".to_string()))?
                 .map_err(Self::status_to_error)?;
 
                 // Convert proto response to internal response
