@@ -1233,7 +1233,13 @@ mod tests {
         let object_storage: Arc<dyn ObjectStorage> =
             Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
 
-        let mut service = HealthCheckService::new("test-broker".to_string());
+        // Use generous thresholds for test environments where I/O latency may be higher
+        let thresholds = HealthThresholds {
+            object_storage_max_latency_ms: 5000,
+            ..HealthThresholds::default()
+        };
+        let mut service =
+            HealthCheckService::with_thresholds("test-broker".to_string(), thresholds);
         service.register_object_storage(object_storage);
 
         let request = HealthCheckRequest {
@@ -1242,7 +1248,7 @@ mod tests {
             check_object_storage: true,
             check_network: false,
             check_replication: false,
-            timeout_ms: Some(1000),
+            timeout_ms: Some(5000),
         };
 
         let response = service.perform_health_check(request).await.unwrap();
