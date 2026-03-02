@@ -407,6 +407,8 @@ pub struct SecureQuicServer {
     metrics: Arc<SecurityMetrics>,
     config: NetworkConfig,
     security_config: SecurityConfig,
+    /// SHA256 fingerprint of the server's TLS certificate
+    server_cert_fingerprint: String,
 }
 
 impl SecureQuicServer {
@@ -453,6 +455,9 @@ impl SecureQuicServer {
         // 4096-byte alignment for optimal I/O performance, pool size = max_connections * 2
         let buffer_pool = Arc::new(AlignedBufferPool::new(4096, config.max_connections * 2));
 
+        // Compute server certificate fingerprint from broker certificate
+        let server_cert_fingerprint = Self::compute_server_cert_fingerprint(&cert_manager).await;
+
         Ok(Self {
             endpoint,
             authenticated_pool,
@@ -464,6 +469,7 @@ impl SecureQuicServer {
             metrics,
             config,
             security_config,
+            server_cert_fingerprint,
         })
     }
 
@@ -660,6 +666,7 @@ impl SecureQuicServer {
             let pool = self.authenticated_pool.clone();
             let router = self.request_router.clone();
             let buffer_pool = self.buffer_pool.clone();
+            let server_fingerprint = self.server_cert_fingerprint.clone();
 
             tokio::spawn(async move {
                 match Self::authenticate_and_handle_connection(
@@ -671,6 +678,7 @@ impl SecureQuicServer {
                     pool.clone(),
                     router,
                     buffer_pool,
+                    server_fingerprint,
                 )
                 .await
                 {
@@ -707,12 +715,13 @@ impl SecureQuicServer {
         pool: Arc<AuthenticatedConnectionPool>,
         router: Arc<RequestRouter>,
         buffer_pool: Arc<AlignedBufferPool>,
+        server_cert_fingerprint: String,
     ) -> Result<()> {
         // Perform proper mTLS authentication with certificate validation
         let remote_addr = connection.remote_address();
 
         // Extract client certificates from the QUIC/TLS connection
-        let (auth_context, client_certificates, server_cert_fingerprint) =
+        let (auth_context, client_certificates) =
             Self::authenticate_connection(&connection, &auth_manager)
                 .await
                 .map_err(|e| {
@@ -759,7 +768,6 @@ impl SecureQuicServer {
     ) -> Result<(
         crate::security::AuthContext,
         Vec<CertificateDer<'static>>,
-        String,
     )> {
         // Extract client certificates from the QUIC/TLS connection
         // Note: In a real implementation, we'd extract these from the TLS handshake
@@ -782,10 +790,7 @@ impl SecureQuicServer {
                 RustMqError::AuthenticationFailed(format!("Certificate validation failed: {}", e))
             })?;
 
-        // Calculate server certificate fingerprint
-        let server_cert_fingerprint = Self::calculate_server_cert_fingerprint(connection);
-
-        Ok((auth_context, client_certificates, server_cert_fingerprint))
+        Ok((auth_context, client_certificates))
     }
 
     /// Extract client certificates from QUIC connection
@@ -842,15 +847,46 @@ impl SecureQuicServer {
     }
 
     /// Calculate server certificate fingerprint
-    fn calculate_server_cert_fingerprint(connection: &Connection) -> String {
-        // TODO: Extract actual server certificate and calculate real fingerprint
-        // For now, return a deterministic fingerprint based on connection info
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    /// Compute the SHA256 fingerprint of the server's TLS certificate from the cert manager.
+    /// Falls back to a placeholder if no broker certificate is available.
+    async fn compute_server_cert_fingerprint(cert_manager: &CertificateManager) -> String {
+        use sha2::{Digest, Sha256};
 
-        let mut hasher = DefaultHasher::new();
-        connection.local_ip().hash(&mut hasher);
-        format!("server-cert-{:x}", hasher.finish())
+        // Try to find the active broker certificate and compute its fingerprint
+        if let Ok(certificates) = cert_manager.list_all_certificates().await {
+            for cert_info in &certificates {
+                if cert_info.role == crate::security::CertificateRole::Broker
+                    && cert_info.status == crate::security::CertificateStatus::Active
+                {
+                    // Use the pre-computed fingerprint from the cert info
+                    if !cert_info.fingerprint.is_empty() {
+                        return cert_info.fingerprint.clone();
+                    }
+
+                    // Compute from PEM if available
+                    if let Some(ref pem) = cert_info.certificate_pem {
+                        let der_certs: Vec<_> =
+                            rustls_pemfile::certs(&mut pem.as_bytes())
+                                .filter_map(|r| r.ok())
+                                .collect();
+                        if let Some(der) = der_certs.first() {
+                            let mut hasher = Sha256::new();
+                            hasher.update(der.as_ref());
+                            return hex::encode(hasher.finalize());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: no broker cert available (e.g., self-signed dev mode)
+        tracing::warn!("No broker certificate found for fingerprint calculation");
+        "no-server-cert-available".to_string()
+    }
+
+    /// Get the precomputed server certificate fingerprint
+    fn get_server_cert_fingerprint(&self) -> String {
+        self.server_cert_fingerprint.clone()
     }
 
     /// Handle requests on an authenticated connection
