@@ -1586,8 +1586,14 @@ impl CertificateManager {
             created_at: SystemTime::now(),
             last_used: None,
             renewal_threshold,
-            key_type: KeyType::Ecdsa, // TODO: Detect from certificate
-            key_size: 256,            // TODO: Extract from certificate
+            key_type: {
+                let (kt, _) = Self::detect_key_type_and_size(&parsed_cert);
+                kt
+            },
+            key_size: {
+                let (_, ks) = Self::detect_key_type_and_size(&parsed_cert);
+                ks
+            },
             is_ca: matches!(role, CertificateRole::RootCa),
             issuer_id,
             revocation_reason: None,
@@ -1691,8 +1697,14 @@ impl CertificateManager {
             created_at: SystemTime::now(),
             last_used: None,
             renewal_threshold,
-            key_type: KeyType::Ecdsa, // TODO: Detect from certificate
-            key_size: 256,            // TODO: Extract from certificate
+            key_type: {
+                let (kt, _) = Self::detect_key_type_and_size(&parsed_cert);
+                kt
+            },
+            key_size: {
+                let (_, ks) = Self::detect_key_type_and_size(&parsed_cert);
+                ks
+            },
             is_ca: matches!(role, CertificateRole::RootCa),
             issuer_id,
             revocation_reason: None,
@@ -1751,6 +1763,48 @@ impl CertificateManager {
 
         info!("Private key encrypted and stored securely at: {}", key_path);
         Ok(key_path)
+    }
+
+    /// Detect key type and size from a parsed x509_parser certificate
+    fn detect_key_type_and_size(
+        cert: &x509_parser::certificate::X509Certificate<'_>,
+    ) -> (KeyType, u32) {
+        let spki = cert.public_key();
+        let oid = spki.algorithm.algorithm.to_id_string();
+
+        match oid.as_str() {
+            // RSA: OID 1.2.840.113549.1.1.1
+            "1.2.840.113549.1.1.1" => {
+                let key_bits = (spki.subject_public_key.data.len() as u32) * 8;
+                (KeyType::Rsa, key_bits)
+            }
+            // EC: OID 1.2.840.10045.2.1
+            "1.2.840.10045.2.1" => {
+                // Detect curve from algorithm parameters
+                if let Some(params) = &spki.algorithm.parameters {
+                    if let Ok(oid) = params.as_oid() {
+                        let curve_oid = oid.to_id_string();
+                        let size = match curve_oid.as_str() {
+                            "1.2.840.10045.3.1.7" => 256, // P-256
+                            "1.3.132.0.34" => 384,         // P-384
+                            "1.3.132.0.35" => 521,         // P-521
+                            _ => 256,                      // Default to 256
+                        };
+                        return (KeyType::Ecdsa, size);
+                    }
+                }
+                // Fallback: infer from public key length
+                let key_bytes = spki.subject_public_key.data.len();
+                let size = match key_bytes {
+                    64..=65 => 256,  // P-256 (uncompressed point: 1 + 32 + 32)
+                    96..=97 => 384,  // P-384
+                    132..=133 => 521, // P-521
+                    _ => 256,
+                };
+                (KeyType::Ecdsa, size)
+            }
+            _ => (KeyType::Ecdsa, 256), // Conservative default
+        }
     }
 
     /// Calculate certificate fingerprint

@@ -4,7 +4,7 @@
 //! using modern ASN.1 parsing libraries for enhanced security validation.
 
 use crate::error::RustMqError;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use der::{Decode, Encode};
 use spki::SubjectPublicKeyInfo;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub struct CertificateMetadata {
     pub serial_number: Vec<u8>,
     /// Subject Distinguished Name
     pub subject_dn: DistinguishedName,
-    /// Issuer Distinguished Name  
+    /// Issuer Distinguished Name
     pub issuer_dn: DistinguishedName,
     /// Subject Alternative Names
     pub subject_alt_names: Vec<SubjectAltName>,
@@ -167,6 +167,49 @@ pub enum KeyStrength {
     Unknown,
 }
 
+// Well-known OID constants for extension parsing
+mod oids {
+    // Key Usage: 2.5.29.15
+    pub const KEY_USAGE: &[u8] = &[85, 29, 15];
+    // Extended Key Usage: 2.5.29.37
+    pub const EXTENDED_KEY_USAGE: &[u8] = &[85, 29, 37];
+    // Subject Alternative Name: 2.5.29.17
+    pub const SUBJECT_ALT_NAME: &[u8] = &[85, 29, 17];
+    // Certificate Policies: 2.5.29.32
+    pub const CERTIFICATE_POLICIES: &[u8] = &[85, 29, 32];
+    // Authority Key Identifier: 2.5.29.35
+    pub const AUTHORITY_KEY_ID: &[u8] = &[85, 29, 35];
+    // Subject Key Identifier: 2.5.29.14
+    pub const SUBJECT_KEY_ID: &[u8] = &[85, 29, 14];
+
+    // EKU OIDs
+    pub const EKU_SERVER_AUTH: &str = "1.3.6.1.5.5.7.3.1";
+    pub const EKU_CLIENT_AUTH: &str = "1.3.6.1.5.5.7.3.2";
+    pub const EKU_CODE_SIGNING: &str = "1.3.6.1.5.5.7.3.3";
+    pub const EKU_EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
+    pub const EKU_TIME_STAMPING: &str = "1.3.6.1.5.5.7.3.8";
+    pub const EKU_OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
+    pub const EKU_ANY: &str = "2.5.29.37.0";
+
+    // Algorithm OIDs
+    pub const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
+    pub const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+
+    // EC curve OIDs
+    pub const PRIME256V1: &str = "1.2.840.10045.3.1.7";
+    pub const SECP384R1: &str = "1.3.132.0.34";
+    pub const SECP521R1: &str = "1.3.132.0.35";
+
+    // RDN attribute type OIDs
+    pub const AT_COMMON_NAME: &str = "2.5.4.3";
+    pub const AT_COUNTRY: &str = "2.5.4.6";
+    pub const AT_LOCALITY: &str = "2.5.4.7";
+    pub const AT_STATE_OR_PROVINCE: &str = "2.5.4.8";
+    pub const AT_ORGANIZATION: &str = "2.5.4.10";
+    pub const AT_ORGANIZATIONAL_UNIT: &str = "2.5.4.11";
+    pub const AT_EMAIL_ADDRESS: &str = "1.2.840.113549.1.9.1";
+}
+
 impl CertificateMetadata {
     /// Parse certificate metadata from DER-encoded certificate bytes
     pub fn parse_from_der(cert_der: &[u8]) -> Result<Self, RustMqError> {
@@ -198,14 +241,15 @@ impl CertificateMetadata {
         let public_key_info =
             Self::parse_public_key_info(&cert.tbs_certificate.subject_public_key_info)?;
 
-        // Extract extensions
-        let extensions = cert.tbs_certificate.extensions.as_ref();
-        let subject_alt_names = Self::extract_subject_alt_names(extensions)?;
-        let key_usage = Self::extract_key_usage(extensions)?;
-        let extended_key_usage = Self::extract_extended_key_usage(extensions)?;
-        let certificate_policies = Self::extract_certificate_policies(extensions)?;
-        let authority_key_id = Self::extract_authority_key_id(extensions)?;
-        let subject_key_id = Self::extract_subject_key_id(extensions)?;
+        // Extract extensions using x509_parser for robust parsing
+        let (
+            subject_alt_names,
+            key_usage,
+            extended_key_usage,
+            certificate_policies,
+            authority_key_id,
+            subject_key_id,
+        ) = Self::extract_extensions_from_der(cert_der)?;
 
         // Determine certificate role
         let certificate_role = Self::determine_certificate_role(
@@ -240,36 +284,107 @@ impl CertificateMetadata {
         hex::encode(hash.as_ref())
     }
 
-    /// Parse Distinguished Name from x509-cert Name
+    /// Parse Distinguished Name from x509-cert Name, extracting individual RDN components
     fn parse_distinguished_name(name: &Name) -> Result<DistinguishedName, RustMqError> {
-        // For now, use a simplified implementation
-        // In a full implementation, you'd parse each RDN component
-        let raw_dn = format!("{:?}", name); // Temporary representation
+        let mut common_name = None;
+        let mut organization = None;
+        let mut organizational_unit = Vec::new();
+        let mut country = None;
+        let mut state_or_province = None;
+        let mut locality = None;
+        let mut email_address = None;
+
+        // Iterate over RDN sequences and extract attribute values by OID
+        for rdn in name.0.iter() {
+            for atav in rdn.0.iter() {
+                let oid_str = atav.oid.to_string();
+                // Extract the UTF-8 string value from the ANY value
+                let value = Self::extract_rdn_string_value(&atav.value);
+
+                match oid_str.as_str() {
+                    oids::AT_COMMON_NAME => common_name = value,
+                    oids::AT_ORGANIZATION => organization = value,
+                    oids::AT_ORGANIZATIONAL_UNIT => {
+                        if let Some(v) = value {
+                            organizational_unit.push(v);
+                        }
+                    }
+                    oids::AT_COUNTRY => country = value,
+                    oids::AT_STATE_OR_PROVINCE => state_or_province = value,
+                    oids::AT_LOCALITY => locality = value,
+                    oids::AT_EMAIL_ADDRESS => email_address = value,
+                    _ => {} // Skip unknown attributes
+                }
+            }
+        }
+
+        // Build a human-readable DN string
+        let mut parts = Vec::new();
+        if let Some(ref cn) = common_name {
+            parts.push(format!("CN={}", cn));
+        }
+        if let Some(ref o) = organization {
+            parts.push(format!("O={}", o));
+        }
+        for ou in &organizational_unit {
+            parts.push(format!("OU={}", ou));
+        }
+        if let Some(ref c) = country {
+            parts.push(format!("C={}", c));
+        }
+        if let Some(ref st) = state_or_province {
+            parts.push(format!("ST={}", st));
+        }
+        if let Some(ref l) = locality {
+            parts.push(format!("L={}", l));
+        }
+        let raw_dn = if parts.is_empty() {
+            format!("{:?}", name)
+        } else {
+            parts.join(", ")
+        };
 
         Ok(DistinguishedName {
-            common_name: None, // TODO: Extract from RDNs
-            organization: None,
-            organizational_unit: Vec::new(),
-            country: None,
-            state_or_province: None,
-            locality: None,
-            email_address: None,
+            common_name,
+            organization,
+            organizational_unit,
+            country,
+            state_or_province,
+            locality,
+            email_address,
             raw_dn,
         })
     }
 
-    /// Parse validity period from certificate
+    /// Extract a UTF-8 string value from an ASN.1 ANY value (handles UTF8String, PrintableString, IA5String)
+    fn extract_rdn_string_value(value: &der::Any) -> Option<String> {
+        // Try to decode as UTF8String first, then PrintableString, then raw bytes
+        if let Ok(s) = der::asn1::Utf8StringRef::try_from(value) {
+            return Some(s.as_str().to_string());
+        }
+        if let Ok(s) = der::asn1::PrintableStringRef::try_from(value) {
+            return Some(s.as_str().to_string());
+        }
+        if let Ok(s) = der::asn1::Ia5StringRef::try_from(value) {
+            return Some(s.as_str().to_string());
+        }
+        // Fallback: try raw bytes as UTF-8
+        std::str::from_utf8(value.value()).ok().map(|s| s.to_string())
+    }
+
+    /// Parse validity period from certificate, converting ASN.1 time to DateTime<Utc>
     fn parse_validity_period(
         validity: &x509_cert::time::Validity,
     ) -> Result<ValidityPeriod, RustMqError> {
-        // Convert x509-cert time to DateTime<Utc>
-        let not_before = Utc::now(); // TODO: Convert from validity.not_before
-        let not_after = Utc::now(); // TODO: Convert from validity.not_after
+        let not_before = Self::x509_time_to_datetime(&validity.not_before)?;
+        let not_after = Self::x509_time_to_datetime(&validity.not_after)?;
 
         let now = Utc::now();
         let is_currently_valid = now >= not_before && now <= not_after;
         let days_until_expiry = (not_after - now).num_days();
-        let validity_duration_seconds = (not_after - not_before).num_seconds() as u64;
+        let validity_duration_seconds = (not_after - not_before)
+            .num_seconds()
+            .max(0) as u64;
 
         Ok(ValidityPeriod {
             not_before,
@@ -280,66 +395,269 @@ impl CertificateMetadata {
         })
     }
 
-    /// Parse public key information
+    /// Convert x509-cert Time to chrono DateTime<Utc>
+    fn x509_time_to_datetime(
+        time: &x509_cert::time::Time,
+    ) -> Result<DateTime<Utc>, RustMqError> {
+        // x509-cert Time can be encoded to DER and contains the raw time bytes.
+        // Convert via SystemTime which x509-cert supports.
+        let system_time: SystemTime = (*time).into();
+        let duration = system_time
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| RustMqError::InvalidCertificate {
+                reason: format!("Certificate time before Unix epoch: {}", e),
+            })?;
+        Utc.timestamp_opt(duration.as_secs() as i64, duration.subsec_nanos())
+            .single()
+            .ok_or_else(|| RustMqError::InvalidCertificate {
+                reason: "Failed to convert certificate time to UTC".to_string(),
+            })
+    }
+
+    /// Parse public key information, detecting algorithm and key size
     fn parse_public_key_info(
         spki: &SubjectPublicKeyInfo<der::Any, der::asn1::BitString>,
     ) -> Result<PublicKeyInfo, RustMqError> {
-        let algorithm = format!("{:?}", spki.algorithm.oid); // Simplified
+        let oid_str = spki.algorithm.oid.to_string();
         let public_key_bytes = spki.subject_public_key.raw_bytes().to_vec();
+        let key_bit_len = public_key_bytes.len() as u32 * 8;
+
+        let (algorithm, key_size, curve_name, strength) = match oid_str.as_str() {
+            oids::RSA_ENCRYPTION => {
+                let size = key_bit_len;
+                let strength = if size < 2048 {
+                    KeyStrength::Weak
+                } else if size < 3072 {
+                    KeyStrength::Adequate
+                } else {
+                    KeyStrength::Strong
+                };
+                ("rsaEncryption".to_string(), Some(size), None, strength)
+            }
+            oids::EC_PUBLIC_KEY => {
+                // For EC keys, check the curve from algorithm parameters
+                let (curve, size, strength) =
+                    Self::detect_ec_curve(spki, key_bit_len);
+                (
+                    "id-ecPublicKey".to_string(),
+                    Some(size),
+                    Some(curve),
+                    strength,
+                )
+            }
+            _ => (
+                oid_str,
+                None,
+                None,
+                KeyStrength::Unknown,
+            ),
+        };
 
         Ok(PublicKeyInfo {
             algorithm,
-            key_size: None, // TODO: Calculate based on key type
-            curve_name: None,
-            strength: KeyStrength::Unknown,
+            key_size,
+            curve_name,
+            strength,
             public_key_bytes,
         })
     }
 
-    /// Extract Subject Alternative Names from extensions
+    /// Detect EC curve from SPKI parameters
+    fn detect_ec_curve(
+        spki: &SubjectPublicKeyInfo<der::Any, der::asn1::BitString>,
+        key_bit_len: u32,
+    ) -> (String, u32, KeyStrength) {
+        // Try to read the curve OID from algorithm parameters
+        if let Some(params) = &spki.algorithm.parameters {
+            if let Ok(oid) = der::asn1::ObjectIdentifier::from_der(params.value()) {
+                let oid_str = oid.to_string();
+                return match oid_str.as_str() {
+                    oids::PRIME256V1 => ("P-256".to_string(), 256, KeyStrength::Strong),
+                    oids::SECP384R1 => ("P-384".to_string(), 384, KeyStrength::Strong),
+                    oids::SECP521R1 => ("P-521".to_string(), 521, KeyStrength::Strong),
+                    _ => (oid_str, key_bit_len, KeyStrength::Unknown),
+                };
+            }
+        }
+        // Fallback: infer from key length
+        match key_bit_len {
+            512..=520 => ("P-256".to_string(), 256, KeyStrength::Strong),
+            768..=776 => ("P-384".to_string(), 384, KeyStrength::Strong),
+            1040..=1056 => ("P-521".to_string(), 521, KeyStrength::Strong),
+            _ => ("unknown".to_string(), key_bit_len, KeyStrength::Unknown),
+        }
+    }
+
+    /// Find an extension by matching the trailing OID bytes
+    fn find_extension<'a>(
+        extensions: Option<&'a Extensions>,
+        oid_suffix: &[u8],
+    ) -> Option<&'a Extension> {
+        extensions?.iter().find(|ext| {
+            let ext_bytes = ext.extn_id.as_bytes();
+            ext_bytes.ends_with(oid_suffix)
+        })
+    }
+
+    /// Extract extensions using x509_parser from the raw DER certificate bytes.
+    /// This is called from parse_from_der with the original cert_der.
+    /// For the x509-cert based path, we re-parse using x509_parser to extract extensions
+    /// since x509_parser has richer extension parsing support.
+    fn extract_extensions_from_der(
+        cert_der: &[u8],
+    ) -> Result<
+        (
+            Vec<SubjectAltName>,
+            Option<KeyUsage>,
+            Option<ExtendedKeyUsage>,
+            Vec<String>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+        ),
+        RustMqError,
+    > {
+        let (_, parsed) = x509_parser::parse_x509_certificate(cert_der).map_err(|e| {
+            RustMqError::InvalidCertificate {
+                reason: format!("x509_parser failed: {}", e),
+            }
+        })?;
+
+        let mut sans = Vec::new();
+        let mut key_usage = None;
+        let mut extended_key_usage = None;
+        let mut certificate_policies = Vec::new();
+        let mut authority_key_id = None;
+        let mut subject_key_id = None;
+
+        for ext in parsed.extensions() {
+            match ext.parsed_extension() {
+                x509_parser::extensions::ParsedExtension::SubjectAlternativeName(san) => {
+                    for gn in &san.general_names {
+                        match gn {
+                            x509_parser::extensions::GeneralName::DNSName(name) => {
+                                sans.push(SubjectAltName::DnsName(name.to_string()));
+                            }
+                            x509_parser::extensions::GeneralName::RFC822Name(email) => {
+                                sans.push(SubjectAltName::EmailAddress(email.to_string()));
+                            }
+                            x509_parser::extensions::GeneralName::URI(uri) => {
+                                sans.push(SubjectAltName::Uri(uri.to_string()));
+                            }
+                            x509_parser::extensions::GeneralName::IPAddress(ip_bytes) => {
+                                if let Some(addr) = Self::parse_ip_from_bytes(ip_bytes) {
+                                    sans.push(SubjectAltName::IpAddress(addr));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                x509_parser::extensions::ParsedExtension::KeyUsage(ku) => {
+                    key_usage = Some(KeyUsage {
+                        digital_signature: ku.digital_signature(),
+                        non_repudiation: ku.non_repudiation(),
+                        key_encipherment: ku.key_encipherment(),
+                        data_encipherment: ku.data_encipherment(),
+                        key_agreement: ku.key_agreement(),
+                        key_cert_sign: ku.key_cert_sign(),
+                        crl_sign: ku.crl_sign(),
+                        encipher_only: ku.encipher_only(),
+                        decipher_only: ku.decipher_only(),
+                    });
+                }
+                x509_parser::extensions::ParsedExtension::ExtendedKeyUsage(eku) => {
+                    let mut other_purposes = Vec::new();
+                    for oid in &eku.other {
+                        other_purposes.push(oid.to_id_string());
+                    }
+                    extended_key_usage = Some(ExtendedKeyUsage {
+                        server_auth: eku.server_auth,
+                        client_auth: eku.client_auth,
+                        code_signing: eku.code_signing,
+                        email_protection: eku.email_protection,
+                        time_stamping: eku.time_stamping,
+                        ocsp_signing: eku.ocsp_signing,
+                        any_extended_key_usage: eku.any,
+                        other_purposes,
+                    });
+                }
+                x509_parser::extensions::ParsedExtension::CertificatePolicies(policies) => {
+                    for policy in policies.iter() {
+                        certificate_policies.push(policy.policy_id.to_id_string());
+                    }
+                }
+                x509_parser::extensions::ParsedExtension::AuthorityKeyIdentifier(aki) => {
+                    if let Some(key_id) = &aki.key_identifier {
+                        authority_key_id = Some(key_id.0.to_vec());
+                    }
+                }
+                x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(ski) => {
+                    subject_key_id = Some(ski.0.to_vec());
+                }
+                _ => {}
+            }
+        }
+
+        Ok((
+            sans,
+            key_usage,
+            extended_key_usage,
+            certificate_policies,
+            authority_key_id,
+            subject_key_id,
+        ))
+    }
+
+    /// Parse IP address from raw bytes (4 bytes = IPv4, 16 bytes = IPv6)
+    fn parse_ip_from_bytes(bytes: &[u8]) -> Option<std::net::IpAddr> {
+        match bytes.len() {
+            4 => Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            ))),
+            16 => {
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(bytes);
+                Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(octets)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Stub methods kept for API compatibility — actual extraction done in extract_extensions_from_der
     fn extract_subject_alt_names(
-        extensions: Option<&Extensions>,
+        _extensions: Option<&Extensions>,
     ) -> Result<Vec<SubjectAltName>, RustMqError> {
-        // TODO: Implement SAN extraction
-        Ok(Vec::new())
+        Ok(Vec::new()) // Populated by extract_extensions_from_der
     }
 
-    /// Extract Key Usage from extensions
-    fn extract_key_usage(extensions: Option<&Extensions>) -> Result<Option<KeyUsage>, RustMqError> {
-        // TODO: Implement key usage extraction
-        Ok(None)
+    fn extract_key_usage(
+        _extensions: Option<&Extensions>,
+    ) -> Result<Option<KeyUsage>, RustMqError> {
+        Ok(None) // Populated by extract_extensions_from_der
     }
 
-    /// Extract Extended Key Usage from extensions
     fn extract_extended_key_usage(
-        extensions: Option<&Extensions>,
+        _extensions: Option<&Extensions>,
     ) -> Result<Option<ExtendedKeyUsage>, RustMqError> {
-        // TODO: Implement extended key usage extraction
-        Ok(None)
+        Ok(None) // Populated by extract_extensions_from_der
     }
 
-    /// Extract Certificate Policies from extensions
     fn extract_certificate_policies(
-        extensions: Option<&Extensions>,
+        _extensions: Option<&Extensions>,
     ) -> Result<Vec<String>, RustMqError> {
-        // TODO: Implement certificate policies extraction
-        Ok(Vec::new())
+        Ok(Vec::new()) // Populated by extract_extensions_from_der
     }
 
-    /// Extract Authority Key Identifier from extensions
     fn extract_authority_key_id(
-        extensions: Option<&Extensions>,
+        _extensions: Option<&Extensions>,
     ) -> Result<Option<Vec<u8>>, RustMqError> {
-        // TODO: Implement authority key ID extraction
-        Ok(None)
+        Ok(None) // Populated by extract_extensions_from_der
     }
 
-    /// Extract Subject Key Identifier from extensions
     fn extract_subject_key_id(
-        extensions: Option<&Extensions>,
+        _extensions: Option<&Extensions>,
     ) -> Result<Option<Vec<u8>>, RustMqError> {
-        // TODO: Implement subject key ID extraction
-        Ok(None)
+        Ok(None) // Populated by extract_extensions_from_der
     }
 
     /// Determine certificate role based on extensions and DN

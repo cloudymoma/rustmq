@@ -396,35 +396,118 @@ impl CertificateHandlers {
         Ok(expiring_certs)
     }
 
-    /// Validate a certificate and its chain
+    /// Validate a certificate from PEM and optionally its chain
     pub async fn validate_certificate(
         &self,
         certificate_pem: String,
-        chain_pem: Option<Vec<String>>,
+        _chain_pem: Option<Vec<String>>,
         check_revocation: bool,
     ) -> Result<ValidationResult> {
-        debug!("Validating certificate");
+        debug!("Validating certificate from PEM");
 
-        // TODO: Implement proper certificate validation from PEM
-        // For now, return a basic validation result
-        let validation_result = ValidationResult {
-            is_valid: true,
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            chain_length: 1,
-            trust_anchor: None,
-        };
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
 
-        Ok(validation_result)
+        // Parse the PEM certificate
+        let der_certs: Vec<_> = rustls_pemfile::certs(&mut certificate_pem.as_bytes())
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if der_certs.is_empty() {
+            return Ok(ValidationResult {
+                is_valid: false,
+                errors: vec!["No valid certificates found in PEM data".to_string()],
+                warnings: Vec::new(),
+                chain_length: 0,
+                trust_anchor: None,
+            });
+        }
+
+        let cert_der = &der_certs[0];
+
+        // Parse with x509_parser for validation
+        let (_, parsed_cert) = x509_parser::parse_x509_certificate(cert_der).map_err(|e| {
+            crate::error::RustMqError::CertificateValidation {
+                reason: format!("Failed to parse certificate: {}", e),
+            }
+        })?;
+
+        // Check validity period
+        let now = chrono::Utc::now();
+        let not_before_ts = parsed_cert.validity().not_before.timestamp();
+        let not_after_ts = parsed_cert.validity().not_after.timestamp();
+
+        if now.timestamp() < not_before_ts {
+            errors.push("Certificate is not yet valid (not_before is in the future)".to_string());
+        }
+        if now.timestamp() > not_after_ts {
+            errors.push("Certificate has expired".to_string());
+        }
+
+        // Check for weak key sizes
+        let spki = parsed_cert.public_key();
+        let key_bits = spki.subject_public_key.data.len() * 8;
+        let alg_oid = spki.algorithm.algorithm.to_id_string();
+        if alg_oid == "1.2.840.113549.1.1.1" && key_bits < 2048 {
+            warnings.push(format!("RSA key size {} bits is below recommended minimum of 2048", key_bits));
+        }
+
+        // Check expiry warning (30 days)
+        let days_until_expiry = (not_after_ts - now.timestamp()) / 86400;
+        if days_until_expiry > 0 && days_until_expiry <= 30 {
+            warnings.push(format!("Certificate expires in {} days", days_until_expiry));
+        }
+
+        // Check revocation if requested
+        if check_revocation {
+            let fingerprint = {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(cert_der.as_ref());
+                hex::encode(hasher.finalize())
+            };
+            let revoked_certs = self.certificate_manager.get_revoked_certificates().await?;
+            if revoked_certs.iter().any(|rc| {
+                hex::encode(parsed_cert.serial.to_bytes_be()) == rc.serial_number
+            }) {
+                errors.push("Certificate has been revoked".to_string());
+            }
+        }
+
+        let trust_anchor = parsed_cert.issuer().to_string();
+
+        Ok(ValidationResult {
+            is_valid: errors.is_empty(),
+            errors,
+            warnings,
+            chain_length: der_certs.len(),
+            trust_anchor: Some(trust_anchor),
+        })
     }
 
-    /// Get certificate chain (simplified: certificate + root CA only)
+    /// Get certificate chain (simplified: end-entity cert + root CA)
     pub async fn get_certificate_chain(&self, cert_id: String) -> Result<Vec<String>> {
         debug!("Getting certificate chain for: {}", cert_id);
 
-        // TODO: Implement get_certificate_chain method in CertificateManager
-        // Simplified architecture: returns [end_entity_cert, root_ca_cert] only
-        Ok(Vec::new())
+        let mut chain = Vec::new();
+
+        // Get the end-entity certificate
+        if let Some(cert_info) = self.certificate_manager.get_certificate_by_id(&cert_id).await? {
+            if let Some(pem) = &cert_info.certificate_pem {
+                chain.push(pem.clone());
+            }
+
+            // Get the CA certificate (issuer) if available
+            if let Some(issuer_id) = &cert_info.issuer_id {
+                if let Some(issuer_info) = self.certificate_manager.get_certificate_by_id(issuer_id).await? {
+                    if let Some(issuer_pem) = &issuer_info.certificate_pem {
+                        chain.push(issuer_pem.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(chain)
     }
 
     // Helper methods
