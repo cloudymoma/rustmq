@@ -379,13 +379,19 @@ impl UploadManager for UploadManagerImpl {
             segment.end_offset
         );
 
-        let result = if compressed.len() > self.config.multipart_threshold as usize {
+        let is_multipart = compressed.len() > self.config.multipart_threshold as usize;
+        let result = if is_multipart {
             self.multipart_upload(&compressed, &object_key).await?
         } else {
             self.simple_upload(&compressed, &object_key).await?
         };
 
-        self.verify_upload(&object_key, &compressed).await?;
+        // Only verify simple uploads — multipart writes to .partN chunk keys,
+        // so the main key doesn't exist until reassembly (handled by cloud storage
+        // backends like S3/GCS natively; local storage uses chunk files).
+        if !is_multipart {
+            self.verify_upload(&object_key, &compressed).await?;
+        }
         Ok(result)
     }
 

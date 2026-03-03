@@ -22,6 +22,12 @@ max_connection_data = 10485760  # 10MB
 [wal]
 path = "/tmp/rustmq/broker-wal"
 capacity_bytes = 1073741824
+# Durability vs Performance trade-off:
+#   true  = fsync after every write (max durability, ~10x slower writes)
+#   false = periodic flush via flush_interval_ms (better throughput, risk of
+#           losing up to flush_interval_ms worth of data on crash)
+# For production on GKE with replicated storage, false is acceptable since
+# data is replicated across brokers. Set true for single-node deployments.
 fsync_on_write = false
 segment_size_bytes = 16777216
 buffer_size = 16384

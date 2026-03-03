@@ -92,8 +92,24 @@ impl ConnectionPool {
         // Remove from DashMap (lock-free operation)
         self.connections.remove(client_id);
 
-        // Note: We don't remove from LRU tracker immediately to avoid lock contention
-        // The entry will be naturally removed when it reaches the front during eviction
+        // Note: We don't remove from LRU tracker immediately to avoid lock contention.
+        // Stale entries are cleaned up lazily during eviction and via purge_stale_lru_entries().
+    }
+
+    /// Purge stale entries from the LRU tracker that no longer exist in the connections map.
+    /// Call this periodically (e.g., every 60s) to prevent unbounded growth of the LRU tracker.
+    pub fn purge_stale_lru_entries(&self) {
+        let mut lru = self.lru_tracker.write();
+        let before = lru.len();
+        lru.retain(|(id, _)| self.connections.contains_key(id));
+        let purged = before - lru.len();
+        if purged > 0 {
+            tracing::debug!(
+                "Purged {} stale entries from LRU tracker ({} remaining)",
+                purged,
+                lru.len()
+            );
+        }
     }
 
     /// Get current pool size
@@ -104,6 +120,11 @@ impl ConnectionPool {
     /// Check if pool is empty
     pub fn is_empty(&self) -> bool {
         self.connections.is_empty()
+    }
+
+    /// Get LRU tracker size (for monitoring; may be larger than pool size due to stale entries)
+    pub fn lru_tracker_len(&self) -> usize {
+        self.lru_tracker.read().len()
     }
 }
 
@@ -305,6 +326,16 @@ impl QuicServer {
 
     pub async fn start(&self) -> Result<()> {
         tracing::info!("Starting QUIC server on {}", self.config.quic_listen);
+
+        // Spawn periodic LRU tracker cleanup to prevent unbounded memory growth
+        let cleanup_pool = self.connection_pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                cleanup_pool.purge_stale_lru_entries();
+            }
+        });
 
         while let Some(conn) = self.endpoint.accept().await {
             let connection = conn.await?;
@@ -1182,6 +1213,30 @@ mod tests {
 
         // Test that max_connections limit is enforced
         assert_eq!(pool.max_connections, 2);
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_lru_purge() {
+        let pool = ConnectionPool::new(100);
+
+        // Simulate adding and removing connections without real QUIC connections.
+        // We can't call add_connection (needs a Connection), but we can manipulate
+        // the LRU tracker directly to test the purge logic.
+        {
+            let mut lru = pool.lru_tracker.write();
+            // Add entries that don't exist in the connections DashMap
+            lru.push_back(("stale-1".to_string(), Instant::now()));
+            lru.push_back(("stale-2".to_string(), Instant::now()));
+            lru.push_back(("stale-3".to_string(), Instant::now()));
+        }
+
+        assert_eq!(pool.lru_tracker_len(), 3);
+        assert_eq!(pool.len(), 0); // No real connections
+
+        // Purge should remove all stale entries
+        pool.purge_stale_lru_entries();
+
+        assert_eq!(pool.lru_tracker_len(), 0);
     }
 
     #[tokio::test]
