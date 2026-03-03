@@ -39,9 +39,9 @@ spec:
     - protocol: TCP
       port: 9094  # gRPC
     - protocol: TCP
-      port: 9095  # Admin
+      port: 9095  # Raft
     - protocol: TCP
-      port: 9642  # Raft
+      port: 9642  # Admin HTTP
   # Allow broker -> controller (coordination)
   - from:
     - podSelector:
@@ -58,12 +58,15 @@ spec:
     ports:
     - protocol: TCP
       port: 9094  # gRPC
-  # Allow load balancer health checks
+  # Allow GKE load balancer health checks (restricted to Google health check CIDRs)
   - from:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 35.191.0.0/16
+    - ipBlock:
+        cidr: 130.211.0.0/22
     ports:
     - protocol: TCP
-      port: 9095  # Health check endpoint
+      port: 9095  # Health check endpoint (Raft port)
   egress:
   # Allow controller -> controller
   - to:
@@ -121,14 +124,21 @@ spec:
     - protocol: TCP
       port: 9093  # Internal port
   # Allow external clients via load balancer
+  # NOTE: In production, restrict to known client namespaces via prod overlay
+  # or use ipBlock CIDRs for specific client ranges
   - from:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          rustmq.io/client-access: "true"
     ports:
     - protocol: UDP  # QUIC requires UDP
       port: 9092
-  # Allow health checks on admin port
+  # Allow GKE load balancer health checks on admin port
   - from:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 35.191.0.0/16
+    - ipBlock:
+        cidr: 130.211.0.0/22
     ports:
     - protocol: TCP
       port: 9643  # HTTP admin port

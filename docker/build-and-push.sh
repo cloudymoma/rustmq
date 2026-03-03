@@ -31,7 +31,7 @@ REGION="${REGION:-us-central1}"
 ZONE="${ZONE:-us-central1-a}"
 
 # Container Registry Configuration
-REGISTRY_HOST="${REGISTRY_HOST:-gcr.io}"
+REGISTRY_HOST="${REGISTRY_HOST:-us-docker.pkg.dev}"
 REGISTRY_PROJECT="${REGISTRY_PROJECT:-${PROJECT_ID}}"
 REGISTRY_PREFIX="${REGISTRY_PREFIX:-${REGISTRY_HOST}/${REGISTRY_PROJECT}}"
 

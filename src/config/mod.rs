@@ -1220,4 +1220,96 @@ mod tests {
             .to_string()
             .contains("stages must have increasing priority values"));
     }
+
+    #[test]
+    fn test_tls_config_rejects_placeholder_ocsp_url() {
+        let mut tls_config = crate::config::security::TlsConfig::default();
+        tls_config.enabled = true;
+        tls_config.ocsp_url = Some("http://ocsp.example.com".to_string());
+
+        let result = tls_config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("placeholder domain"));
+    }
+
+    #[test]
+    fn test_tls_config_accepts_valid_ocsp_url() {
+        let mut tls_config = crate::config::security::TlsConfig::default();
+        tls_config.enabled = true;
+        tls_config.ocsp_url = Some("https://ocsp.digicert.com".to_string());
+
+        let result = tls_config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tls_config_accepts_no_ocsp_url() {
+        let mut tls_config = crate::config::security::TlsConfig::default();
+        tls_config.enabled = true;
+        tls_config.ocsp_url = None;
+
+        let result = tls_config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_object_storage_validation_s3_credentials_consistency() {
+        let mut storage_config = ObjectStorageConfig {
+            storage_type: StorageType::S3,
+            bucket: "test-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint: "".to_string(),
+            access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
+            secret_key: None, // Missing secret key
+            multipart_threshold: 10 * 1024 * 1024,
+            max_concurrent_uploads: 4,
+        };
+
+        let result = storage_config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("access_key and secret_key must both be set"));
+
+        // Both set = valid
+        storage_config.secret_key = Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string());
+        let result = storage_config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_object_storage_validation_zero_values() {
+        let mut storage_config = ObjectStorageConfig {
+            storage_type: StorageType::Local {
+                path: "/tmp/test".into(),
+            },
+            bucket: "test".to_string(),
+            region: "us".to_string(),
+            endpoint: "".to_string(),
+            access_key: None,
+            secret_key: None,
+            multipart_threshold: 0, // Invalid
+            max_concurrent_uploads: 4,
+        };
+
+        let result = storage_config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("multipart_threshold must be greater than 0"));
+
+        storage_config.multipart_threshold = 10 * 1024 * 1024;
+        storage_config.max_concurrent_uploads = 0; // Invalid
+        let result = storage_config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_concurrent_uploads must be greater than 0"));
+    }
 }

@@ -160,8 +160,10 @@ impl VectorizedPermissionEvaluator {
         }
 
         #[cfg(target_feature = "avx512f")]
-        unsafe {
-            self.evaluate_chunk_avx512_impl(chunk)
+        {
+            // SAFETY: AVX-512F support is guaranteed by cfg(target_feature).
+            // All SIMD loads operate on fixed-size stack arrays.
+            unsafe { self.evaluate_chunk_avx512_impl(chunk) }
         }
 
         #[cfg(not(target_feature = "avx512f"))]
@@ -171,7 +173,12 @@ impl VectorizedPermissionEvaluator {
         }
     }
 
-    /// AVX-512 implementation details
+    /// AVX-512 implementation details.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the CPU supports AVX-512F (guaranteed by `#[cfg(target_feature)]`).
+    /// Data arrays are fixed-size `[u32; 16]`, so all SIMD loads are within bounds.
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     unsafe fn evaluate_chunk_avx512_impl(&self, chunk: &[AclKey]) -> Vec<UltraFastAuthResult> {
         use std::arch::x86_64::*;
@@ -191,7 +198,8 @@ impl VectorizedPermissionEvaluator {
             required_perms[i] = encode_permission(key.permission);
         }
 
-        // Load into AVX-512 registers
+        // SAFETY: Loading from fixed-size [u32; 16] arrays (64 bytes each),
+        // which matches the 512-bit register size. loadu handles unaligned loads.
         let principals = _mm512_loadu_si512(principal_hashes.as_ptr() as *const i32);
         let permissions = _mm512_loadu_si512(permission_bits.as_ptr() as *const i32);
         let required = _mm512_loadu_si512(required_perms.as_ptr() as *const i32);
@@ -226,8 +234,10 @@ impl VectorizedPermissionEvaluator {
         }
 
         #[cfg(target_feature = "avx2")]
-        unsafe {
-            self.evaluate_chunk_avx2_impl(chunk)
+        {
+            // SAFETY: AVX2 support is guaranteed by cfg(target_feature).
+            // All SIMD loads operate on fixed-size stack arrays.
+            unsafe { self.evaluate_chunk_avx2_impl(chunk) }
         }
 
         #[cfg(not(target_feature = "avx2"))]
@@ -237,7 +247,12 @@ impl VectorizedPermissionEvaluator {
         }
     }
 
-    /// AVX2 implementation details
+    /// AVX2 implementation details.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the CPU supports AVX2 (guaranteed by `#[cfg(target_feature)]`).
+    /// Data arrays are fixed-size `[u32; 8]`, so all SIMD loads are within bounds.
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     unsafe fn evaluate_chunk_avx2_impl(&self, chunk: &[AclKey]) -> Vec<UltraFastAuthResult> {
         use std::arch::x86_64::*;
@@ -259,7 +274,8 @@ impl VectorizedPermissionEvaluator {
             required_perms[i] = encode_permission(key.permission);
         }
 
-        // Load into AVX2 registers (256-bit = 8 x 32-bit integers)
+        // SAFETY: Loading from fixed-size [u32; 8] arrays (32 bytes each),
+        // which matches the 256-bit register size. loadu handles unaligned loads.
         let principals = _mm256_loadu_si256(principal_hashes.as_ptr() as *const __m256i);
         let permissions = _mm256_loadu_si256(permission_bits.as_ptr() as *const __m256i);
         let required = _mm256_loadu_si256(required_perms.as_ptr() as *const __m256i);

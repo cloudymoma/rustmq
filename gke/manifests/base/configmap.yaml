@@ -13,8 +13,8 @@ data:
 
     [server]
     grpc_port = 9094
-    admin_port = 9095
-    raft_port = 9642
+    raft_port = 9095
+    admin_port = 9642
 
     [raft]
     heartbeat_interval_ms = 1000

@@ -60,6 +60,12 @@ spec:
               name: rustmq-admin-api-key
               key: api-key
               optional: true
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-encryption
+              key: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+              optional: true  # Required in production (overridden by prod overlay)
         volumeMounts:
         - name: config
           mountPath: /etc/rustmq/config

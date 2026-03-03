@@ -21,6 +21,7 @@ FAILED=0
 SECRETS=(
     "rustmq-tls"
     "rustmq-encryption"
+    "rustmq-tls-cert"
 )
 
 for secret in "${SECRETS[@]}"; do
@@ -46,6 +47,32 @@ if kubectl get secret rustmq-encryption -n "$NAMESPACE" &>/dev/null; then
 fi
 
 echo ""
+
+# Verify RUSTMQ_KEY_ENCRYPTION_PASSWORD is set in the encryption secret
+if kubectl get secret rustmq-encryption -n "$NAMESPACE" &>/dev/null; then
+    # Check that the secret has a 'RUSTMQ_KEY_ENCRYPTION_PASSWORD' key
+    HAS_KEY=$(kubectl get secret rustmq-encryption -n "$NAMESPACE" -o jsonpath='{.data.RUSTMQ_KEY_ENCRYPTION_PASSWORD}' 2>/dev/null || echo "")
+    if [[ -z "$HAS_KEY" ]]; then
+        # Fall back to checking the 'password' key (legacy format)
+        HAS_KEY=$(kubectl get secret rustmq-encryption -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null || echo "")
+    fi
+    if [[ -z "$HAS_KEY" ]]; then
+        echo "WARNING: rustmq-encryption missing RUSTMQ_KEY_ENCRYPTION_PASSWORD key"
+        FAILED=1
+    else
+        echo "OK: rustmq-encryption has encryption password key"
+    fi
+fi
+
+# Verify TLS certificate secret is not optional in production
+if kubectl get secret rustmq-tls-cert -n "$NAMESPACE" &>/dev/null; then
+    echo "OK: rustmq-tls-cert exists (required for production TLS)"
+else
+    echo "WARNING: rustmq-tls-cert not found - TLS will not be available"
+    FAILED=1
+fi
+
+echo ""
 echo "========================"
 
 if [ $FAILED -eq 1 ]; then
@@ -53,7 +80,9 @@ if [ $FAILED -eq 1 ]; then
     echo ""
     echo "Create missing secrets:"
     echo "  kubectl create secret tls rustmq-tls --cert=tls.crt --key=tls.key -n $NAMESPACE"
-    echo "  kubectl create secret generic rustmq-encryption --from-literal=password=\$(openssl rand -base64 32) -n $NAMESPACE"
+    echo "  kubectl create secret generic rustmq-encryption \\"
+    echo "    --from-literal=RUSTMQ_KEY_ENCRYPTION_PASSWORD=\$(openssl rand -base64 32) -n $NAMESPACE"
+    echo "  kubectl create secret tls rustmq-tls-cert --cert=broker.crt --key=broker.key -n $NAMESPACE"
     exit 1
 fi
 

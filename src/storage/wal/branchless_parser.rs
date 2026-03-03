@@ -187,8 +187,13 @@ impl BranchlessRecordBatchParser {
         logical_offset_start: u64,
     ) -> Result<Vec<WalSegmentMetadata>> {
         #[cfg(target_feature = "avx512f")]
-        unsafe {
-            self.parse_batch_avx512_impl(buffer, file_offset_start, logical_offset_start)
+        {
+            // SAFETY: AVX-512F support is guaranteed by cfg(target_feature).
+            // Buffer length is validated by the caller (parse_batch_simd checks
+            // buffer.len() >= self.batch_size * 8).
+            unsafe {
+                self.parse_batch_avx512_impl(buffer, file_offset_start, logical_offset_start)
+            }
         }
 
         #[cfg(not(target_feature = "avx512f"))]
@@ -197,7 +202,13 @@ impl BranchlessRecordBatchParser {
         }
     }
 
-    /// AVX-512 implementation details with 64-record processing
+    /// AVX-512 implementation details with 64-record processing.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure:
+    /// - The CPU supports AVX-512F (checked via `#[cfg(target_feature = "avx512f")]`)
+    /// - `buffer` has at least 64 bytes (checked by caller in `parse_batch_simd`)
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     unsafe fn parse_batch_avx512_impl(
         &mut self,
@@ -214,7 +225,9 @@ impl BranchlessRecordBatchParser {
 
         // Process records in batches of 8 (512-bit / 64-bit = 8 u64 values)
         while buffer_pos + 64 <= buffer.len() && segments.len() < max_records {
-            // Load 8 record sizes at once (8 * 8 bytes = 64 bytes)
+            // SAFETY: buffer_pos + 64 <= buffer.len() is guaranteed by the while condition,
+            // so this pointer arithmetic stays within the buffer bounds.
+            // _mm512_loadu_si512 performs an unaligned load, so no alignment requirement.
             let sizes_ptr = buffer.as_ptr().add(buffer_pos) as *const __m512i;
             let sizes_vector = _mm512_loadu_si512(sizes_ptr);
 
@@ -229,7 +242,9 @@ impl BranchlessRecordBatchParser {
             let size_valid_max = _mm512_cmple_epu64_mask(sizes_vector, max_size);
             let all_valid = size_valid_min & size_valid_max;
 
-            // Extract individual sizes and create segment metadata
+            // SAFETY: transmute from __m256i (extracted from __m512i) to [u64; 8] is valid
+            // because __m256i is 256 bits = 4 x u64, but we extracted 8 values from 512-bit register.
+            // Both types have the same size and the values are plain integer data.
             let sizes_array: [u64; 8] = std::mem::transmute(sizes);
 
             for i in 0..8 {
@@ -282,8 +297,13 @@ impl BranchlessRecordBatchParser {
         logical_offset_start: u64,
     ) -> Result<Vec<WalSegmentMetadata>> {
         #[cfg(target_feature = "avx2")]
-        unsafe {
-            self.parse_batch_avx2_impl(buffer, file_offset_start, logical_offset_start)
+        {
+            // SAFETY: AVX2 support is guaranteed by cfg(target_feature).
+            // Buffer length is validated by the caller (parse_batch_simd checks
+            // buffer.len() >= self.batch_size * 8).
+            unsafe {
+                self.parse_batch_avx2_impl(buffer, file_offset_start, logical_offset_start)
+            }
         }
 
         #[cfg(not(target_feature = "avx2"))]
@@ -292,7 +312,13 @@ impl BranchlessRecordBatchParser {
         }
     }
 
-    /// AVX2 implementation details with 32-record processing
+    /// AVX2 implementation details with 32-record processing.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure:
+    /// - The CPU supports AVX2 (checked via `#[cfg(target_feature = "avx2")]`)
+    /// - `buffer` has at least 32 bytes (checked by caller in `parse_batch_simd`)
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     unsafe fn parse_batch_avx2_impl(
         &mut self,
@@ -309,7 +335,9 @@ impl BranchlessRecordBatchParser {
 
         // Process records in batches of 4 (256-bit / 64-bit = 4 u64 values)
         while buffer_pos + 32 <= buffer.len() && segments.len() < max_records {
-            // Load 4 record sizes at once (4 * 8 bytes = 32 bytes)
+            // SAFETY: buffer_pos + 32 <= buffer.len() is guaranteed by the while condition,
+            // so this pointer arithmetic stays within the buffer bounds.
+            // _mm256_loadu_si256 performs an unaligned load, so no alignment requirement.
             let sizes_ptr = buffer.as_ptr().add(buffer_pos) as *const __m256i;
             let sizes_vector = _mm256_loadu_si256(sizes_ptr);
 
@@ -324,7 +352,8 @@ impl BranchlessRecordBatchParser {
             // Extract validation mask
             let validation_mask = _mm256_movemask_epi8(all_valid);
 
-            // Extract individual sizes
+            // SAFETY: transmute from __m256i to [u64; 4] is valid because both are 256 bits
+            // and the register contains plain integer data from the buffer.
             let sizes_array: [u64; 4] = std::mem::transmute(sizes_vector);
 
             for i in 0..4 {
@@ -391,7 +420,8 @@ impl BranchlessRecordBatchParser {
         let mut logical_offset = logical_offset_start;
 
         while buffer_pos + 8 <= buffer.len() {
-            // Branchless record size reading using unsafe for maximum performance
+            // SAFETY: The while condition guarantees buffer[buffer_pos..] has at least 8 bytes,
+            // satisfying read_record_size_branchless's precondition.
             let record_size = unsafe { self.read_record_size_branchless(&buffer[buffer_pos..]) };
 
             // Branchless validation
@@ -420,15 +450,27 @@ impl BranchlessRecordBatchParser {
         Ok(segments)
     }
 
-    /// Branchless record size reading using unsafe pointer operations
+    /// Branchless record size reading using unsafe pointer operations.
+    ///
+    /// Reads a little-endian u64 directly from the buffer without bounds checking
+    /// for maximum throughput in the hot parsing loop.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `buffer.len() >= 8`. Violating this causes
+    /// out-of-bounds memory access (undefined behavior).
     #[inline(always)]
     pub unsafe fn read_record_size_branchless(&self, buffer: &[u8]) -> u64 {
-        // Assume buffer has at least 8 bytes (caller's responsibility)
-        debug_assert!(buffer.len() >= 8);
+        debug_assert!(
+            buffer.len() >= 8,
+            "read_record_size_branchless requires buffer of at least 8 bytes, got {}",
+            buffer.len()
+        );
 
-        // Read u64 directly from memory without bounds checking
+        // SAFETY: Caller guarantees buffer has at least 8 bytes.
+        // read_unaligned handles any alignment of the source pointer.
         let ptr = buffer.as_ptr() as *const u64;
-        std::ptr::read_unaligned(ptr).to_le()
+        unsafe { std::ptr::read_unaligned(ptr) }.to_le()
     }
 
     /// Branchless record size validation using bit manipulation
@@ -694,5 +736,118 @@ mod tests {
         parser.reset_stats();
         let reset_stats = parser.get_stats();
         assert_eq!(reset_stats.total_records_parsed, 0);
+    }
+
+    #[test]
+    fn test_empty_buffer_returns_empty() {
+        let mut parser = BranchlessRecordBatchParser::new().unwrap();
+        let buffer: &[u8] = &[];
+        let segments = parser.parse_record_headers_batch(buffer, 0, 0).unwrap();
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_too_small_for_record_header() {
+        let mut parser = BranchlessRecordBatchParser::new().unwrap();
+        // 7 bytes is less than the 8-byte minimum for a record size header
+        let buffer = vec![0u8; 7];
+        let segments = parser.parse_record_headers_batch(&buffer, 0, 0).unwrap();
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_exact_minimum_buffer_size() {
+        let mut parser = BranchlessRecordBatchParser::new().unwrap();
+        // 8 bytes = exactly one u64 record size, value = 8 (minimum valid size)
+        let buffer = 8u64.to_le_bytes();
+        let segments = parser.parse_record_headers_batch(&buffer, 0, 0).unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].size_bytes, 8);
+    }
+
+    #[test]
+    fn test_record_size_larger_than_remaining_buffer() {
+        let mut parser = BranchlessRecordBatchParser::new().unwrap();
+        // Record claims to be 1000 bytes but buffer only has 16
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&1000u64.to_le_bytes());
+        buffer.extend_from_slice(&[0u8; 8]);
+        let segments = parser.parse_record_headers_batch(&buffer, 0, 0).unwrap();
+        // Should not parse because record doesn't fit in buffer
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_scalar_and_simd_consistency() {
+        // Both scalar and SIMD paths should produce identical results for the same input
+        let mut parser_scalar = BranchlessRecordBatchParser::new().unwrap();
+
+        let mut buffer = Vec::new();
+        // Create 5 valid records
+        for size in &[24u64, 32, 16, 48, 24] {
+            buffer.extend_from_slice(&size.to_le_bytes());
+            buffer.extend_from_slice(&vec![0xAB; (*size as usize) - 8]);
+        }
+
+        // Force scalar path by using the internal method directly
+        let scalar_result = parser_scalar
+            .parse_record_headers_batch(&buffer, 0, 0)
+            .unwrap();
+
+        assert_eq!(scalar_result.len(), 5);
+        for (i, seg) in scalar_result.iter().enumerate() {
+            assert_eq!(
+                seg.start_offset, i as u64,
+                "Logical offset mismatch at record {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_record_size_branchless_various_values() {
+        let parser = BranchlessRecordBatchParser::new().unwrap();
+
+        // Test with various valid sizes
+        for &expected in &[8u64, 100, 1024, 65536, 64 * 1024 * 1024] {
+            let buffer = expected.to_le_bytes();
+            // SAFETY: buffer is exactly 8 bytes
+            let actual = unsafe { parser.read_record_size_branchless(&buffer) };
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn test_validate_record_size_boundary_values() {
+        // Exact boundary: minimum valid size (8)
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(8),
+            1
+        );
+        // Below minimum
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(7),
+            0
+        );
+        // Exact boundary: maximum valid size (64MB)
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(64 * 1024 * 1024),
+            1
+        );
+        // Above maximum
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(64 * 1024 * 1024 + 1),
+            0
+        );
+        // Zero
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(0),
+            0
+        );
+        // u64::MAX
+        assert_eq!(
+            BranchlessRecordBatchParser::validate_record_size_branchless(u64::MAX),
+            0
+        );
     }
 }

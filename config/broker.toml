@@ -38,8 +38,10 @@ storage_type = { Local = { path = "/tmp/rustmq/broker-storage" } }
 bucket = "broker-bucket"
 region = "us-central1"
 endpoint = ""
-access_key = ""
-secret_key = ""
+# access_key and secret_key: Only needed for S3-compatible storage.
+# For GCS on GKE, use Workload Identity instead (no credentials needed).
+# access_key = ""
+# secret_key = ""
 multipart_threshold = 10485760  # 10MB
 max_concurrent_uploads = 2
 
@@ -163,7 +165,7 @@ tls_version_min = "TLS1.3"
 tls_version_max = "TLS1.3"
 cipher_suites = "modern"
 verify_client_cert = true
-# Allow self-signed for development/staging
+# ⚠️ SECURITY: Set to false in production. Only true for development/staging.
 allow_self_signed = true
 
 # Certificate paths for broker-specific certificates

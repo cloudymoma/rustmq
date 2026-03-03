@@ -8,3 +8,81 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
     environment: prod
     security-tier: high
+
+---
+# Production: Broker security overrides
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-broker
+  namespace: rustmq
+spec:
+  template:
+    spec:
+      containers:
+      - name: broker
+        imagePullPolicy: Always  # Always pull in production for security
+        env:
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-encryption
+              key: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+              optional: false  # REQUIRED in production
+      volumes:
+      - name: tls-cert
+        secret:
+          secretName: rustmq-tls-cert
+          optional: false  # TLS certificates REQUIRED in production
+
+---
+# Production: Controller security overrides
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustmq-controller
+  namespace: rustmq
+spec:
+  template:
+    spec:
+      containers:
+      - name: controller
+        imagePullPolicy: Always  # Always pull in production for security
+        env:
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-encryption
+              key: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+              optional: false  # REQUIRED in production
+      volumes:
+      - name: tls-cert
+        secret:
+          secretName: rustmq-tls-cert
+          optional: false  # TLS certificates REQUIRED in production
+
+---
+# Production: Admin server security overrides
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustmq-admin-server
+  namespace: rustmq
+spec:
+  template:
+    spec:
+      containers:
+      - name: admin-server
+        imagePullPolicy: Always  # Always pull in production for security
+        env:
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-encryption
+              key: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+              optional: false  # REQUIRED in production
+      volumes:
+      - name: tls-cert
+        secret:
+          secretName: rustmq-tls-cert
+          optional: false  # TLS certificates REQUIRED in production

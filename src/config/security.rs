@@ -264,6 +264,23 @@ impl TlsConfig {
                     "security.tls.cipher_suites cannot be empty when TLS is enabled".to_string(),
                 ));
             }
+
+            // Reject placeholder OCSP URLs
+            if let Some(ref ocsp_url) = self.ocsp_url {
+                if ocsp_url.contains("example.com") || ocsp_url.contains("example.org") {
+                    return Err(crate::error::RustMqError::InvalidConfig(
+                        "security.tls.ocsp_url contains a placeholder domain (example.com). \
+                         Configure a real OCSP responder URL or remove the setting."
+                            .to_string(),
+                    ));
+                }
+                if ocsp_url.starts_with("http://") {
+                    tracing::warn!(
+                        "security.tls.ocsp_url uses HTTP instead of HTTPS. \
+                         OCSP responses should be fetched over HTTPS in production."
+                    );
+                }
+            }
         }
 
         Ok(())

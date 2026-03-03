@@ -245,7 +245,16 @@ impl BatchPermissionEncoder {
         permissions.iter().map(|&p| encode_permission(p)).collect()
     }
 
-    /// Check multiple permissions against a mask (vectorizable)
+    /// Check multiple permissions against a mask using AVX2 SIMD.
+    ///
+    /// Performs vectorized `(actual & required) == required` check for 8 permissions
+    /// in a single operation.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the CPU supports AVX2. This is enforced at compile time
+    /// via `#[cfg(target_feature = "avx2")]`, but callers using runtime detection
+    /// must verify AVX2 availability before calling.
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     pub unsafe fn check_permissions_simd(
         permission_masks: &[u32; 8],
@@ -253,7 +262,8 @@ impl BatchPermissionEncoder {
     ) -> [bool; 8] {
         use std::arch::x86_64::*;
 
-        // Load 8 u32 values into AVX2 registers
+        // SAFETY: Loading from &[u32; 8] (32 bytes) which matches the 256-bit register size.
+        // loadu handles unaligned loads safely.
         let masks = _mm256_loadu_si256(permission_masks.as_ptr() as *const __m256i);
         let required = _mm256_loadu_si256(required_masks.as_ptr() as *const __m256i);
 

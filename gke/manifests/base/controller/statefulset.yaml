@@ -67,6 +67,12 @@ spec:
           value: "/var/lib/rustmq/wal"
         - name: RUSTMQ_CONTROLLER_DATA_DIR
           value: "/var/lib/rustmq/data"
+        - name: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rustmq-encryption
+              key: RUSTMQ_KEY_ENCRYPTION_PASSWORD
+              optional: true  # Required in production (overridden by prod overlay)
         volumeMounts:
         - name: wal-storage
           mountPath: /var/lib/rustmq
