@@ -35,3 +35,6 @@ tmp
 # Contains credentials for MinIO and other services
 # Use docker/.env.example as template
 docker/.env
+
+CLAUDE.md 
+GEMINI.md
