@@ -73,6 +73,7 @@ impl Default for Config {
                 endpoint: "https://storage.googleapis.com".to_string(),
                 access_key: None,
                 secret_key: None,
+                service_account_path: None,
                 multipart_threshold: 100 * 1024 * 1024, // 100MB
                 max_concurrent_uploads: 10,
             },
@@ -590,18 +591,22 @@ mod tests {
         config.scaling.max_concurrent_decommissions = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must be greater than 0")
+        );
 
         config.scaling.max_concurrent_decommissions = 15;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("should not exceed 10"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("should not exceed 10")
+        );
 
         config.scaling.max_concurrent_decommissions = 2;
         let result = config.validate();
@@ -615,10 +620,12 @@ mod tests {
         config.replication.heartbeat_timeout_ms = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("heartbeat_timeout_ms must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("heartbeat_timeout_ms must be greater than 0")
+        );
 
         config.replication.heartbeat_timeout_ms = 30000;
         let result = config.validate();
@@ -664,40 +671,48 @@ mod tests {
         config.global.requests_per_second = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("global.requests_per_second must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("global.requests_per_second must be greater than 0")
+        );
 
         config.global.requests_per_second = 100;
 
         config.global.burst_capacity = 50;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("global.burst_capacity must be >= requests_per_second"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("global.burst_capacity must be >= requests_per_second")
+        );
 
         config.global.burst_capacity = 200;
 
         config.per_ip.max_tracked_ips = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("per_ip.max_tracked_ips must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("per_ip.max_tracked_ips must be greater than 0")
+        );
 
         config.per_ip.max_tracked_ips = 1000;
 
         config.endpoints.health.endpoint_patterns.clear();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("health.endpoint_patterns cannot be empty when enabled"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("health.endpoint_patterns cannot be empty when enabled")
+        );
     }
 
     #[test]
@@ -722,10 +737,12 @@ mod tests {
         config.cleanup.cleanup_interval_secs = 5;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("should be at least 10 seconds"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("should be at least 10 seconds")
+        );
     }
 
     #[test]
@@ -749,10 +766,12 @@ mod tests {
         config.endpoints.health.endpoint_patterns = vec!["".to_string(), "  ".to_string()];
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("contains empty pattern"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("contains empty pattern")
+        );
 
         config.endpoints.health.endpoint_patterns = vec![
             "/health".to_string(),
@@ -774,10 +793,12 @@ mod tests {
 
         let result = category.validate_category("test_category");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("burst_capacity must be >= requests_per_second"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("burst_capacity must be >= requests_per_second")
+        );
 
         category.burst_capacity = 20;
         assert!(category.validate_category("test_category").is_ok());
@@ -813,19 +834,23 @@ mod tests {
         config.broker.id = "".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("broker.id cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("broker.id cannot be empty")
+        );
 
         config.broker.id = "broker-1".to_string();
         config.broker.rack_id = "".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("broker.rack_id cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("broker.rack_id cannot be empty")
+        );
     }
 
     #[test]
@@ -839,10 +864,12 @@ mod tests {
         config.replication.min_in_sync_replicas = 5;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot exceed number of controller endpoints"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot exceed number of controller endpoints")
+        );
 
         config.replication.min_in_sync_replicas = 2;
         config.replication.heartbeat_timeout_ms = 500;
@@ -858,10 +885,12 @@ mod tests {
         config.replication.ack_timeout_ms = 7000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("should not exceed 3x heartbeat_timeout_ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("should not exceed 3x heartbeat_timeout_ms")
+        );
     }
 
     #[test]
@@ -872,39 +901,47 @@ mod tests {
         config.wal.capacity_bytes = 5 * 1024 * 1024 * 1024;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("segment_size_bytes must be smaller than wal.capacity_bytes"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("segment_size_bytes must be smaller than wal.capacity_bytes")
+        );
 
         config.wal.capacity_bytes = 20 * 1024 * 1024 * 1024;
         config.wal.segment_size_bytes = 128 * 1024 * 1024;
         config.wal.buffer_size = 100 * 1024 * 1024;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("buffer_size should not exceed half of"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("buffer_size should not exceed half of")
+        );
 
         config.wal.buffer_size = 64 * 1024;
         config.wal.flush_interval_ms = 5000;
         config.wal.upload_interval_ms = 8000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("upload_interval_ms should be at least 2x flush_interval_ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("upload_interval_ms should be at least 2x flush_interval_ms")
+        );
 
         config.wal.upload_interval_ms = 10000;
         config.object_storage.multipart_threshold = 1024 * 1024;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("multipart_threshold should be at least 5MB"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multipart_threshold should be at least 5MB")
+        );
     }
 
     #[test]
@@ -914,37 +951,45 @@ mod tests {
         config.network.quic_listen = "invalid-address".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not a valid socket address"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid socket address")
+        );
 
         config.network.quic_listen = "0.0.0.0:9092".to_string();
         config.network.rpc_listen = "0.0.0.0:9092".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot use the same port"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot use the same port")
+        );
 
         config.network.rpc_listen = "0.0.0.0:9093".to_string();
         config.network.max_connections = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_connections must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_connections must be greater than 0")
+        );
 
         config.network.max_connections = 1000;
         config.network.quic_config.max_idle_timeout_ms = 500;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_idle_timeout_ms should be at least 1000ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_idle_timeout_ms should be at least 1000ms")
+        );
     }
 
     #[test]
@@ -954,20 +999,24 @@ mod tests {
         config.controller.endpoints = vec![];
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("controller.endpoints cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("controller.endpoints cannot be empty")
+        );
 
         config.controller.endpoints = vec!["controller-1:9094".to_string()];
         config.controller.heartbeat_interval_ms = 2000;
         config.controller.election_timeout_ms = 3000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("election_timeout_ms should be at least 2x heartbeat_interval_ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("election_timeout_ms should be at least 2x heartbeat_interval_ms")
+        );
 
         config.controller.election_timeout_ms = 5000;
         config.controller.raft.heartbeat_timeout_ms = 1500;
@@ -981,10 +1030,12 @@ mod tests {
         config.controller.bind_addr = "invalid-ip".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not a valid IP address"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid IP address")
+        );
     }
 
     #[test]
@@ -994,29 +1045,35 @@ mod tests {
         config.scaling.traffic_migration_rate = 1.5;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("traffic_migration_rate must be between 0.0 and 1.0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("traffic_migration_rate must be between 0.0 and 1.0")
+        );
 
         config.scaling.traffic_migration_rate = 0.1;
         config.controller.endpoints = vec!["controller-1:9094".to_string()];
         config.operations.upgrade_velocity = 5;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("upgrade_velocity cannot exceed number of controller endpoints"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("upgrade_velocity cannot exceed number of controller endpoints")
+        );
 
         config.operations.upgrade_velocity = 1;
         config.scaling.health_check_timeout_ms = 500;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("health_check_timeout_ms should be at least 1000ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("health_check_timeout_ms should be at least 1000ms")
+        );
     }
 
     #[test]
@@ -1028,10 +1085,12 @@ mod tests {
         config.etl.instance_pool.warmup_instances = 15;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("warmup_instances cannot exceed max_pool_size"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("warmup_instances cannot exceed max_pool_size")
+        );
 
         config.etl.instance_pool.warmup_instances = 5;
         config.etl.pipelines = vec![crate::config::EtlPipelineConfig {
@@ -1047,10 +1106,12 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("pipeline_id cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("pipeline_id cannot be empty")
+        );
     }
 
     #[test]
@@ -1060,28 +1121,34 @@ mod tests {
         config.network.connection_timeout_ms = 500;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("connection_timeout_ms should be at least 1000ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("connection_timeout_ms should be at least 1000ms")
+        );
 
         config.network.connection_timeout_ms = 30000;
         config.operations.graceful_shutdown_timeout_ms = 3000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("graceful_shutdown_timeout_ms should be at least 5000ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("graceful_shutdown_timeout_ms should be at least 5000ms")
+        );
 
         config.operations.graceful_shutdown_timeout_ms = 60000;
         config.scaling.rebalance_timeout_ms = 10000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("rebalance_timeout_ms should be at least 30000ms"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rebalance_timeout_ms should be at least 30000ms")
+        );
     }
 
     #[test]
@@ -1092,28 +1159,34 @@ mod tests {
         config.wal.flush_interval_ms = 0;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains(
-            "flush_interval_ms must be greater than 0 when wal.fsync_on_write is false"
-        ));
+        assert!(
+            result.unwrap_err().to_string().contains(
+                "flush_interval_ms must be greater than 0 when wal.fsync_on_write is false"
+            )
+        );
 
         config.wal.flush_interval_ms = 1000;
         config.object_storage.max_concurrent_uploads = 200;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_concurrent_uploads should not exceed 100"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_concurrent_uploads should not exceed 100")
+        );
 
         config.object_storage.max_concurrent_uploads = 10;
         config.cache.write_cache_size_bytes = 60_000_000_000;
         config.cache.read_cache_size_bytes = 50_000_000_000;
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("total cache size exceeds 100GB"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("total cache size exceeds 100GB")
+        );
     }
 
     #[test]
@@ -1215,10 +1288,12 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("stages must have increasing priority values"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("stages must have increasing priority values")
+        );
     }
 
     #[test]
@@ -1229,10 +1304,12 @@ mod tests {
 
         let result = tls_config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("placeholder domain"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("placeholder domain")
+        );
     }
 
     #[test]
@@ -1264,16 +1341,19 @@ mod tests {
             endpoint: "".to_string(),
             access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
             secret_key: None, // Missing secret key
+            service_account_path: None,
             multipart_threshold: 10 * 1024 * 1024,
             max_concurrent_uploads: 4,
         };
 
         let result = storage_config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("access_key and secret_key must both be set"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("access_key and secret_key must both be set")
+        );
 
         // Both set = valid
         storage_config.secret_key = Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string());
@@ -1292,24 +1372,29 @@ mod tests {
             endpoint: "".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 0, // Invalid
             max_concurrent_uploads: 4,
         };
 
         let result = storage_config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("multipart_threshold must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multipart_threshold must be greater than 0")
+        );
 
         storage_config.multipart_threshold = 10 * 1024 * 1024;
         storage_config.max_concurrent_uploads = 0; // Invalid
         let result = storage_config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_concurrent_uploads must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_concurrent_uploads must be greater than 0")
+        );
     }
 }

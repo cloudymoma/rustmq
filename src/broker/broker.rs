@@ -26,7 +26,7 @@ use tracing::{error, info, warn};
 // Type aliases to make the broker core type more manageable
 type BrokerCore = MessageBrokerCore<
     DirectIOWal,
-    LocalObjectStorage,
+    crate::storage::StorageBackend,
     LruCache,
     ReplicationManager,
     SimpleNetworkHandler,
@@ -121,11 +121,34 @@ impl Broker {
         let object_storage = match &config.object_storage.storage_type {
             crate::config::StorageType::Local { path } => {
                 std::fs::create_dir_all(path)?;
-                Arc::new(LocalObjectStorage::new(path.clone())?)
+                Arc::new(crate::storage::StorageBackend::Local(
+                    LocalObjectStorage::new(path.clone())?,
+                ))
+            }
+            crate::config::StorageType::Gcs => {
+                let mut builder = object_store::gcp::GoogleCloudStorageBuilder::new()
+                    .with_bucket_name(&config.object_storage.bucket);
+
+                if let Some(creds) = config
+                    .object_storage
+                    .service_account_path
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                {
+                    builder = builder.with_service_account_path(creds);
+                }
+
+                let store = builder.build().map_err(|e| {
+                    tracing::error!("GCS store initialization failed: {}", e);
+                    RustMqError::Config("Failed to initialize cloud storage backend".to_string())
+                })?;
+                Arc::new(crate::storage::StorageBackend::Cloud(
+                    crate::storage::cloud_storage::CloudObjectStorage::new(Arc::new(store)),
+                ))
             }
             _ => {
                 return Err(RustMqError::Config(
-                    "Only Local storage supported in this implementation".to_string(),
+                    "Only Local and GCS storage supported in this implementation".to_string(),
                 ));
             }
         };
@@ -179,9 +202,9 @@ impl Broker {
 
         // Create MessageBrokerCore
         info!("Creating MessageBrokerCore...");
-        let broker_core = Arc::new(MessageBrokerCore::new(
+        let broker_core = Arc::new(BrokerCore::new(
             wal,
-            object_storage,
+            object_storage.clone(),
             cache,
             replication_manager,
             network_handler,

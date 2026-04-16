@@ -11,3 +11,6 @@ pub use object_storage::*;
 pub use tiered::*;
 pub use traits::*;
 pub use wal::{DirectIOWal, OptimizedDirectIOWal, PlatformCapabilities, WalFactory};
+pub mod backend;
+pub mod cloud_storage;
+pub use backend::StorageBackend;

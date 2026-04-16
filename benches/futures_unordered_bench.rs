@@ -40,6 +40,7 @@ fn bench_multipart_upload_parallel(c: &mut Criterion) {
                     endpoint: "".to_string(),
                     access_key: None,
                     secret_key: None,
+                    service_account_path: None,
                     multipart_threshold: 5 * 1024 * 1024,
                     max_concurrent_uploads: 10,
                 };

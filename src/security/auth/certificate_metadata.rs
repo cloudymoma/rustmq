@@ -369,7 +369,9 @@ impl CertificateMetadata {
             return Some(s.as_str().to_string());
         }
         // Fallback: try raw bytes as UTF-8
-        std::str::from_utf8(value.value()).ok().map(|s| s.to_string())
+        std::str::from_utf8(value.value())
+            .ok()
+            .map(|s| s.to_string())
     }
 
     /// Parse validity period from certificate, converting ASN.1 time to DateTime<Utc>
@@ -382,9 +384,7 @@ impl CertificateMetadata {
         let now = Utc::now();
         let is_currently_valid = now >= not_before && now <= not_after;
         let days_until_expiry = (not_after - now).num_days();
-        let validity_duration_seconds = (not_after - not_before)
-            .num_seconds()
-            .max(0) as u64;
+        let validity_duration_seconds = (not_after - not_before).num_seconds().max(0) as u64;
 
         Ok(ValidityPeriod {
             not_before,
@@ -396,17 +396,15 @@ impl CertificateMetadata {
     }
 
     /// Convert x509-cert Time to chrono DateTime<Utc>
-    fn x509_time_to_datetime(
-        time: &x509_cert::time::Time,
-    ) -> Result<DateTime<Utc>, RustMqError> {
+    fn x509_time_to_datetime(time: &x509_cert::time::Time) -> Result<DateTime<Utc>, RustMqError> {
         // x509-cert Time can be encoded to DER and contains the raw time bytes.
         // Convert via SystemTime which x509-cert supports.
         let system_time: SystemTime = (*time).into();
-        let duration = system_time
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| RustMqError::InvalidCertificate {
+        let duration = system_time.duration_since(UNIX_EPOCH).map_err(|e| {
+            RustMqError::InvalidCertificate {
                 reason: format!("Certificate time before Unix epoch: {}", e),
-            })?;
+            }
+        })?;
         Utc.timestamp_opt(duration.as_secs() as i64, duration.subsec_nanos())
             .single()
             .ok_or_else(|| RustMqError::InvalidCertificate {
@@ -436,8 +434,7 @@ impl CertificateMetadata {
             }
             oids::EC_PUBLIC_KEY => {
                 // For EC keys, check the curve from algorithm parameters
-                let (curve, size, strength) =
-                    Self::detect_ec_curve(spki, key_bit_len);
+                let (curve, size, strength) = Self::detect_ec_curve(spki, key_bit_len);
                 (
                     "id-ecPublicKey".to_string(),
                     Some(size),
@@ -445,12 +442,7 @@ impl CertificateMetadata {
                     strength,
                 )
             }
-            _ => (
-                oid_str,
-                None,
-                None,
-                KeyStrength::Unknown,
-            ),
+            _ => (oid_str, None, None, KeyStrength::Unknown),
         };
 
         Ok(PublicKeyInfo {

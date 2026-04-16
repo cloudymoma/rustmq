@@ -1,0 +1,19 @@
+# GCS Integration Test Configuration Template
+# 
+# To use real GCS for integration tests:
+# 1. Copy this file to 'gcs-test.yaml' (this file is gitignored).
+# 2. Fill in your GCP project and bucket details.
+# 3. Authenticate via one of the methods below.
+
+# The GCP Project ID where the bucket resides.
+project_id: "your-gcp-project-id"
+
+# The GCS bucket name to use for integration tests.
+# WARNING: Tests may create and delete objects with prefixes like 'integration-test/'.
+bucket_name: "your-test-bucket-name"
+
+# Optional: Path to a Service Account JSON key file.
+# If omitted, the test suite will check for:
+#   1. The $GOOGLE_APPLICATION_CREDENTIALS environment variable.
+#   2. Application Default Credentials (ADC) from 'gcloud auth application-default login'.
+credentials_path: ""

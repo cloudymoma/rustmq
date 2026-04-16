@@ -77,9 +77,7 @@ impl AuthenticatedConnection {
     /// Falls back to reasonable defaults if handshake data is unavailable.
     fn extract_tls_info(connection: &Connection) -> (String, String) {
         if let Some(handshake) = connection.handshake_data() {
-            if let Some(data) = handshake
-                .downcast_ref::<quinn::crypto::rustls::HandshakeData>()
-            {
+            if let Some(data) = handshake.downcast_ref::<quinn::crypto::rustls::HandshakeData>() {
                 // Extract TLS version from the negotiated protocol version
                 let tls_version = data
                     .protocol

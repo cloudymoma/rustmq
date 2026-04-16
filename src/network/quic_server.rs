@@ -796,10 +796,7 @@ impl SecureQuicServer {
     async fn authenticate_connection(
         connection: &Connection,
         auth_manager: &AuthenticationManager,
-    ) -> Result<(
-        crate::security::AuthContext,
-        Vec<CertificateDer<'static>>,
-    )> {
+    ) -> Result<(crate::security::AuthContext, Vec<CertificateDer<'static>>)> {
         // Extract client certificates from the QUIC/TLS connection
         // Note: In a real implementation, we'd extract these from the TLS handshake
         // For now, we'll simulate the process since quinn/rustls certificate extraction
@@ -896,10 +893,9 @@ impl SecureQuicServer {
 
                     // Compute from PEM if available
                     if let Some(ref pem) = cert_info.certificate_pem {
-                        let der_certs: Vec<_> =
-                            rustls_pemfile::certs(&mut pem.as_bytes())
-                                .filter_map(|r| r.ok())
-                                .collect();
+                        let der_certs: Vec<_> = rustls_pemfile::certs(&mut pem.as_bytes())
+                            .filter_map(|r| r.ok())
+                            .collect();
                         if let Some(der) = der_certs.first() {
                             let mut hasher = Sha256::new();
                             hasher.update(der.as_ref());

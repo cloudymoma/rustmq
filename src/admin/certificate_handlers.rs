@@ -449,7 +449,10 @@ impl CertificateHandlers {
         let key_bits = spki.subject_public_key.data.len() * 8;
         let alg_oid = spki.algorithm.algorithm.to_id_string();
         if alg_oid == "1.2.840.113549.1.1.1" && key_bits < 2048 {
-            warnings.push(format!("RSA key size {} bits is below recommended minimum of 2048", key_bits));
+            warnings.push(format!(
+                "RSA key size {} bits is below recommended minimum of 2048",
+                key_bits
+            ));
         }
 
         // Check expiry warning (30 days)
@@ -467,9 +470,10 @@ impl CertificateHandlers {
                 hex::encode(hasher.finalize())
             };
             let revoked_certs = self.certificate_manager.get_revoked_certificates().await?;
-            if revoked_certs.iter().any(|rc| {
-                hex::encode(parsed_cert.serial.to_bytes_be()) == rc.serial_number
-            }) {
+            if revoked_certs
+                .iter()
+                .any(|rc| hex::encode(parsed_cert.serial.to_bytes_be()) == rc.serial_number)
+            {
                 errors.push("Certificate has been revoked".to_string());
             }
         }
@@ -492,14 +496,22 @@ impl CertificateHandlers {
         let mut chain = Vec::new();
 
         // Get the end-entity certificate
-        if let Some(cert_info) = self.certificate_manager.get_certificate_by_id(&cert_id).await? {
+        if let Some(cert_info) = self
+            .certificate_manager
+            .get_certificate_by_id(&cert_id)
+            .await?
+        {
             if let Some(pem) = &cert_info.certificate_pem {
                 chain.push(pem.clone());
             }
 
             // Get the CA certificate (issuer) if available
             if let Some(issuer_id) = &cert_info.issuer_id {
-                if let Some(issuer_info) = self.certificate_manager.get_certificate_by_id(issuer_id).await? {
+                if let Some(issuer_info) = self
+                    .certificate_manager
+                    .get_certificate_by_id(issuer_id)
+                    .await?
+                {
                     if let Some(issuer_pem) = &issuer_info.certificate_pem {
                         chain.push(issuer_pem.clone());
                     }

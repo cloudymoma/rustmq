@@ -189,8 +189,10 @@ impl AsyncWrite for SyncingFileWriter {
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         if let Some(ref mut file) = self.file {
-            // First flush, then the file will sync on drop
-            Pin::new(file).poll_flush(cx)
+            // Delegate to the underlying file's shutdown which flushes to OS buffers.
+            // Note: this does NOT call sync_all(). For durability guarantees on local
+            // storage, use ObjectStorage::put() which calls sync_all() explicitly.
+            Pin::new(file).poll_shutdown(cx)
         } else {
             Poll::Ready(Ok(()))
         }
@@ -200,8 +202,9 @@ impl AsyncWrite for SyncingFileWriter {
 impl Drop for SyncingFileWriter {
     fn drop(&mut self) {
         if let Some(file) = self.file.take() {
-            // We can't await in Drop, but tokio::fs::File will sync on drop
-            // This is a best-effort fallback
+            // Best-effort cleanup: closes the file descriptor.
+            // Does NOT sync to disk — callers must call shutdown() before dropping
+            // for durability guarantees.
             drop(file);
         }
     }
@@ -498,6 +501,7 @@ mod tests {
             endpoint: "".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 1024,
             max_concurrent_uploads: 1,
         };

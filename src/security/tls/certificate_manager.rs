@@ -1786,9 +1786,9 @@ impl CertificateManager {
                         let curve_oid = oid.to_id_string();
                         let size = match curve_oid.as_str() {
                             "1.2.840.10045.3.1.7" => 256, // P-256
-                            "1.3.132.0.34" => 384,         // P-384
-                            "1.3.132.0.35" => 521,         // P-521
-                            _ => 256,                      // Default to 256
+                            "1.3.132.0.34" => 384,        // P-384
+                            "1.3.132.0.35" => 521,        // P-521
+                            _ => 256,                     // Default to 256
                         };
                         return (KeyType::Ecdsa, size);
                     }
@@ -1796,8 +1796,8 @@ impl CertificateManager {
                 // Fallback: infer from public key length
                 let key_bytes = spki.subject_public_key.data.len();
                 let size = match key_bytes {
-                    64..=65 => 256,  // P-256 (uncompressed point: 1 + 32 + 32)
-                    96..=97 => 384,  // P-384
+                    64..=65 => 256,   // P-256 (uncompressed point: 1 + 32 + 32)
+                    96..=97 => 384,   // P-384
                     132..=133 => 521, // P-521
                     _ => 256,
                 };

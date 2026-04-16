@@ -3092,3 +3092,22 @@ For commercial licensing inquiries, please contact the license holder through th
 ---
 
 **RustMQ** - Built with ❤️ in Rust for the cloud-native future. Optimized for Google Cloud Platform.
+
+## Local GCS Testing
+
+To run GCS integration tests locally during development, you can use a real Google Cloud Storage bucket.
+
+1. Copy the configuration template:
+   ```bash
+   cp gcs-test.yaml.template gcs-test.yaml
+   ```
+2. Update `gcs-test.yaml` with your GCP project ID and test bucket name.
+3. Authenticate via one of these methods:
+   - Provide a path to a service account JSON key in the `credentials_path` field.
+   - Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
+   - Use Application Default Credentials (ADC) by running `gcloud auth application-default login`.
+4. Run the integration tests:
+   ```bash
+   cargo test --test integration_gcs -- --ignored
+   ```
+   *Note: If `gcs-test.yaml` is not found, these tests will be skipped automatically.*

@@ -14,11 +14,11 @@ use smallvec::SmallVec;
 /// High-level message broker core that orchestrates produce/consume operations
 pub struct MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     wal: Arc<W>,
     object_storage: Arc<O>,
@@ -112,11 +112,11 @@ impl ConsumeRecord {
 
 impl<W, O, C, R, N> MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     pub fn new(
         wal: Arc<W>,
@@ -303,22 +303,22 @@ where
 /// High-level producer implementation
 pub struct MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     core: Arc<MessageBrokerCore<W, O, C, R, N>>,
 }
 
 impl<W, O, C, R, N> MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>) -> Self {
         Self {
@@ -330,11 +330,11 @@ where
 #[async_trait]
 impl<W, O, C, R, N> Producer for MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     async fn send(&self, record: ProduceRecord) -> Result<ProduceResult> {
         let partition_id = record.partition.unwrap_or(0); // Simple partitioning
@@ -417,11 +417,11 @@ where
 /// High-level consumer implementation
 pub struct MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     core: Arc<MessageBrokerCore<W, O, C, R, N>>,
     #[allow(dead_code)]
@@ -432,11 +432,11 @@ where
 
 impl<W, O, C, R, N> MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>, consumer_group: String) -> Self {
         Self {
@@ -451,11 +451,11 @@ where
 #[async_trait]
 impl<W, O, C, R, N> Consumer for MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     async fn subscribe(&mut self, topics: Vec<TopicName>) -> Result<()> {
         self.subscribed_topics = topics;
@@ -521,11 +521,11 @@ where
 
 impl<W, O, C, R, N> Clone for MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync,
-    O: ObjectStorage + Send + Sync,
-    C: Cache + Send + Sync,
-    R: ReplicationManager + Send + Sync,
-    N: NetworkHandler + Send + Sync,
+    W: WriteAheadLog + Send + Sync + ?Sized,
+    O: ObjectStorage + Send + Sync + ?Sized,
+    C: Cache + Send + Sync + ?Sized,
+    R: ReplicationManager + Send + Sync + ?Sized,
+    N: NetworkHandler + Send + Sync + ?Sized,
 {
     fn clone(&self) -> Self {
         Self {

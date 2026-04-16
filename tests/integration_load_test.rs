@@ -64,6 +64,7 @@ async fn create_test_broker_config(temp_dir: &TempDir, quic_port: u16, rpc_port:
             endpoint: "https://storage.googleapis.com".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 100 * 1024 * 1024,
             max_concurrent_uploads: 8,
         },

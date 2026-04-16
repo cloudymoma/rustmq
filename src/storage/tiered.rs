@@ -157,11 +157,8 @@ impl CompactionManager for CompactionManagerImpl {
             }
         }
 
-        // Ensure all data is written and synced
-        output_stream.flush().await?;
-
-        // Drop the stream to ensure file is closed and synced
-        drop(output_stream);
+        // Finalize the write stream (flushes buffered data and completes multipart upload)
+        output_stream.shutdown().await?;
 
         // Delete source segments after successful compaction
         for key in segment_keys {
@@ -242,6 +239,30 @@ impl TieredStorageEngine {
         engine.setup_upload_coordination();
 
         engine
+    }
+    /// Returns the WAL instance. Primarily for testing.
+    pub fn wal(&self) -> Arc<dyn WriteAheadLog> {
+        self.wal.clone()
+    }
+
+    /// Returns the object storage backend. Primarily for testing.
+    pub fn object_storage(&self) -> Arc<dyn ObjectStorage> {
+        self.object_storage.clone()
+    }
+
+    /// Returns the upload manager. Primarily for testing.
+    pub fn upload_manager(&self) -> Arc<dyn UploadManager> {
+        self.upload_manager.clone()
+    }
+
+    /// Returns the metadata store. Primarily for testing.
+    pub fn metadata_store(&self) -> Arc<MetadataStore> {
+        self.metadata_store.clone()
+    }
+
+    /// Returns the compaction manager. Primarily for testing.
+    pub fn compaction_manager(&self) -> Arc<dyn CompactionManager> {
+        self.compaction_manager.clone()
     }
 
     fn setup_upload_coordination(&self) {
@@ -449,16 +470,22 @@ impl TieredStorageEngine {
         for segment in segments {
             if segment.start_offset <= offset && offset < segment.end_offset {
                 if matches!(segment.status, SegmentStatus::InObjectStore) {
-                    let object_data = self.object_storage.get(&segment.object_key).await?;
-                    self.cache_manager
-                        .cache_read(&cache_key, object_data.clone())
-                        .await?;
-
-                    let segment = self
+                    let downloaded = self
                         .upload_manager
                         .download_segment(&segment.object_key)
                         .await?;
-                    let wal_records = bincode::deserialize::<Vec<WalRecord>>(&segment.data)?;
+                    let wal_records = bincode::deserialize::<Vec<WalRecord>>(&downloaded.data)?;
+
+                    // Cache each deserialized record so cache hits can deserialize correctly
+                    for wr in &wal_records {
+                        let record_cache_key =
+                            format!("{topic_partition}:{}", wr.offset);
+                        let serialized = bincode::serialize(&wr.record)?;
+                        self.cache_manager
+                            .cache_read(&record_cache_key, Bytes::from(serialized))
+                            .await?;
+                    }
+
                     let records: Vec<Record> = wal_records.into_iter().map(|r| r.record).collect();
                     return Ok(records);
                 }
@@ -619,6 +646,7 @@ mod tests {
             endpoint: "".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 1024,
             max_concurrent_uploads: 1,
         };
@@ -693,6 +721,7 @@ mod tests {
             endpoint: "".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 1024,
             max_concurrent_uploads: 1,
         };
@@ -875,6 +904,7 @@ mod tests {
             endpoint: "".to_string(),
             access_key: None,
             secret_key: None,
+            service_account_path: None,
             multipart_threshold: 1024,
             max_concurrent_uploads: 1,
         };

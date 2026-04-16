@@ -36,5 +36,13 @@ tmp
 # Use docker/.env.example as template
 docker/.env
 
+# Local GCS integration test config
+gcs-test.yaml
+
 CLAUDE.md 
 GEMINI.md
+
+# Credentials and Keys
+*-sa-key.json
+*-credentials.json
+service-account*.json

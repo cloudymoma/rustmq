@@ -191,9 +191,7 @@ impl BranchlessRecordBatchParser {
             // SAFETY: AVX-512F support is guaranteed by cfg(target_feature).
             // Buffer length is validated by the caller (parse_batch_simd checks
             // buffer.len() >= self.batch_size * 8).
-            unsafe {
-                self.parse_batch_avx512_impl(buffer, file_offset_start, logical_offset_start)
-            }
+            unsafe { self.parse_batch_avx512_impl(buffer, file_offset_start, logical_offset_start) }
         }
 
         #[cfg(not(target_feature = "avx512f"))]
@@ -301,9 +299,7 @@ impl BranchlessRecordBatchParser {
             // SAFETY: AVX2 support is guaranteed by cfg(target_feature).
             // Buffer length is validated by the caller (parse_batch_simd checks
             // buffer.len() >= self.batch_size * 8).
-            unsafe {
-                self.parse_batch_avx2_impl(buffer, file_offset_start, logical_offset_start)
-            }
+            unsafe { self.parse_batch_avx2_impl(buffer, file_offset_start, logical_offset_start) }
         }
 
         #[cfg(not(target_feature = "avx2"))]

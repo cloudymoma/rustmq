@@ -30,7 +30,7 @@ pub enum EvictionPolicy {
     Moka,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ObjectStorageConfig {
     pub storage_type: StorageType,
     pub bucket: String,
@@ -38,6 +38,7 @@ pub struct ObjectStorageConfig {
     pub endpoint: String,
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
+    pub service_account_path: Option<String>,
     pub multipart_threshold: u64,
     pub max_concurrent_uploads: usize,
 }
@@ -93,5 +94,27 @@ impl ObjectStorageConfig {
         }
 
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for ObjectStorageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectStorageConfig")
+            .field("storage_type", &self.storage_type)
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("endpoint", &self.endpoint)
+            .field(
+                "access_key",
+                &self.access_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "secret_key",
+                &self.secret_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("service_account_path", &self.service_account_path)
+            .field("multipart_threshold", &self.multipart_threshold)
+            .field("max_concurrent_uploads", &self.max_concurrent_uploads)
+            .finish()
     }
 }
