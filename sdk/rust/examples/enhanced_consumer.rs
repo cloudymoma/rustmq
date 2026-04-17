@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     // Create client configuration
     let client_config = ClientConfig {
@@ -275,7 +275,7 @@ async fn print_consumer_metrics(consumer: &Consumer) {
 
     let last_receive = metrics.last_receive_time.read().await;
     if let Some(time) = *last_receive {
-        let since_last = std::time::Instant::now().duration_since(time);
+        let since_last = time.elapsed();
         info!("  Time since last receive: {:?}", since_last);
     }
 

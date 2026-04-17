@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         connect_timeout: Duration::from_secs(10),
         keep_alive_interval: Duration::from_secs(30),
         max_connections: 5,
-        retry_config: RetryConfig {
+        retry_config: rustmq_client::config::RetryConfig {
             max_retries: 3,
             base_delay: Duration::from_millis(100),
             max_delay: Duration::from_secs(5),

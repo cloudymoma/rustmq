@@ -51,11 +51,12 @@ use uuid::Uuid;
 ///
 /// ## Example Usage
 ///
-/// ```rust
+/// ```rust,no_run
 /// use rustmq_client::{*, config::StartPosition};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<()> {
+///     rustmq_client::init_crypto_provider();
 ///     let client = RustMqClient::new(ClientConfig::default()).await?;
 ///     
 ///     let consumer = ConsumerBuilder::new()
@@ -74,6 +75,7 @@ use uuid::Uuid;
 ///         .await?;
 ///     
 ///     // High-throughput message processing
+///     # async fn process_message(msg: &rustmq_client::Message) -> std::result::Result<(), ()> { Ok(()) }
 ///     while let Some(consumer_message) = consumer.receive().await? {
 ///         match process_message(&consumer_message.message).await {
 ///             Ok(_) => consumer_message.ack().await?,

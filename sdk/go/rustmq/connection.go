@@ -20,7 +20,7 @@ import (
 // Connection manages QUIC connections to RustMQ brokers
 type Connection struct {
 	config          *ClientConfig
-	connections     []quic.Connection
+	connections     []*quic.Conn
 	current         int64
 	mutex           sync.RWMutex
 	stats           *ConnectionStats
@@ -57,7 +57,7 @@ type BackoffState struct {
 func newConnection(config *ClientConfig) (*Connection, error) {
 	conn := &Connection{
 		config:       config,
-		connections:  make([]quic.Connection, 0, len(config.Brokers)),
+		connections:  make([]*quic.Conn, 0, len(config.Brokers)),
 		reconnecting: make(map[int]bool),
 		backoffState: make(map[int]*BackoffState),
 		stats: &ConnectionStats{
@@ -84,7 +84,7 @@ func newConnection(config *ClientConfig) (*Connection, error) {
 func newConnectionWithSecurity(config *ClientConfig, securityManager *SecurityManager) (*Connection, error) {
 	conn := &Connection{
 		config:          config,
-		connections:     make([]quic.Connection, 0, len(config.Brokers)),
+		connections:     make([]*quic.Conn, 0, len(config.Brokers)),
 		reconnecting:    make(map[int]bool),
 		backoffState:    make(map[int]*BackoffState),
 		securityManager: securityManager,
@@ -186,7 +186,7 @@ func (c *Connection) establishConnections() error {
 }
 
 // getConnection returns the next available connection using round-robin
-func (c *Connection) getConnection() (quic.Connection, error) {
+func (c *Connection) getConnection() (*quic.Conn, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 

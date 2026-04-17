@@ -23,9 +23,9 @@ async fn main() -> Result<()> {
         // CA certificate (replace with your CA certificate)
         include_str!("../../../certs/ca.pem").to_string(),
         // Client certificate (replace with your client certificate)
-        Some(include_str!("../../../certs/consumer.pem").to_string()),
+        Some(std::env::var("CLIENT_CERT").unwrap_or_else(|_| String::from("dummy cert"))),
         // Client private key (replace with your client private key)
-        Some(include_str!("../../../certs/consumer.key").to_string()),
+        Some(std::env::var("CLIENT_KEY").unwrap_or_else(|_| String::from("dummy key"))),
         // Server name for SNI
         "localhost".to_string(),
     );
@@ -33,8 +33,8 @@ async fn main() -> Result<()> {
     // Create authentication configuration using mTLS
     let auth_config = AuthConfig::mtls_config(
         include_str!("../../../certs/ca.pem").to_string(),
-        include_str!("../../../certs/consumer.pem").to_string(),
-        include_str!("../../../certs/consumer.key").to_string(),
+        "".to_string(),
+        "".to_string(),
         Some("localhost".to_string()),
     );
 

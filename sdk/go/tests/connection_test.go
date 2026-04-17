@@ -88,7 +88,7 @@ func (m *MockBroker) acceptConnections() {
 }
 
 // handleConnection handles a single QUIC connection
-func (m *MockBroker) handleConnection(conn quic.Connection) {
+func (m *MockBroker) handleConnection(conn *quic.Conn) {
 	defer conn.CloseWithError(0, "test completed")
 
 	for {
@@ -101,7 +101,7 @@ func (m *MockBroker) handleConnection(conn quic.Connection) {
 }
 
 // handleStream handles a single QUIC stream
-func (m *MockBroker) handleStream(stream quic.Stream) {
+func (m *MockBroker) handleStream(stream *quic.Stream) {
 	defer stream.Close()
 
 	// Read request length first

@@ -111,6 +111,12 @@ fn create_tls_test_config(brokers: Vec<String>) -> ClientConfig {
             check_revocation: false,
             allow_self_signed: true,
             max_chain_depth: 10,
+            cache_size: 100,
+            cache_ttl_seconds: 3600,
+            enable_batch_validation: false,
+            enable_webpki: true,
+            enable_caching: true,
+            performance_target_us: 1000,
         },
         alpn_protocols: vec!["h3".to_string()],
     });
