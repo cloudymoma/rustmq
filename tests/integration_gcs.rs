@@ -7,7 +7,6 @@ use object_store::gcp::{GoogleCloudStorage, GoogleCloudStorageBuilder};
 use std::sync::Arc;
 
 #[tokio::test]
-#[ignore = "Requires local gcs-test.yaml configuration"]
 async fn test_gcs_integration() {
     let config = match GcsTestConfig::load() {
         Some(c) => c,
@@ -22,7 +21,7 @@ async fn test_gcs_integration() {
         config.project_id
     );
 
-    let mut builder = GoogleCloudStorageBuilder::new().with_bucket_name(&config.bucket_name);
+    let mut builder = GoogleCloudStorageBuilder::from_env().with_bucket_name(&config.bucket_name);
 
     if let Some(creds) = config.credentials_path.as_deref().filter(|s| !s.is_empty()) {
         builder = builder.with_service_account_path(creds);

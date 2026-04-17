@@ -126,7 +126,7 @@ impl Broker {
                 ))
             }
             crate::config::StorageType::Gcs => {
-                let mut builder = object_store::gcp::GoogleCloudStorageBuilder::new()
+                let mut builder = object_store::gcp::GoogleCloudStorageBuilder::from_env()
                     .with_bucket_name(&config.object_storage.bucket);
 
                 if let Some(creds) = config

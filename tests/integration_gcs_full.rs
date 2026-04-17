@@ -16,9 +16,40 @@ use rustmq::types::{Record, TopicPartition, WalRecord};
 use std::sync::Arc;
 use tempfile::TempDir;
 
+use common::gcs::GcsTestConfig;
+
 async fn setup_tiered_engine() -> (Arc<TieredStorageEngine>, Arc<dyn ObjectStore>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(InMemory::new());
+    
+    let (store, bucket, service_account_path) = match GcsTestConfig::load() {
+        Some(config) => {
+            let mut builder = object_store::gcp::GoogleCloudStorageBuilder::from_env()
+                .with_bucket_name(&config.bucket_name);
+            if let Some(creds) = config.credentials_path.as_deref().filter(|s| !s.is_empty()) {
+                builder = builder.with_service_account_path(creds);
+            }
+            match builder.build() {
+                Ok(gcs) => {
+                    let gcs_arc = Arc::new(gcs) as Arc<dyn ObjectStore>;
+                    // Verify access before proceeding
+                    match gcs_arc.list_with_delimiter(None).await {
+                        Ok(_) => (gcs_arc, config.bucket_name, config.credentials_path),
+                        Err(e) => {
+                            println!("GCS ping failed: {}. Falling back to InMemory.", e);
+                            (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to build GCS store: {}. Falling back to InMemory.", e);
+                    (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
+                }
+            }
+        }
+        None => {
+            (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
+        }
+    };
 
     let wal_config = WalConfig {
         path: temp_dir.path().join("wal"),
@@ -38,12 +69,12 @@ async fn setup_tiered_engine() -> (Arc<TieredStorageEngine>, Arc<dyn ObjectStore
 
     let storage_config = ObjectStorageConfig {
         storage_type: StorageType::Gcs,
-        bucket: "test".to_string(),
+        bucket,
         region: "local".to_string(),
         endpoint: "".to_string(),
         access_key: None,
         secret_key: None,
-        service_account_path: None,
+        service_account_path,
         multipart_threshold: 10 * 1024 * 1024,
         max_concurrent_uploads: 4,
     };
