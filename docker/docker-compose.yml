@@ -18,14 +18,10 @@ services:
       - minio_data:/data
     networks:
       - rustmq-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # RustMQ Controller nodes (3-node cluster for HA)
   rustmq-controller-1:
+    image: rustmq-controller:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.controller
@@ -49,13 +45,9 @@ services:
       - rustmq-network
     volumes:
       - controller1_data:/var/lib/rustmq
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   rustmq-controller-2:
+    image: rustmq-controller:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.controller
@@ -79,13 +71,9 @@ services:
       - rustmq-network
     volumes:
       - controller2_data:/var/lib/rustmq
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   rustmq-controller-3:
+    image: rustmq-controller:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.controller
@@ -109,14 +97,10 @@ services:
       - rustmq-network
     volumes:
       - controller3_data:/var/lib/rustmq
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9642/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # RustMQ Broker nodes (3-node cluster)
   rustmq-broker-1:
+    image: rustmq-broker:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.broker
@@ -152,13 +136,9 @@ services:
     volumes:
       - broker1_wal:/var/lib/rustmq/wal
       - broker1_data:/var/lib/rustmq/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   rustmq-broker-2:
+    image: rustmq-broker:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.broker
@@ -194,13 +174,9 @@ services:
     volumes:
       - broker2_wal:/var/lib/rustmq/wal
       - broker2_data:/var/lib/rustmq/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   rustmq-broker-3:
+    image: rustmq-broker:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.broker
@@ -236,14 +212,10 @@ services:
     volumes:
       - broker3_wal:/var/lib/rustmq/wal
       - broker3_data:/var/lib/rustmq/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 9092 && nc -z localhost 9093"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # RustMQ Admin CLI (optional)
   rustmq-admin:
+    image: rustmq-admin:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.admin
@@ -261,6 +233,7 @@ services:
 
   # RustMQ Admin Server (REST API)
   rustmq-admin-server:
+    image: rustmq-admin-server:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.admin-server
@@ -279,14 +252,10 @@ services:
         condition: service_healthy
     networks:
       - rustmq-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # BigQuery Subscriber (optional)
   rustmq-bigquery-subscriber:
+    image: rustmq-bigquery-subscriber:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile.bigquery-subscriber
@@ -345,11 +314,6 @@ services:
       - ${BIGQUERY_CONFIG_FILE:-/dev/null}:/etc/rustmq/custom-config.toml:ro
     profiles:
       - bigquery  # Only start when 'bigquery' profile is specified
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     restart: unless-stopped
 
   # MinIO client for bucket initialization
