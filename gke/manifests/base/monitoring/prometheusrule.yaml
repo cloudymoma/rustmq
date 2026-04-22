@@ -112,21 +112,21 @@ spec:
         summary: "High memory usage"
         description: "{{ $labels.job }} {{ $labels.instance }} using {{ $value | printf \"%.1f\" }}GB memory. Investigate for memory leaks."
 
-    - alert: RustMQHighGoroutines
-      expr: go_goroutines{job=~"rustmq-.*"} > 10000
-      for: 15m
-      labels:
-        severity: warning
-        component: system
-        team: platform
-      annotations:
-        summary: "High goroutine count"
-        description: "{{ $labels.job }} {{ $labels.instance }} has {{ $value }} goroutines. Possible goroutine leak."
-
   # Storage alerts
   - name: rustmq.storage
     interval: 60s
     rules:
+    - alert: RustMQDiskFull
+      expr: kubelet_volume_stats_available_bytes{persistentvolumeclaim=~"wal-storage-.*"} / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"wal-storage-.*"} < 0.15
+      for: 5m
+      labels:
+        severity: critical
+        component: storage
+        team: platform
+      annotations:
+        summary: "RustMQ WAL Disk almost full"
+        description: "Less than 15% free space on {{ $labels.persistentvolumeclaim }} ({{ $labels.namespace }})"
+
     - alert: RustMQWALSyncLatencyHigh
       expr: histogram_quantile(0.99, rate(rustmq_wal_sync_latency_seconds_bucket[5m])) > 0.1
       for: 10m

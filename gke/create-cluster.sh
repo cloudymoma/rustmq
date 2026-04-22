@@ -207,6 +207,7 @@ create_cluster() {
         --enable-cloud-monitoring
         --logging=SYSTEM,WORKLOAD
         --monitoring=SYSTEM
+        --enable-managed-prometheus
     )
 
     # Environment-specific flags
@@ -304,10 +305,11 @@ setup_workload_identity() {
 
     # Grant GCS access
     log_info "Granting GCS access to service account..."
-    gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-        --member="serviceAccount:${gsa_email}" \
-        --role="roles/storage.objectAdmin" \
-        --condition=None
+    if [[ -n "${GCS_BUCKET:-}" ]]; then
+        gsutil iam ch "serviceAccount:${gsa_email}:objectAdmin" "gs://${GCS_BUCKET}"
+    else
+        log_warning "GCS_BUCKET not set - skipping IAM binding"
+    fi
 
     # Create Kubernetes Service Account
     log_info "Creating Kubernetes Service Account..."

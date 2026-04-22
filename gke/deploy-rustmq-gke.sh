@@ -172,10 +172,6 @@ setup_infrastructure() {
         --member="serviceAccount:${SERVICE_ACCOUNT}" \
         --role="roles/container.developer" || true
     
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="serviceAccount:${SERVICE_ACCOUNT}" \
-        --role="roles/storage.admin" || true
-    
     success "Infrastructure setup completed"
 }
 
@@ -418,14 +414,12 @@ EOF
     
     if [ "$DRY_RUN" = "true" ]; then
         info "DRY RUN: Would apply the following resources:"
-        kustomize build "$overlay_path" | envsubst < "$env_file"
+        kustomize build "$overlay_path" | sed "s/PROJECT_ID/${PROJECT_ID}/g"
     else
         # Apply with environment variable substitution
-        kustomize build "$overlay_path" | envsubst < "$env_file" | kubectl apply -f -
+        kubectl apply -f "${SCRIPT_DIR}/storage/storageclass.yaml"
+        kustomize build "$overlay_path" | sed "s/PROJECT_ID/${PROJECT_ID}/g" | kubectl apply -f -
     fi
-    
-    # Clean up temporary file
-    rm "$env_file"
     
     success "Kubernetes resources deployed"
 }
