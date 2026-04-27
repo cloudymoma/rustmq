@@ -1,83 +1,51 @@
 # RustMQ Performance Benchmarks
 
-This directory contains performance benchmarks for critical components of RustMQ.
+This directory contains comprehensive performance benchmarks for critical components of RustMQ, leveraging the `criterion` framework for precise measurements.
 
-## High-Watermark Calculation Benchmarks
+## Benchmark Suites
 
-The `replication_manager_benchmarks.rs` file contains comprehensive benchmarks for the optimized high-watermark calculation algorithm in the ReplicationManager.
+The benchmark suite covers the following critical paths:
 
-### Running the Benchmarks
+### Core Infrastructure
+- **WAL Performance (`wal_performance_bench.rs`)**: Measures Direct I/O throughput and latency.
+- **Cache Performance (`cache_performance_bench.rs`)**: Evaluates LruCache vs Moka cache hit/miss rates and eviction efficiency.
+- **Buffer Pooling (`buffer_pool_bench.rs`)**: Validates allocation reduction via `AlignedBufferPool`.
+- **Zero-Copy Serialization (`zero_copy_benchmark.rs`)**: Measures the efficiency of the zero-copy message framing format.
+- **Branchless Parsing (`branchless_parsing_bench.rs`)**: Tests the high-performance branchless WAL record decoder.
 
-To run the full benchmark suite with Criterion:
+### Network & Concurrency
+- **Connection Pooling (`connection_pool_bench.rs`)**: Evaluates the overhead of managing QUIC connections.
+- **FuturesUnordered (`futures_unordered_bench.rs`)**: Measures parallel replication and chunked upload efficiency.
+- **gRPC & Protobuf (`grpc_protobuf_benchmarks.rs`)**: Validates the serialization/deserialization overhead of control plane messages.
+
+### Security (See `SECURITY_BENCHMARKS.md`)
+- **Authorization (`authorization_benchmarks.rs`)**: Measures sub-microsecond ACL evaluation.
+- **Certificate Validation (`certificate_validation_bench.rs`)**: Evaluates WebPKI validation and certificate caching.
+- **Overall Security (`security_performance.rs`)**: Measures the end-to-end impact of the security layer on message throughput.
+
+### Replication
+- **High-Watermark Calculation (`replication_manager_benchmarks.rs`)**: Tests the optimized O(n log k) algorithm for tracking committed offsets across cluster sizes.
+
+## Running the Benchmarks
+
+To run the full suite of benchmarks using Criterion:
 
 ```bash
-cargo bench --bench replication_manager_benchmarks
+cargo bench
 ```
 
-To run the quick performance tests included in the unit tests:
+To run a specific benchmark:
 
 ```bash
-cargo test --lib benchmarks:: -- --nocapture
+cargo bench --bench <benchmark_name>
+# Example: cargo bench --bench wal_performance_bench
 ```
 
-### What's Being Measured
+## Interpreting Results
 
-The benchmarks compare three approaches for finding the k-th smallest element (used in high-watermark calculation):
+Criterion provides detailed statistical analysis including:
+1. **Time per operation**: Average time in microseconds/nanoseconds with confidence intervals.
+2. **Throughput**: Operations per second or Bytes per second.
+3. **Regressions/Improvements**: Statistical comparison against the previous recorded baseline.
 
-1. **Original Approach**: Build a full min-heap and extract k elements - O(n log n)
-2. **Naive Approach**: Sort the entire array and index - O(n log n)
-3. **Optimized Approach**: Hybrid algorithm that adapts based on k:
-   - k=1: Direct minimum search - O(n)
-   - k=2: Two-pass linear scan - O(n)
-   - k≥3: Bounded max-heap - O(n log k)
-
-### Benchmark Scenarios
-
-The benchmarks test various realistic scenarios:
-
-- **Cluster Sizes**: 10, 100, 1000, 10000 brokers
-- **Replication Factors (k)**: 2, 3, 5
-- **Data Distributions**:
-  - Sequential: Small variance, typical steady state
-  - Spread: Wide variance, typical during recovery
-  - Duplicates: Many identical offsets, common in stable clusters
-  - Worst Case: All unique offsets
-
-### Expected Results
-
-The optimized approach shows significant improvements:
-
-- **~6x speedup** for typical cases (n=1000, k=3)
-- **Memory reduction** from O(n) to O(k) heap size
-- **Better scaling** for large clusters
-
-### Memory Efficiency
-
-For a cluster of 10,000 brokers with k=3:
-- Original: 80,000 bytes heap allocation
-- Optimized: 24 bytes heap allocation
-- Reduction: 99.97%
-
-### Performance Characteristics
-
-The algorithm complexity improvements:
-- Original: O(n log n) operations
-- Optimized: O(n log k) operations for k≥3, O(n) for k≤2
-
-For n=10,000 and k=3:
-- Original: ~132,000 operations
-- Optimized: ~15,850 operations
-- Reduction: ~88%
-
-### Interpreting Results
-
-The benchmarks output:
-1. **Time per operation**: Average time in microseconds
-2. **Memory allocations**: Peak heap memory usage
-3. **Throughput**: Operations per second
-4. **Speedup factor**: How much faster the optimized approach is
-
-The results demonstrate that the optimization is particularly effective for:
-- Large clusters (n > 1000)
-- Typical replication factors (k = 2-5)
-- Real-world offset distributions
+A Python utility `generate_performance_report.py` is available to parse Criterion JSON output into formatted reports.

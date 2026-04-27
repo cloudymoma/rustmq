@@ -1144,9 +1144,7 @@ impl ErrorCode {
             Self::ReplicationFailed => "ERROR_CODE_REPLICATION_FAILED",
             Self::ReplicaNotAvailable => "ERROR_CODE_REPLICA_NOT_AVAILABLE",
             Self::NotEnoughReplicas => "ERROR_CODE_NOT_ENOUGH_REPLICAS",
-            Self::NotEnoughReplicasAfterAppend => {
-                "ERROR_CODE_NOT_ENOUGH_REPLICAS_AFTER_APPEND"
-            }
+            Self::NotEnoughReplicasAfterAppend => "ERROR_CODE_NOT_ENOUGH_REPLICAS_AFTER_APPEND",
             Self::ReplicaLagTooHigh => "ERROR_CODE_REPLICA_LAG_TOO_HIGH",
             Self::IsrShrunk => "ERROR_CODE_ISR_SHRUNK",
             Self::OutOfSyncReplica => "ERROR_CODE_OUT_OF_SYNC_REPLICA",
@@ -1298,16 +1296,12 @@ impl ErrorCode {
             "ERROR_CODE_PARTITION_NOT_FOUND" => Some(Self::PartitionNotFound),
             "ERROR_CODE_INVALID_PARTITION_ID" => Some(Self::InvalidPartitionId),
             "ERROR_CODE_INVALID_PARTITION_COUNT" => Some(Self::InvalidPartitionCount),
-            "ERROR_CODE_INVALID_REPLICATION_FACTOR" => {
-                Some(Self::InvalidReplicationFactor)
-            }
+            "ERROR_CODE_INVALID_REPLICATION_FACTOR" => Some(Self::InvalidReplicationFactor),
             "ERROR_CODE_PARTITION_OFFLINE" => Some(Self::PartitionOffline),
             "ERROR_CODE_PARTITION_REASSIGNMENT_IN_PROGRESS" => {
                 Some(Self::PartitionReassignmentInProgress)
             }
-            "ERROR_CODE_TOPIC_DELETION_IN_PROGRESS" => {
-                Some(Self::TopicDeletionInProgress)
-            }
+            "ERROR_CODE_TOPIC_DELETION_IN_PROGRESS" => Some(Self::TopicDeletionInProgress),
             "ERROR_CODE_NOT_LEADER" => Some(Self::NotLeader),
             "ERROR_CODE_LEADER_NOT_AVAILABLE" => Some(Self::LeaderNotAvailable),
             "ERROR_CODE_NO_LEADER" => Some(Self::NoLeader),
@@ -1358,9 +1352,7 @@ impl ErrorCode {
             "ERROR_CODE_CONTROLLER_NOT_AVAILABLE" => Some(Self::ControllerNotAvailable),
             "ERROR_CODE_NOT_CONTROLLER" => Some(Self::NotController),
             "ERROR_CODE_STALE_CONTROLLER_EPOCH" => Some(Self::StaleControllerEpoch),
-            "ERROR_CODE_CLUSTER_CONFIGURATION_ERROR" => {
-                Some(Self::ClusterConfigurationError)
-            }
+            "ERROR_CODE_CLUSTER_CONFIGURATION_ERROR" => Some(Self::ClusterConfigurationError),
             "ERROR_CODE_METADATA_UPDATE_FAILED" => Some(Self::MetadataUpdateFailed),
             "ERROR_CODE_STORAGE_ERROR" => Some(Self::StorageError),
             "ERROR_CODE_WAL_ERROR" => Some(Self::WalError),
@@ -1379,9 +1371,7 @@ impl ErrorCode {
             "ERROR_CODE_INDEX_CORRUPTION" => Some(Self::IndexCorruption),
             "ERROR_CODE_INVALID_CONFIGURATION" => Some(Self::InvalidConfiguration),
             "ERROR_CODE_CONFIGURATION_ERROR" => Some(Self::ConfigurationError),
-            "ERROR_CODE_CONFIGURATION_UPDATE_FAILED" => {
-                Some(Self::ConfigurationUpdateFailed)
-            }
+            "ERROR_CODE_CONFIGURATION_UPDATE_FAILED" => Some(Self::ConfigurationUpdateFailed),
             "ERROR_CODE_SCHEMA_VALIDATION_FAILED" => Some(Self::SchemaValidationFailed),
             "ERROR_CODE_VERSION_MISMATCH" => Some(Self::VersionMismatch),
             "ERROR_CODE_UPGRADE_IN_PROGRESS" => Some(Self::UpgradeInProgress),

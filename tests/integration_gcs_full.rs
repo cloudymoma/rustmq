@@ -20,7 +20,7 @@ use common::gcs::GcsTestConfig;
 
 async fn setup_tiered_engine() -> (Arc<TieredStorageEngine>, Arc<dyn ObjectStore>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    
+
     let (store, bucket, service_account_path) = match GcsTestConfig::load() {
         Some(config) => {
             let mut builder = object_store::gcp::GoogleCloudStorageBuilder::from_env()
@@ -36,19 +36,32 @@ async fn setup_tiered_engine() -> (Arc<TieredStorageEngine>, Arc<dyn ObjectStore
                         Ok(_) => (gcs_arc, config.bucket_name, config.credentials_path),
                         Err(e) => {
                             println!("GCS ping failed: {}. Falling back to InMemory.", e);
-                            (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
+                            (
+                                Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
+                                "test".to_string(),
+                                None,
+                            )
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Failed to build GCS store: {}. Falling back to InMemory.", e);
-                    (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
+                    println!(
+                        "Failed to build GCS store: {}. Falling back to InMemory.",
+                        e
+                    );
+                    (
+                        Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
+                        "test".to_string(),
+                        None,
+                    )
                 }
             }
         }
-        None => {
-            (Arc::new(InMemory::new()) as Arc<dyn ObjectStore>, "test".to_string(), None)
-        }
+        None => (
+            Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
+            "test".to_string(),
+            None,
+        ),
     };
 
     let wal_config = WalConfig {
@@ -196,7 +209,11 @@ async fn test_read_path_gcs_to_cache() {
 
     // Second read — must hit cache since object is gone from store
     let cached_records = engine.read(&topic_partition, offset, 1024).await.unwrap();
-    assert_eq!(cached_records.len(), 1, "Cache miss — read failed after object deletion");
+    assert_eq!(
+        cached_records.len(),
+        1,
+        "Cache miss — read failed after object deletion"
+    );
     assert_eq!(cached_records[0].value, b"val".to_vec());
 }
 
@@ -261,7 +278,11 @@ async fn test_segment_compaction_gcs() {
     let bytes = result.bytes().await.unwrap();
     let mut expected = data1.clone();
     expected.extend_from_slice(&data2);
-    assert_eq!(bytes.to_vec(), expected, "Compacted data should be byte-exact concatenation");
+    assert_eq!(
+        bytes.to_vec(),
+        expected,
+        "Compacted data should be byte-exact concatenation"
+    );
 
     // Verify source segments were deleted
     assert!(

@@ -478,8 +478,7 @@ impl TieredStorageEngine {
 
                     // Cache each deserialized record so cache hits can deserialize correctly
                     for wr in &wal_records {
-                        let record_cache_key =
-                            format!("{topic_partition}:{}", wr.offset);
+                        let record_cache_key = format!("{topic_partition}:{}", wr.offset);
                         let serialized = bincode::serialize(&wr.record)?;
                         self.cache_manager
                             .cache_read(&record_cache_key, Bytes::from(serialized))

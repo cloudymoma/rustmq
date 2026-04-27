@@ -561,16 +561,41 @@ impl ProduceHandler for BrokerHandler {
 
 #[async_trait]
 impl FetchHandler for BrokerHandler {
-    async fn handle_fetch(&self, _request: FetchRequest) -> Result<FetchResponse> {
-        let _core = self.get_broker_core().await?;
+    async fn handle_fetch(&self, request: FetchRequest) -> Result<FetchResponse> {
+        let core = self.get_broker_core().await?;
+        let topic_partition = TopicPartition {
+            topic: request.topic,
+            partition: request.partition_id,
+        };
 
-        // Simplified implementation - in real implementation would fetch from core
-        Ok(FetchResponse {
-            records: vec![],
-            high_watermark: 0,
-            error_code: 0,
-            error_message: None,
-        })
+        match core
+            .fetch_records(&topic_partition, request.fetch_offset, request.max_bytes)
+            .await
+        {
+            Ok(records) => {
+                let high_watermark = core
+                    .get_partition_metadata(&topic_partition)
+                    .await?
+                    .map(|m| m.high_watermark)
+                    .unwrap_or(0);
+
+                Ok(FetchResponse {
+                    records,
+                    high_watermark,
+                    error_code: 0,
+                    error_message: None,
+                })
+            }
+            Err(e) => {
+                tracing::warn!("Fetch failed for {}: {}", topic_partition, e);
+                Ok(FetchResponse {
+                    records: vec![],
+                    high_watermark: 0,
+                    error_code: 1, // Generic error
+                    error_message: Some("Failed to fetch records".to_string()),
+                })
+            }
+        }
     }
 }
 

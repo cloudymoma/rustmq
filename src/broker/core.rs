@@ -256,8 +256,8 @@ where
         Ok(offsets)
     }
 
-    /// Internal method to fetch records
-    async fn fetch_records(
+    /// Fetch records from cache, WAL, or object storage
+    pub async fn fetch_records(
         &self,
         topic_partition: &TopicPartition,
         fetch_offset: Offset,
@@ -276,11 +276,11 @@ where
 
         // Try WAL for recent records
         match self.wal.read(fetch_offset, max_bytes as usize).await {
-            Ok(wal_records) => {
+            Ok(wal_records) if !wal_records.is_empty() => {
                 let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
                 return Ok(records);
             }
-            Err(RustMqError::OffsetOutOfRange(_)) => {
+            Ok(_) | Err(RustMqError::OffsetOutOfRange(_)) => {
                 // Fall through to object storage
             }
             Err(e) => return Err(e),
@@ -288,8 +288,23 @@ where
 
         // Fetch from object storage
         let object_key = format!("{}/{}", topic_partition, fetch_offset);
-        let data = self.object_storage.get(&object_key).await?;
-        let records: Vec<Record> = bincode::deserialize(&data)?;
+        let data = match self.object_storage.get(&object_key).await {
+            Ok(d) => d,
+            Err(RustMqError::NotFound(_)) => return Ok(vec![]),
+            Err(e) => return Err(e),
+        };
+
+        // Decompress the segment data (lz4_flex is the standard compression algorithm used by the UploadManager)
+        let decompressed = match lz4_flex::decompress_size_prepended(&data) {
+            Ok(d) => d,
+            Err(_) => data.to_vec(),
+        };
+
+        // Try deserializing as Vec<WalRecord> first (production format), then Vec<Record>
+        let records = match bincode::deserialize::<Vec<WalRecord>>(&decompressed) {
+            Ok(wal_records) => wal_records.into_iter().map(|wr| wr.record).collect(),
+            Err(_) => bincode::deserialize::<Vec<Record>>(&decompressed)?,
+        };
 
         // Cache the results
         let cache_key = format!("{}:{}", topic_partition, fetch_offset);
@@ -612,7 +627,9 @@ mod tests {
         }
 
         async fn get(&self, _key: &str) -> Result<bytes::Bytes> {
-            Ok(bytes::Bytes::new())
+            Err(RustMqError::NotFound(
+                "MockObjectStorage object not found".to_string(),
+            ))
         }
 
         async fn get_range(

@@ -383,7 +383,7 @@
     <rect x="500" y="1030" width="150" height="60" rx="10" fill="#B2DFDB" stroke="#00796B" stroke-width="2" filter="url(#roughPaper)"/>
     <text x="575" y="1050" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">Monitoring</text>
     <text x="575" y="1065" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="#004D40">&amp; Metrics</text>
-    <text x="575" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#004D40">(Future)</text>
+    
     <rect x="510" y="1070" width="130" height="12" rx="3" fill="#4DB6AC" stroke="#004D40" stroke-width="1"/>
     <text x="575" y="1080" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8" fill="white">Prometheus, Grafana</text>
   </g>

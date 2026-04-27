@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -10,17 +10,65 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  rust-check:
+    name: Rust Check & Test
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
-    - name: Install protoc
+    
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y protobuf-compiler
+        sudo apt-get install -y protobuf-compiler libssl-dev
+        
+    - name: Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+        
+    - name: Rust Format Check
+      run: cargo fmt --all -- --check
+      
+    - name: Rust Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+      
     - name: Build
       run: cargo build --release
-    - name: Run tests
+      
+    - name: Run unit tests
       run: cargo test --release --lib
+      
+    - name: Run Rust SDK tests
+      run: cd sdk/rust && cargo test --release
+
+  go-check:
+    name: Go Check & Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.2'
+        
+    - name: Go Build
+      run: cd sdk/go && go build ./...
+      
+    - name: Go Test
+      run: cd sdk/go && go test ./...
+
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Broker Image
+      run: docker build -f docker/Dockerfile.broker .
+      
+    - name: Build Controller Image
+      run: docker build -f docker/Dockerfile.controller .
+      
+    - name: Build Admin Image
+      run: docker build -f docker/Dockerfile.admin .

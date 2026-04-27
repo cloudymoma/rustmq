@@ -101,7 +101,7 @@ impl ObjectStorage for MockObjectStorage {
             .get(key)
             .cloned()
             .map(|v| bytes::Bytes::from(v))
-            .ok_or_else(|| rustmq::error::RustMqError::ObjectNotFound(key.to_string()))
+            .ok_or_else(|| rustmq::error::RustMqError::NotFound(key.to_string()))
     }
 
     async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<bytes::Bytes> {
@@ -115,7 +115,7 @@ impl ObjectStorage for MockObjectStorage {
                 Ok(bytes::Bytes::new())
             }
         } else {
-            Err(rustmq::error::RustMqError::ObjectNotFound(key.to_string()))
+            Err(rustmq::error::RustMqError::NotFound(key.to_string()))
         }
     }
 

@@ -170,57 +170,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn test_acl_manager_creation() {
-        // Test temporarily disabled due to missing mock implementations
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_acl_rule_creation_and_validation() {
-        // Test temporarily disabled due to missing mock implementations
-
-        // Test valid ACL rule creation
-        let valid_rule = AclRule::new(
-            "test-rule-1".to_string(),
-            "test-principal".to_string(),
-            ResourcePattern::new(ResourceType::Topic, "test-topic".to_string()),
-            vec![AclOperation::Read, AclOperation::Write],
-            Effect::Allow,
-        );
-
-        assert_eq!(valid_rule.principal, "test-principal");
-        assert_eq!(valid_rule.resource.resource_type(), &ResourceType::Topic);
-        assert_eq!(valid_rule.resource.pattern(), "test-topic");
-        assert!(valid_rule.operations.contains(&AclOperation::Read));
-        assert!(valid_rule.operations.contains(&AclOperation::Write));
-        assert_eq!(valid_rule.effect, Effect::Allow);
-
-        // Test ACL rule with wildcard patterns
-        let wildcard_rule = AclRule::new(
-            "wildcard-rule-1".to_string(),
-            "admin-user".to_string(),
-            ResourcePattern::new(ResourceType::Topic, "*".to_string()),
-            vec![AclOperation::Admin],
-            Effect::Allow,
-        );
-
-        assert_eq!(wildcard_rule.resource.pattern(), "*");
-        assert!(wildcard_rule.operations.contains(&AclOperation::Admin));
-
-        // Test deny rule
-        let deny_rule = AclRule::new(
-            "rule-deny-1".to_string(),
-            "restricted-user".to_string(),
-            ResourcePattern::new(ResourceType::Topic, "admin.*".to_string()),
-            vec![AclOperation::Read, AclOperation::Write],
-            Effect::Deny,
-        );
-
-        assert_eq!(deny_rule.effect, Effect::Deny);
-    }
-
-    #[tokio::test]
     async fn test_acl_rule_storage_and_retrieval() {
         let (acl_manager, _temp_dir) = create_test_acl_manager().await;
 
@@ -350,37 +299,6 @@ mod tests {
         assert_eq!(retrieved_rules.len(), 1);
         assert_eq!(retrieved_rules[0].resource.pattern(), "updated-topic");
         assert!(retrieved_rules[0].operations.contains(&AclOperation::Write));
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_acl_rule_deletion() {
-        // Test temporarily disabled due to missing mock implementations
-        /*
-        let (acl_manager, _temp_dir) = create_test_acl_manager().await;
-
-        let principal = "deletion-test-principal";
-        let test_rules = TestAclRuleFactory::create_test_rules();
-
-        // Store rules
-        acl_manager.store_acl_rules(principal, test_rules).await.unwrap();
-
-        // Verify rules exist
-        let rules_before = acl_manager.get_acl_rules(principal).await.unwrap();
-        assert!(!rules_before.is_empty(), "Rules should exist before deletion");
-
-        // Delete rules
-        let delete_result = acl_manager.delete_acl_rules(principal).await;
-        assert!(delete_result.is_ok(), "ACL rule deletion should succeed");
-
-        // Verify rules are deleted
-        let rules_after = acl_manager.get_acl_rules(principal).await;
-        assert!(rules_after.is_err() || rules_after.unwrap().is_empty(), "Rules should be deleted");
-
-        // Test deleting non-existent rules
-        let delete_nonexistent = acl_manager.delete_acl_rules("nonexistent-principal").await.unwrap();
-        assert!(!delete_nonexistent, "Deleting non-existent rules should return false");
-        */
     }
 
     #[tokio::test]
@@ -572,53 +490,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn test_acl_audit_trail() {
-        // Test temporarily disabled due to missing mock implementations
-        let (acl_manager, _temp_dir) = create_test_acl_manager().await;
-
-        let principal = "audit-test-principal";
-        let test_rules = TestAclRuleFactory::create_test_rules();
-
-        // Get initial audit log size
-        let initial_audit_count = acl_manager.get_audit_log_count().await.unwrap();
-
-        // Perform ACL operations
-        acl_manager
-            .store_acl_rules(principal, test_rules.clone())
-            .await
-            .unwrap();
-        acl_manager.get_acl_rules(principal).await.unwrap();
-
-        let updated_rules = vec![AclRule::new(
-            "audit-test-rule-1".to_string(),
-            principal.to_string(),
-            ResourcePattern::new(ResourceType::Topic, "updated-topic".to_string()),
-            vec![AclOperation::Admin],
-            Effect::Allow,
-        )];
-        acl_manager
-            .update_acl_rules(principal, updated_rules)
-            .await
-            .unwrap();
-        acl_manager.delete_acl_rules(principal).await.unwrap();
-
-        // Verify audit trail
-        let final_audit_count = acl_manager.get_audit_log_count().await.unwrap();
-        assert!(
-            final_audit_count > initial_audit_count,
-            "Audit log should record ACL operations"
-        );
-
-        // Get recent audit entries (note: current implementation returns empty vec)
-        let recent_entries = acl_manager.get_recent_audit_entries(10).await.unwrap();
-
-        // For now, we just verify that the method works
-        // The actual implementation would need to store structured audit data
-        println!("Audit entries: {:?}", recent_entries);
-    }
-
-    #[tokio::test]
     async fn test_acl_backup_and_recovery() {
         let (acl_manager, temp_dir) = create_test_acl_manager().await;
 
@@ -712,58 +583,5 @@ mod tests {
             mixed_sync_result.is_ok(),
             "Should handle mixed sync results"
         );
-    }
-
-    // TODO: Re-enable once mock dependencies are implemented
-    #[tokio::test]
-    #[ignore]
-    async fn test_acl_storage_persistence() {
-        // Test temporarily disabled due to missing mock implementations
-        // for RaftAclManager and GrpcNetworkHandler dependencies
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_acl_performance_with_large_datasets() {
-        // Test temporarily disabled due to missing mock implementations
-        /*
-        let performance_rules = TestAclRuleFactory::create_performance_test_rules(large_dataset_size);
-
-        // Measure storage performance
-        let start = std::time::Instant::now();
-        for (i, rule) in performance_rules.iter().enumerate() {
-            let principal = format!("perf-principal-{}", i);
-            acl_manager.store_acl_rules(&principal, vec![rule.clone()]).await.unwrap();
-        }
-        let storage_duration = start.elapsed();
-
-        // Measure retrieval performance
-        let start = std::time::Instant::now();
-        for i in 0..large_dataset_size {
-            let principal = format!("perf-principal-{}", i);
-            let _rules = acl_manager.get_acl_rules(&principal).await.unwrap();
-        }
-        let retrieval_duration = start.elapsed();
-
-        // Performance assertions
-        let avg_storage_time = storage_duration / large_dataset_size as u32;
-        let avg_retrieval_time = retrieval_duration / large_dataset_size as u32;
-
-        assert!(avg_storage_time < Duration::from_millis(10),
-               "Average storage time {}ms should be under 10ms",
-               avg_storage_time.as_millis());
-
-        assert!(avg_retrieval_time < Duration::from_millis(5),
-               "Average retrieval time {}ms should be under 5ms",
-               avg_retrieval_time.as_millis());
-
-        // Memory usage should be reasonable
-        let memory_usage = acl_manager.get_memory_usage_estimate().await.unwrap();
-        let max_expected_memory = large_dataset_size * 1024; // 1KB per rule estimate
-
-        assert!(memory_usage < max_expected_memory,
-               "Memory usage {} bytes should be under {} bytes",
-               memory_usage, max_expected_memory);
-        */
     }
 }

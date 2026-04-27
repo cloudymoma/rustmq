@@ -46,3 +46,13 @@ GEMINI.md
 *-sa-key.json
 *-credentials.json
 service-account*.json
+
+# RustMQ Runtime & Test Artifacts
+data/
+logs/
+tmp/
+
+# Go SDK Build Artifacts
+sdk/go/bin/
+sdk/go/coverage.out
+sdk/go/admin_api_example

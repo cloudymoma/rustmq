@@ -2,7 +2,7 @@
 // Production-ready with full storage, networking, compaction, and performance optimizations
 
 use openraft::{Config, Raft, RaftMetrics, RaftState};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -497,6 +497,27 @@ impl RaftManager {
     /// Get current manager state
     pub async fn get_state(&self) -> ManagerState {
         self.state.read().await.clone()
+    }
+
+    /// Initialize the Raft cluster
+    pub async fn initialize_cluster(
+        &self,
+        nodes: BTreeMap<NodeId, RustMqNode>,
+    ) -> crate::Result<()> {
+        if let Some(ref raft) = self.raft {
+            raft.initialize(nodes).await.map_err(|e| {
+                crate::error::RustMqError::RaftError(format!(
+                    "Failed to initialize Raft cluster: {}",
+                    e
+                ))
+            })?;
+            info!("Raft cluster initialized successfully");
+            Ok(())
+        } else {
+            Err(crate::error::RustMqError::RaftError(
+                "Raft not started".to_string(),
+            ))
+        }
     }
 
     /// Gracefully shutdown the manager
