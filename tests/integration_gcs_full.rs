@@ -174,6 +174,11 @@ async fn test_read_path_gcs_to_cache() {
 
     // Compress data since storage type is Gcs
     let compressed_data = lz4_flex::compress_prepend_size(&data);
+    let crc = crc32fast::hash(&compressed_data);
+    let mut data_with_crc = Vec::with_capacity(compressed_data.len() + 4);
+    data_with_crc.extend_from_slice(&compressed_data);
+    data_with_crc.extend_from_slice(&crc.to_le_bytes());
+    let compressed_data = data_with_crc;
 
     // Manual setup in MetadataStore
     let object_key = "topics/read-path/0/100_101.seg";

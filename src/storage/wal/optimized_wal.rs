@@ -6,6 +6,7 @@ use super::{
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use crc32fast::Hasher;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
@@ -335,21 +336,41 @@ impl OptimizedDirectIOWal {
             let mut buffer_pos = 0;
             while buffer_pos < buffer.len() {
                 if let Ok(record_size) = self.read_record_size(&buffer[buffer_pos..]) {
-                    if buffer_pos + record_size as usize > buffer.len() {
+                    let total_record_size = 8 + record_size as usize + 4;
+                    if buffer_pos + total_record_size > buffer.len() {
                         break;
+                    }
+
+                    // Verify CRC
+                    let mut hasher = Hasher::new();
+                    hasher.update(&buffer[buffer_pos..buffer_pos + 8]);
+                    hasher.update(&buffer[buffer_pos + 8..buffer_pos + 8 + record_size as usize]);
+                    let computed_crc = hasher.finalize();
+                    
+                    let crc_pos = buffer_pos + 8 + record_size as usize;
+                    let stored_crc = u32::from_le_bytes([
+                        buffer[crc_pos],
+                        buffer[crc_pos + 1],
+                        buffer[crc_pos + 2],
+                        buffer[crc_pos + 3],
+                    ]);
+
+                    if computed_crc != stored_crc {
+                        tracing::warn!("WAL recovery: checksum mismatch at offset {}", file_offset + buffer_pos as u64);
+                        break; // Stop recovery at first corrupted record
                     }
 
                     let segment_meta = WalSegmentMetadata {
                         start_offset: logical_offset,
                         end_offset: logical_offset + 1,
                         file_offset: file_offset + buffer_pos as u64,
-                        size_bytes: record_size,
+                        size_bytes: total_record_size as u64,
                         created_at: std::time::Instant::now(),
                     };
 
                     self.segments.write().push(segment_meta);
                     logical_offset += 1;
-                    buffer_pos += record_size as usize;
+                    buffer_pos += total_record_size;
                 } else {
                     break;
                 }
@@ -451,13 +472,17 @@ impl WriteAheadLog for OptimizedDirectIOWal {
     async fn append(&self, record: &WalRecord) -> Result<u64> {
         let serialized = bincode::serialize(record)?;
         let record_size = serialized.len() as u64;
-        let total_size = serialized.len() + 8;
+        let total_size = serialized.len() + 8 + 4; // Add 4 bytes for CRC
 
         // Get buffer from pool and write directly into it
         let mut buffer = self.buffer_pool.get_aligned_buffer(total_size)?;
         buffer.clear(); // Ensure buffer is empty
         buffer.extend_from_slice(&record_size.to_le_bytes());
         buffer.extend_from_slice(&serialized);
+        
+        // Compute CRC32 over length and data
+        let crc = crc32fast::hash(&buffer);
+        buffer.extend_from_slice(&crc.to_le_bytes());
 
         // Use optimized method that takes ownership to avoid data.to_vec()
         let (file_offset, returned_buffer) = self.write_with_buffer(buffer).await?;
@@ -530,7 +555,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                 self.write_tx
                     .send(OptimizedWriteCommand::Read {
                         file_offset: segment.file_offset + 8,
-                        size: record_size,
+                        size: record_size + 4, // Read data + CRC
                         response: tx,
                     })
                     .await
@@ -542,7 +567,26 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                     crate::error::RustMqError::Wal("File task response failed".to_string())
                 })??;
 
-                let record: WalRecord = bincode::deserialize(&record_buffer)?;
+                // Verify CRC
+                let mut hasher = Hasher::new();
+                hasher.update(&size_buffer);
+                hasher.update(&record_buffer[..record_size]);
+                let computed_crc = hasher.finalize();
+                
+                let stored_crc = u32::from_le_bytes([
+                    record_buffer[record_size],
+                    record_buffer[record_size + 1],
+                    record_buffer[record_size + 2],
+                    record_buffer[record_size + 3],
+                ]);
+
+                if computed_crc != stored_crc {
+                    return Err(crate::error::RustMqError::Wal(
+                        "File checksum mismatch".to_string(),
+                    ));
+                }
+
+                let record: WalRecord = bincode::deserialize(&record_buffer[..record_size])?;
                 records.push(record);
                 bytes_read += record_size;
             }
@@ -597,7 +641,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                 self.write_tx
                     .send(OptimizedWriteCommand::Read {
                         file_offset: file_offset + 8,
-                        size: record_size,
+                        size: record_size + 4, // Read data + CRC
                         response: tx,
                     })
                     .await
@@ -609,7 +653,26 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                     crate::error::RustMqError::Wal("File task response failed".to_string())
                 })??;
 
-                let record: WalRecord = bincode::deserialize(&record_buffer)?;
+                // Verify CRC
+                let mut hasher = Hasher::new();
+                hasher.update(&size_buffer);
+                hasher.update(&record_buffer[..record_size]);
+                let computed_crc = hasher.finalize();
+                
+                let stored_crc = u32::from_le_bytes([
+                    record_buffer[record_size],
+                    record_buffer[record_size + 1],
+                    record_buffer[record_size + 2],
+                    record_buffer[record_size + 3],
+                ]);
+
+                if computed_crc != stored_crc {
+                    return Err(crate::error::RustMqError::Wal(
+                        "File checksum mismatch".to_string(),
+                    ));
+                }
+
+                let record: WalRecord = bincode::deserialize(&record_buffer[..record_size])?;
 
                 if record.offset >= end_offset {
                     break;
@@ -619,7 +682,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                     records.push(record);
                 }
 
-                file_offset += 8 + record_size as u64;
+                file_offset += 8 + record_size as u64 + 4; // Advance by size + data + CRC
             }
         }
 

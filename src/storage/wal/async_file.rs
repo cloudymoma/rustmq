@@ -4,6 +4,10 @@ use crate::storage::{AlignedBufferPool, BufferPool};
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(target_os = "linux")]
+extern crate libc;
 
 /// Platform capabilities for I/O backend selection
 #[derive(Debug, Clone)]
@@ -124,7 +128,7 @@ impl AsyncWalFileFactory {
 
     #[cfg(all(target_os = "linux", feature = "io-uring"))]
     fn is_in_io_uring_context() -> bool {
-        // Never use io_uring in test contexts or when not explicitly enabled
+        // Never use io_uring in test contexts
 
         // Check if we're in a test environment
         if cfg!(test) {
@@ -146,9 +150,8 @@ impl AsyncWalFileFactory {
             return false;
         }
 
-        // Only enable io_uring in production when explicitly requested
-        // This prevents runtime errors from incompatible contexts
-        std::env::var("RUSTMQ_ENABLE_IO_URING").is_ok()
+        // Enable by default on Linux if available
+        true
     }
 }
 
@@ -303,13 +306,12 @@ impl IoUringWalFile {
         // Spawn the io_uring task
         let path_clone = path.clone();
         tokio_uring::spawn(async move {
-            let file = match tokio_uring::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .read(true)
-                .open(&path)
-                .await
-            {
+            let mut options = tokio_uring::fs::OpenOptions::new();
+            options.create(true).write(true).read(true);
+            #[cfg(target_os = "linux")]
+            options.custom_flags(libc::O_DIRECT);
+
+            let file = match options.open(&path).await {
                 Ok(file) => file,
                 Err(_) => return, // Failed to open file
             };
@@ -396,13 +398,12 @@ impl IoUringWalFile {
         // Spawn the io_uring task
         let path_clone = path.clone();
         tokio_uring::spawn(async move {
-            let file = match tokio_uring::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .read(true)
-                .open(&path)
-                .await
-            {
+            let mut options = tokio_uring::fs::OpenOptions::new();
+            options.create(true).write(true).read(true);
+            #[cfg(target_os = "linux")]
+            options.custom_flags(libc::O_DIRECT);
+
+            let file = match options.open(&path).await {
                 Ok(file) => file,
                 Err(_) => return, // Failed to open file
             };

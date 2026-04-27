@@ -3,6 +3,7 @@ use crate::{Result, config::*, storage::traits::*};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::ops::Range;
+use crc32fast::hash;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -374,6 +375,14 @@ impl UploadManager for UploadManagerImpl {
         self.bandwidth_limiter.acquire(segment.size()).await?;
 
         let compressed = self.compress_segment(&segment).await?;
+        
+        // Compute CRC32 and append to data
+        let crc = hash(&compressed);
+        let mut data_with_crc = Vec::with_capacity(compressed.len() + 4);
+        data_with_crc.extend_from_slice(&compressed);
+        data_with_crc.extend_from_slice(&crc.to_le_bytes());
+        let data_with_crc = Bytes::from(data_with_crc);
+
         let object_key = format!(
             "topics/{}/{}/{}_{}.seg",
             segment.topic_partition.topic,
@@ -382,18 +391,18 @@ impl UploadManager for UploadManagerImpl {
             segment.end_offset
         );
 
-        let is_multipart = compressed.len() > self.config.multipart_threshold as usize;
+        let is_multipart = data_with_crc.len() > self.config.multipart_threshold as usize;
         let result = if is_multipart {
-            self.multipart_upload(&compressed, &object_key).await?
+            self.multipart_upload(&data_with_crc, &object_key).await?
         } else {
-            self.simple_upload(&compressed, &object_key).await?
+            self.simple_upload(&data_with_crc, &object_key).await?
         };
 
         // Only verify simple uploads — multipart writes to .partN chunk keys,
         // so the main key doesn't exist until reassembly (handled by cloud storage
         // backends like S3/GCS natively; local storage uses chunk files).
         if !is_multipart {
-            self.verify_upload(&object_key, &compressed).await?;
+            self.verify_upload(&object_key, &data_with_crc).await?;
         }
         Ok(result)
     }
@@ -401,13 +410,36 @@ impl UploadManager for UploadManagerImpl {
     async fn download_segment(&self, object_key: &str) -> Result<WalSegment> {
         let compressed_data = self.storage.get(object_key).await?;
 
+        if compressed_data.len() < 4 {
+            return Err(crate::error::RustMqError::Storage(
+                "Segment file too small".to_string(),
+            ));
+        }
+
+        let data_len = compressed_data.len() - 4;
+        let stored_crc = u32::from_le_bytes([
+            compressed_data[data_len],
+            compressed_data[data_len + 1],
+            compressed_data[data_len + 2],
+            compressed_data[data_len + 3],
+        ]);
+
+        let computed_crc = hash(&compressed_data[..data_len]);
+
+        if computed_crc != stored_crc {
+            return Err(crate::error::RustMqError::Storage(
+                "Segment checksum mismatch".to_string(),
+            ));
+        }
+        let valid_data = &compressed_data[..data_len];
+
         let data = match self.config.storage_type {
             StorageType::S3 | StorageType::Gcs | StorageType::Azure => {
-                let decompressed = lz4_flex::decompress_size_prepended(&compressed_data)
+                let decompressed = lz4_flex::decompress_size_prepended(valid_data)
                     .map_err(|e| crate::error::RustMqError::Storage(e.to_string()))?;
                 Bytes::from(decompressed)
             }
-            StorageType::Local { .. } => compressed_data,
+            StorageType::Local { .. } => Bytes::copy_from_slice(valid_data),
         };
 
         let parts: Vec<&str> = object_key.split('/').collect();
@@ -531,5 +563,53 @@ mod tests {
         );
         assert_eq!(downloaded.start_offset, segment.start_offset);
         assert_eq!(downloaded.end_offset, segment.end_offset);
+    }
+
+    #[tokio::test]
+    async fn test_segment_checksum_corruption() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let storage = Arc::new(LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap());
+        let config = ObjectStorageConfig {
+            storage_type: StorageType::Local {
+                path: temp_dir.path().to_path_buf(),
+            },
+            bucket: "test".to_string(),
+            region: "local".to_string(),
+            endpoint: "".to_string(),
+            access_key: None,
+            secret_key: None,
+            service_account_path: None,
+            multipart_threshold: 1024,
+            max_concurrent_uploads: 1,
+        };
+
+        let upload_manager = UploadManagerImpl::new(storage.clone(), config);
+
+        let segment = WalSegment {
+            start_offset: 0,
+            end_offset: 100,
+            size_bytes: 128,
+            data: Bytes::from("test segment data"),
+            topic_partition: crate::types::TopicPartition {
+                topic: "test-topic".to_string(),
+                partition: 0,
+            },
+        };
+
+        let object_key = upload_manager
+            .upload_segment(segment.clone())
+            .await
+            .unwrap();
+            
+        // Corrupt the file in storage
+        let mut file_data = storage.get(&object_key).await.unwrap().to_vec();
+        if file_data.len() > 10 {
+            file_data[5] = !file_data[5]; // Flip bits
+        }
+        storage.put(&object_key, Bytes::from(file_data)).await.unwrap();
+
+        // Download should fail because of checksum or decompression failure
+        let result = upload_manager.download_segment(&object_key).await;
+        assert!(result.is_err());
     }
 }
