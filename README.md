@@ -1,6 +1,6 @@
 # RustMQ: Cloud-Native Distributed Message Queue System
 
-[![Build Status](https://github.com/rustmq/rustmq/workflows/Rust/badge.svg)](https://github.com/rustmq/rustmq/actions)
+[![Build Status](https://github.com/rustmq/rustmq/actions/workflows/rust.yml/badge.svg)](https://github.com/rustmq/rustmq/actions)
 [![License: BDL 1.0](https://img.shields.io/badge/License-BDL%201.0-red.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://www.rust-lang.org)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/rustmq/rustmq)

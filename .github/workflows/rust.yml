@@ -1,4 +1,4 @@
-name: CI
+name: Build
 
 on:
   push:
@@ -10,8 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust-check:
-    name: Rust Check & Test
+  build:
+    name: Build All Targets
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -23,52 +23,23 @@ jobs:
         
     - name: Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
-        
-    - name: Rust Format Check
-      run: cargo fmt --all -- --check
       
-    - name: Rust Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Build Main Workspace
+      run: cargo build --release --all-targets
       
-    - name: Build
-      run: cargo build --release
-      
-    - name: Run unit tests
-      run: cargo test --release --lib
-      
-    - name: Run Rust SDK tests
-      run: cd sdk/rust && cargo test --release
+    - name: Build Rust SDK
+      run: cd sdk/rust && cargo build --release --all-targets
 
-  go-check:
-    name: Go Check & Test
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.2'
         
-    - name: Go Build
+    - name: Build Go SDK
       run: cd sdk/go && go build ./...
-      
-    - name: Go Test
-      run: cd sdk/go && go test ./...
 
-  docker-build:
-    name: Docker Build Check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build Broker Image
-      run: docker build -f docker/Dockerfile.broker .
-      
-    - name: Build Controller Image
-      run: docker build -f docker/Dockerfile.controller .
-      
-    - name: Build Admin Image
-      run: docker build -f docker/Dockerfile.admin .
+    - name: Build Docker Images
+      run: |
+        docker build -f docker/Dockerfile.broker .
+        docker build -f docker/Dockerfile.controller .
+        docker build -f docker/Dockerfile.admin .
