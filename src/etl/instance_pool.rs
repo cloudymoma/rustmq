@@ -66,6 +66,7 @@ pub struct PooledInstance {
 #[cfg(feature = "wasm")]
 pub struct WasmState {
     wasi: WasiCtx,
+    limits: StoreLimits,
 }
 
 /// Real WASM context with wasmtime runtime
@@ -402,13 +403,19 @@ impl WasmInstancePool {
             .clone();
 
         // Create WASI context
-        let wasi = WasiCtxBuilder::new().inherit_stdio().inherit_env().build();
+        let wasi = WasiCtxBuilder::new().inherit_stdio().build();
 
-        // Create state
-        let state = WasmState { wasi };
+        // Create state with limits
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(config.memory_limit_bytes)
+            .build();
+        let state = WasmState { wasi, limits };
 
         // Create store with state
         let mut store = Store::new(&self.engine, state);
+        
+        // Register limiter
+        store.limiter(|state| &mut state.limits);
 
         // Set fuel for CPU limiting (approximate timeout in instructions)
         // Memory limits are configured in Engine config (static_memory_maximum_size)

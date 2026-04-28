@@ -33,6 +33,7 @@ pub extern "C" fn transform(_input_ptr: i32, _input_len: i32) -> i32 {
     let mut counter: u64 = 0;
     loop {
         counter = counter.wrapping_add(1);
+        core::hint::black_box(counter);
         // Prevent compiler optimization
         if counter == u64::MAX {
             break;
