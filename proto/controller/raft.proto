@@ -72,6 +72,8 @@ message SimpleAppendEntriesRequest {
   bytes prev_log_id = 3; // Serialized LogId
   bytes entries = 4; // Serialized Vec<Entry>
   uint64 leader_commit = 5; // Log index
+  uint64 leader_commit_term = 6; // Term of commit index
+  uint64 leader_commit_node_id = 7; // Node ID of commit leader
 }
 
 // Simplified AppendEntries response for OpenRaft compatibility

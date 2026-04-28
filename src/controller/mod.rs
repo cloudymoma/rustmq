@@ -16,7 +16,7 @@ pub use service::*;
 
 pub use openraft_storage::{
     NodeId, PartitionAssignment, RustMqAppData, RustMqAppDataResponse, RustMqLogStorage,
-    RustMqNode, RustMqResponder, RustMqSnapshotBuilder, RustMqSnapshotData, RustMqStateMachine,
+    RustMqNode, RustMqResponder, RustMqSnapshotData, RustMqStateMachine,
     RustMqStorageConfig, RustMqTypeConfig,
 };
 
@@ -37,3 +37,4 @@ pub use openraft_performance::{
     HighPerformanceCache, PerformanceConfig, PerformanceMetrics, PerformanceSnapshot,
     RaftPerformanceOptimizer, ZeroCopyBuffer,
 };
+pub mod raft_service;

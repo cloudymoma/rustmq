@@ -280,7 +280,11 @@ impl NetworkMetrics {
 /// RustMQ Raft network implementation with gRPC
 pub struct RustMqNetwork {
     /// Current node ID
-    node_id: NodeId,
+    current_node_id: NodeId,
+    /// Target node ID
+    target_id: NodeId,
+    /// Blocked nodes for testing
+    pub blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>,
     /// Connection pool for managing connections
     connection_pool: Arc<ConnectionPool>,
     /// Network metrics
@@ -291,9 +295,11 @@ pub struct RustMqNetwork {
 
 impl RustMqNetwork {
     /// Create a new network instance
-    pub fn new(node_id: NodeId, config: RustMqNetworkConfig) -> Self {
+    pub fn new(current_node_id: NodeId, target_id: NodeId, config: RustMqNetworkConfig, blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>) -> Self {
         Self {
-            node_id,
+            current_node_id,
+            target_id,
+            blocked_nodes,
             connection_pool: Arc::new(ConnectionPool::new(config)),
             metrics: Arc::new(Mutex::new(NetworkMetrics::default())),
             nodes: Arc::new(RwLock::new(HashMap::new())),
@@ -324,6 +330,11 @@ impl RustMqNetwork {
     }
 
     /// Get network metrics
+    
+    pub async fn block_node(&self, node_id: NodeId) {
+        self.blocked_nodes.write().await.insert(node_id);
+    }
+
     pub async fn get_metrics(&self) -> NetworkMetrics {
         self.metrics.lock().await.clone()
     }
@@ -391,11 +402,13 @@ impl RustMqNetwork {
         })?;
 
         Ok(SimpleAppendEntriesRequest {
-            term: 0, // Simplified for now
-            leader_id: self.node_id,
-            prev_log_id: Bytes::from(prev_log_id_bytes.unwrap_or_default()), // Convert Vec<u8> to Bytes
-            entries: Bytes::from(entries_bytes), // Convert Vec<u8> to Bytes
+            term: req.vote.leader_id.term,
+            leader_id: req.vote.leader_id.node_id,
+            prev_log_id: Bytes::from(prev_log_id_bytes.unwrap_or_default()),
+            entries: Bytes::from(entries_bytes),
             leader_commit: req.leader_commit.map(|id| id.index).unwrap_or(0),
+            leader_commit_term: req.leader_commit.map(|id| id.leader_id.term).unwrap_or(0),
+            leader_commit_node_id: req.leader_commit.map(|id| id.leader_id.node_id).unwrap_or(0),
         })
     }
 
@@ -428,6 +441,9 @@ impl RustMqNetwork {
         target: NodeId,
         req: &AppendEntriesRequest<RustMqTypeConfig>,
     ) -> Result<AppendEntriesResponse<NodeId>, NetworkError> {
+        if self.blocked_nodes.read().await.contains(&target) {
+            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+        }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
 
@@ -507,9 +523,9 @@ impl RustMqNetwork {
             })?;
 
         Ok(SimpleVoteRequest {
-            term: 0, // Simplified for now
-            candidate_id: self.node_id,
-            last_log_id: Bytes::from(last_log_id_bytes.unwrap_or_default()), // Convert Vec<u8> to Bytes
+            term: req.vote.leader_id.term,
+            candidate_id: req.vote.leader_id.node_id,
+            last_log_id: Bytes::from(last_log_id_bytes.unwrap_or_default()),
         })
     }
 
@@ -532,6 +548,9 @@ impl RustMqNetwork {
         target: NodeId,
         req: &VoteRequest<NodeId>,
     ) -> Result<VoteResponse<NodeId>, NetworkError> {
+        if self.blocked_nodes.read().await.contains(&target) {
+            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+        }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
 
@@ -584,8 +603,8 @@ impl RustMqNetwork {
         })?;
 
         Ok(SimpleInstallSnapshotRequest {
-            term: 0, // Simplified for now
-            leader_id: self.node_id,
+            term: req.vote.leader_id.term,
+            leader_id: self.current_node_id,
             meta: Bytes::from(meta_bytes), // Convert Vec<u8> to Bytes
             offset: req.offset,
             data: Bytes::from(req.data.clone()), // Convert Vec<u8> to Bytes
@@ -610,6 +629,9 @@ impl RustMqNetwork {
         target: NodeId,
         req: InstallSnapshotRequest<RustMqTypeConfig>,
     ) -> Result<InstallSnapshotResponse<NodeId>, NetworkError> {
+        if self.blocked_nodes.read().await.contains(&target) {
+            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+        }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
 
@@ -663,16 +685,10 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
         AppendEntriesResponse<NodeId>,
         openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>,
     > {
-        // For now, use a simplified approach that works with all nodes
-        // In a production system, the target would be determined by the Raft algorithm
-        info!(
-            "Received append_entries request with {} entries",
-            req.entries.len()
-        );
-
-        // For this implementation, we'll return success as it's part of the receiving side
-        // The actual network sending is handled by the RaftNetworkFactory
-        Ok(AppendEntriesResponse::Success)
+        let target = self.target_id;
+        self.send_append_entries_internal(target, &req)
+            .await
+            .map_err(|e| openraft::error::RPCError::Network(e))
     }
 
     async fn install_snapshot(
@@ -687,12 +703,10 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
             openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>,
         >,
     > {
-        info!("Received install_snapshot request");
-
-        // Return successful response
-        Ok(InstallSnapshotResponse {
-            vote: req.vote.clone(),
-        })
+        let target = self.target_id;
+        self.send_install_snapshot_chunked(target, req)
+            .await
+            .map_err(|e| openraft::error::RPCError::Network(e))
     }
 
     async fn vote(
@@ -703,26 +717,24 @@ impl RaftNetwork<RustMqTypeConfig> for RustMqNetwork {
         VoteResponse<NodeId>,
         openraft::error::RPCError<NodeId, RustMqNode, openraft::error::RaftError<NodeId>>,
     > {
-        info!("Received vote request");
-
-        // For this implementation, grant the vote
-        Ok(VoteResponse {
-            vote: req.vote.clone(),
-            last_log_id: req.last_log_id,
-            vote_granted: true,
-        })
+        let target = self.target_id;
+        self.send_vote_internal(target, &req)
+            .await
+            .map_err(|e| openraft::error::RPCError::Network(e))
     }
 }
 
 /// Network factory for creating RustMQ network instances
 pub struct RustMqNetworkFactory {
     config: RustMqNetworkConfig,
+    node_id: NodeId,
+    pub blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>,
 }
 
 impl RustMqNetworkFactory {
     /// Create a new network factory
-    pub fn new(config: RustMqNetworkConfig) -> Self {
-        Self { config }
+    pub fn new(config: RustMqNetworkConfig, node_id: NodeId, blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>) -> Self {
+        Self { config, node_id, blocked_nodes }
     }
 }
 
@@ -730,7 +742,7 @@ impl RaftNetworkFactory<RustMqTypeConfig> for RustMqNetworkFactory {
     type Network = RustMqNetwork;
 
     async fn new_client(&mut self, target: NodeId, node: &RustMqNode) -> Self::Network {
-        let network = RustMqNetwork::new(target, self.config.clone());
+        let network = RustMqNetwork::new(self.node_id, target, self.config.clone(), self.blocked_nodes.clone());
 
         // Add the target node to the network
         network.add_node(target, node.clone()).await;
@@ -769,7 +781,7 @@ impl NetworkHealthChecker {
         let nodes = self.network.nodes.read().await.clone();
 
         for (node_id, _node) in nodes {
-            if node_id == self.network.node_id {
+            if node_id == self.network.current_node_id {
                 continue; // Skip self
             }
 
@@ -798,7 +810,13 @@ impl NetworkHealthChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn create_blocked_nodes() -> Arc<RwLock<HashSet<NodeId>>> {
+        Arc::new(RwLock::new(HashSet::new()))
+    }
 
     #[tokio::test]
     async fn test_connection_pool_creation() {
@@ -816,7 +834,8 @@ mod tests {
     #[tokio::test]
     async fn test_network_creation() {
         let config = RustMqNetworkConfig::default();
-        let network = RustMqNetwork::new(1, config);
+        let blocked_nodes = create_blocked_nodes();
+        let network = RustMqNetwork::new(1, 2, config, blocked_nodes);
 
         // Add a node
         let node = RustMqNode {
@@ -836,7 +855,8 @@ mod tests {
     #[tokio::test]
     async fn test_network_metrics() {
         let config = RustMqNetworkConfig::default();
-        let network = RustMqNetwork::new(1, config);
+        let blocked_nodes = create_blocked_nodes();
+        let network = RustMqNetwork::new(1, 2, config, blocked_nodes);
 
         // Get initial metrics
         let metrics = network.get_metrics().await;
@@ -848,7 +868,8 @@ mod tests {
     #[tokio::test]
     async fn test_network_factory() {
         let config = RustMqNetworkConfig::default();
-        let mut factory = RustMqNetworkFactory::new(config);
+        let blocked_nodes = create_blocked_nodes();
+        let mut factory = RustMqNetworkFactory::new(config, 1, blocked_nodes);
 
         let node = RustMqNode {
             addr: "localhost".to_string(),
@@ -857,13 +878,14 @@ mod tests {
         };
 
         let network = factory.new_client(2, &node).await;
-        assert_eq!(network.node_id, 2);
+        assert_eq!(network.target_id, 2);
     }
 
     #[tokio::test]
     async fn test_health_checker() {
         let config = RustMqNetworkConfig::default();
-        let network = Arc::new(RustMqNetwork::new(1, config));
+        let blocked_nodes = create_blocked_nodes();
+        let network = Arc::new(RustMqNetwork::new(1, 2, config, blocked_nodes));
 
         let health_checker = NetworkHealthChecker::new(network.clone(), Duration::from_secs(1));
 

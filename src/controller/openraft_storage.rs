@@ -92,58 +92,63 @@ pub struct PartitionAssignment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct RustMqTypeConfig;
 
-/// Simple responder for RustMQ Raft implementation
-#[derive(Debug, Clone, Default)]
-pub struct RustMqResponder;
-
-/// Snapshot builder for RustMQ
-#[derive(Debug, Clone, Default)]
-pub struct RustMqSnapshotBuilder {
-    data: std::io::Cursor<Vec<u8>>,
+/// Snapshot payload carrying data and metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotPayload {
+    pub data: RustMqSnapshotData,
+    pub last_log_id: Option<LogId<NodeId>>,
 }
 
-impl RaftSnapshotBuilder<RustMqTypeConfig> for std::io::Cursor<Vec<u8>> {
+impl openraft::storage::RaftSnapshotBuilder<RustMqTypeConfig> for std::io::Cursor<Vec<u8>> {
     async fn build_snapshot(&mut self) -> Result<Snapshot<RustMqTypeConfig>, StorageError<NodeId>> {
-        // For this implementation, we just return the cursor data as snapshot
-        let snapshot_data: std::io::Cursor<Vec<u8>> = std::mem::take(self);
+        let data = self.get_ref().clone();
+        let payload: SnapshotPayload = bincode::deserialize(&data).map_err(|e| {
+            StorageError::IO {
+                source: openraft::StorageIOError::new(
+                    openraft::ErrorSubject::Store,
+                    openraft::ErrorVerb::Read,
+                    openraft::AnyError::new(&std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    )),
+                ),
+            }
+        })?;
 
         Ok(Snapshot {
             meta: SnapshotMeta {
-                last_log_id: None, // This should be set properly in a real implementation
+                last_log_id: payload.last_log_id,
                 last_membership: Default::default(),
                 snapshot_id: format!("snapshot_{}", chrono::Utc::now().timestamp()),
             },
-            snapshot: Box::new(snapshot_data),
+            snapshot: Box::new(std::io::Cursor::new(data)),
         })
     }
 }
 
-/// Basic responder implementation - in a full implementation, this would handle network responses
-impl RustMqResponder {
-    pub fn new() -> Self {
-        Self
-    }
+/// Simple responder for RustMQ Raft implementation
+pub struct RustMqResponder {
+    tx: Option<tokio::sync::oneshot::Sender<Result<openraft::raft::ClientWriteResponse<RustMqTypeConfig>, openraft::error::ClientWriteError<NodeId, RustMqNode>>>>,
 }
 
-// Try to implement the Responder trait - let the compiler tell us what methods are needed
-impl Responder<RustMqTypeConfig> for RustMqResponder {
-    type Receiver = ();
+impl openraft::raft::responder::Responder<RustMqTypeConfig> for RustMqResponder {
+    type Receiver = tokio::sync::oneshot::Receiver<Result<openraft::raft::ClientWriteResponse<RustMqTypeConfig>, openraft::error::ClientWriteError<NodeId, RustMqNode>>>;
 
-    fn from_app_data(app_data: RustMqAppData) -> (RustMqAppData, RustMqResponder, ()) {
-        (app_data, Self, ())
+    fn from_app_data(app_data: RustMqAppData) -> (RustMqAppData, Self, Self::Receiver) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (app_data, Self { tx: Some(tx) }, rx)
     }
 
     fn send(
-        self,
+        mut self,
         result: Result<
             openraft::raft::ClientWriteResponse<RustMqTypeConfig>,
             openraft::error::ClientWriteError<NodeId, RustMqNode>,
         >,
     ) {
-        // For storage layer, we don't handle client responses directly
-        // This would typically be implemented in the network layer
-        // We just consume the result here
-        drop(result);
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(result);
+        }
     }
 }
 
@@ -155,7 +160,7 @@ impl RaftTypeConfig for RustMqTypeConfig {
     type Entry = Entry<RustMqTypeConfig>;
     type SnapshotData = std::io::Cursor<Vec<u8>>;
     type AsyncRuntime = openraft::TokioRuntime;
-    type Responder = RustMqResponder;
+    type Responder = openraft::raft::responder::OneshotResponder<RustMqTypeConfig>;
 }
 
 /// Log entry with metadata for efficient storage
@@ -189,6 +194,7 @@ pub struct RustMqStorageConfig {
     pub cache_size: usize,
     pub segment_size: u64,
     pub compression_enabled: bool,
+    pub snapshot_threshold: u64,
 }
 
 impl Default for RustMqStorageConfig {
@@ -199,6 +205,7 @@ impl Default for RustMqStorageConfig {
             cache_size: 10000,
             segment_size: 64 * 1024 * 1024, // 64MB
             compression_enabled: true,
+            snapshot_threshold: 1000,
         }
     }
 }
@@ -654,6 +661,7 @@ impl RaftLogReader<RustMqTypeConfig> for RustMqLogStorage {
 }
 
 /// Raft state machine for RustMQ cluster management
+#[derive(Clone)]
 pub struct RustMqStateMachine {
     /// Current cluster state
     state: Arc<RwLock<RustMqSnapshotData>>,
@@ -661,6 +669,8 @@ pub struct RustMqStateMachine {
     config: RustMqStorageConfig,
     /// Last applied log ID
     last_applied: Arc<RwLock<Option<LogId<NodeId>>>>,
+    /// Counter for applied entries since last snapshot
+    applied_since_last_snapshot: u64,
 }
 
 impl RustMqStateMachine {
@@ -670,6 +680,7 @@ impl RustMqStateMachine {
             state: Arc::new(RwLock::new(RustMqSnapshotData::default())),
             config,
             last_applied: Arc::new(RwLock::new(None)),
+            applied_since_last_snapshot: 0,
         };
 
         // Load existing state from snapshot
@@ -778,8 +789,10 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
 
         drop(state);
 
-        // Save snapshot periodically
-        if responses.len() > 100 {
+        // Save snapshot periodically based on cumulative entries
+        self.applied_since_last_snapshot += responses.len() as u64;
+        if self.applied_since_last_snapshot >= self.config.snapshot_threshold {
+            self.applied_since_last_snapshot = 0; // Reset
             let state_machine_clone = self.clone();
             tokio::spawn(async move {
                 if let Err(e) = state_machine_clone.save_snapshot().await {
@@ -792,9 +805,13 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        // Create a snapshot cursor from current state
         let state = self.state.read().await.clone();
-        let snapshot_bytes = bincode::serialize(&state).unwrap_or_default();
+        let last_applied = self.last_applied.read().await.clone();
+        let payload = SnapshotPayload {
+            data: state,
+            last_log_id: last_applied,
+        };
+        let snapshot_bytes = bincode::serialize(&payload).unwrap_or_default();
         std::io::Cursor::new(snapshot_bytes)
     }
 
@@ -814,15 +831,14 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
 
         // Deserialize snapshot from bytes
         let snapshot_bytes = snapshot.get_ref();
-        let new_state = match bincode::deserialize::<RustMqSnapshotData>(snapshot_bytes) {
-            Ok(state) => state,
+        let payload = match bincode::deserialize::<SnapshotPayload>(snapshot_bytes) {
+            Ok(p) => p,
             Err(e) => {
-                error!("Failed to deserialize snapshot: {}", e);
                 return Err(StorageError::IO {
-                    source: StorageIOError::new(
-                        ErrorSubject::Store,
-                        ErrorVerb::Read,
-                        AnyError::new(&std::io::Error::new(
+                    source: openraft::StorageIOError::new(
+                        openraft::ErrorSubject::Store,
+                        openraft::ErrorVerb::Read,
+                        openraft::AnyError::new(&std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             e.to_string(),
                         )),
@@ -832,29 +848,10 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
         };
 
         let mut state = self.state.write().await;
-        *state = new_state;
-
-        // Update last applied
+        *state = payload.data;
+        
         let mut last_applied = self.last_applied.write().await;
-        *last_applied = meta.last_log_id.clone();
-
-        // Save to disk
-        drop(state);
-        drop(last_applied);
-
-        if let Err(e) = self.save_snapshot().await {
-            error!("Failed to save installed snapshot: {}", e);
-            return Err(StorageError::IO {
-                source: StorageIOError::new(
-                    ErrorSubject::Store,
-                    ErrorVerb::Write,
-                    AnyError::new(&std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        e.to_string(),
-                    )),
-                ),
-            });
-        }
+        *last_applied = payload.last_log_id;
 
         Ok(())
     }
@@ -899,15 +896,7 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
     }
 }
 
-impl Clone for RustMqStateMachine {
-    fn clone(&self) -> Self {
-        Self {
-            state: self.state.clone(),
-            config: self.config.clone(),
-            last_applied: self.last_applied.clone(),
-        }
-    }
-}
+
 
 impl RustMqStateMachine {
     /// Apply application data to state machine
@@ -1027,6 +1016,7 @@ mod tests {
             cache_size: 100,
             segment_size: 1024,
             compression_enabled: false,
+            snapshot_threshold: 100,
         };
 
         let storage = RustMqLogStorage::new(config).await.unwrap();

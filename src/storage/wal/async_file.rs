@@ -730,4 +730,32 @@ mod tests {
             file.backend_type()
         );
     }
+
+    #[cfg(all(target_os = "linux", feature = "io-uring"))]
+    #[test]
+    fn test_io_uring_unaligned_write_error() {
+        if std::env::var("CI").is_ok() {
+            println!("Skipping test in CI");
+            return;
+        }
+        if !PlatformCapabilities::detect().io_uring_available {
+            println!("Skipping test - io_uring not available");
+            return;
+        }
+
+        tokio_uring::start(async {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("uring_unaligned.wal");
+
+            let file = IoUringWalFile::new(&file_path).await.unwrap();
+
+            // O_DIRECT usually requires size to be a multiple of logical block size (usually 512 or 4096)
+            // Passing 100 bytes should fail.
+            let test_data = vec![1; 100]; 
+            
+            let result = file.write_at(test_data, 0).await;
+            assert!(result.is_err(), "Expected error for unaligned write due to O_DIRECT");
+            println!("Unaligned write failed as expected: {:?}", result.err());
+        });
+    }
 }

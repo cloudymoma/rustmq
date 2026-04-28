@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
 
     // 🚀 PRODUCTION SETUP: Create production-ready OpenRaft manager configuration
     let raft_config = RaftManagerConfig {
+        rpc_port: 9095,
         node_id,
         cluster_name: "rustmq-cluster".to_string(),
         storage_config: RustMqStorageConfig {
@@ -62,6 +63,7 @@ async fn main() -> Result<()> {
             cache_size: 100_000,
             segment_size: 64 * 1024 * 1024, // 64MB segments
             compression_enabled: true,
+            snapshot_threshold: 1000,
         },
         network_config: RustMqNetworkConfig {
             connect_timeout_ms: 5000,

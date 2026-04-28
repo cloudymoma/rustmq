@@ -25,6 +25,8 @@ use crate::controller::openraft_storage::{
 /// Comprehensive OpenRaft manager configuration
 #[derive(Debug, Clone)]
 pub struct RaftManagerConfig {
+    /// RPC port to listen on
+    pub rpc_port: u16,
     /// Node ID for this manager
     pub node_id: NodeId,
     /// Cluster name
@@ -49,6 +51,7 @@ impl Default for RaftManagerConfig {
     fn default() -> Self {
         Self {
             node_id: 1,
+            rpc_port: 9095,
             cluster_name: "rustmq-cluster".to_string(),
             storage_config: RustMqStorageConfig::default(),
             network_config: RustMqNetworkConfig::default(),
@@ -148,6 +151,8 @@ pub struct RaftManager {
     state_machine: Option<RustMqStateMachine>,
     /// Network layer
     network: Option<RustMqNetwork>,
+    /// Blocked nodes for simulating network partitions
+    blocked_nodes: Arc<RwLock<std::collections::HashSet<NodeId>>>,
     /// Compaction manager
     compaction_manager: Option<LogCompactionManager>,
     /// Performance optimizer
@@ -162,6 +167,7 @@ impl RaftManager {
     /// Create a new Raft manager
     pub async fn new(config: RaftManagerConfig) -> crate::Result<Self> {
         let state = Arc::new(RwLock::new(ManagerState::Initializing));
+        let blocked_nodes = Arc::new(RwLock::new(std::collections::HashSet::new()));
 
         Ok(Self {
             config,
@@ -174,6 +180,7 @@ impl RaftManager {
             performance_optimizer: None,
             cluster_nodes: Arc::new(RwLock::new(HashMap::new())),
             background_tasks: Vec::new(),
+            blocked_nodes,
         })
     }
 
@@ -197,7 +204,9 @@ impl RaftManager {
         // Initialize network layer
         self.network = Some(RustMqNetwork::new(
             self.config.node_id,
+            self.config.node_id, // Target ID is self for this global instance
             self.config.network_config.clone(),
+            self.blocked_nodes.clone(),
         ));
 
         // Initialize compaction manager
@@ -230,7 +239,7 @@ impl RaftManager {
         }
 
         // Create network factory
-        let network_factory = RustMqNetworkFactory::new(self.config.network_config.clone());
+        let network_factory = RustMqNetworkFactory::new(self.config.network_config.clone(), self.config.node_id, self.blocked_nodes.clone());
 
         // Build OpenRaft instance
         let raft = Raft::new(
@@ -245,7 +254,28 @@ impl RaftManager {
             crate::error::RustMqError::RaftError(format!("Failed to create Raft instance: {}", e))
         })?;
 
-        self.raft = Some(raft);
+        self.raft = Some(raft.clone());
+
+        // Start gRPC server
+        let rpc_port = self.config.rpc_port;
+        let raft_clone = raft.clone();
+        
+        tokio::spawn(async move {
+            use crate::proto::controller::raft_service_server::RaftServiceServer;
+            use crate::controller::raft_service::RustMqRaftService;
+            use tonic::transport::Server;
+
+            let addr = format!("0.0.0.0:{}", rpc_port).parse().unwrap();
+            let svc = RaftServiceServer::new(RustMqRaftService::new(raft_clone));
+
+            info!("Starting Raft gRPC server on {}", addr);
+            if let Err(e) = Server::builder()
+                .add_service(svc)
+                .serve(addr)
+                .await {
+                error!("Raft gRPC server failed: {}", e);
+            }
+        });
 
         // Start background tasks
         self.start_background_tasks().await;
@@ -372,18 +402,14 @@ impl RaftManager {
         &self,
         command: RustMqAppData,
     ) -> crate::Result<RustMqAppDataResponse> {
-        if let Some(ref _raft) = self.raft {
+        if let Some(ref raft) = self.raft {
             info!("Applying command through Raft consensus: {:?}", command);
 
-            // For now, return a successful response to avoid complex client_write API issues
-            // In a production system, this would use raft.client_write(command).await
-            Ok(RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(
-                    "Command processed through consensus (simplified implementation)".to_string(),
-                ),
-            })
+            let response = raft.client_write(command).await.map_err(|e| {
+                crate::error::RustMqError::RaftError(format!("Failed to write to Raft: {}", e))
+            })?;
+
+            Ok(response.data)
         } else {
             Err(crate::error::RustMqError::RaftError(
                 "Raft not initialized".to_string(),
@@ -492,6 +518,16 @@ impl RaftManager {
                 snapshot_size_bytes: compaction_stats.snapshot_bytes_created,
             },
         }
+    }
+
+    /// Get the network layer (for testing)
+    pub fn network(&self) -> Option<&RustMqNetwork> {
+        self.network.as_ref()
+    }
+
+    /// Get the Raft instance (for testing)
+    pub fn raft(&self) -> Option<&Raft<RustMqTypeConfig>> {
+        self.raft.as_ref()
     }
 
     /// Get current manager state

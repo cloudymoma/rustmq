@@ -14,6 +14,9 @@ async fn setup_raft_node(node_id: NodeId, temp_dir: &TempDir) -> RaftManager {
     config.raft_config.election_timeout_min = 200;
     config.raft_config.election_timeout_max = 400;
     config.raft_config.heartbeat_interval = 50;
+    
+    // Set unique RPC port for each node
+    config.rpc_port = 9090 + node_id as u16;
 
     let mut manager = RaftManager::new(config).await.unwrap();
     manager.initialize().await.unwrap();
