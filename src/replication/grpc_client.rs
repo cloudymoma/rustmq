@@ -92,6 +92,46 @@ pub struct GrpcReplicationRpcClient {
 
     /// Configuration for retries, timeouts, etc.
     config: GrpcReplicationConfig,
+
+    /// Bandwidth throttling for replication
+    rate_limiter: std::sync::Arc<tokio::sync::Mutex<TokenBucket>>,
+}
+
+struct TokenBucket {
+    tokens: f64,
+    last_update: tokio::time::Instant,
+    rate: f64,
+    capacity: f64,
+}
+
+impl TokenBucket {
+    fn new(rate: f64) -> Self {
+        Self {
+            tokens: rate,
+            last_update: tokio::time::Instant::now(),
+            rate,
+            capacity: rate,
+        }
+    }
+
+    async fn acquire(&mut self, amount: f64) {
+        if self.rate <= 0.0 { return; }
+        loop {
+            let now = tokio::time::Instant::now();
+            let elapsed = now.duration_since(self.last_update).as_secs_f64();
+            self.tokens = (self.tokens + elapsed * self.rate).min(self.capacity);
+            self.last_update = now;
+
+            if self.tokens >= amount {
+                self.tokens -= amount;
+                return;
+            }
+
+            let deficit = amount - self.tokens;
+            let wait_secs = deficit / self.rate;
+            tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait_secs)).await;
+        }
+    }
 }
 
 impl GrpcReplicationRpcClient {
@@ -102,6 +142,7 @@ impl GrpcReplicationRpcClient {
             connections: Arc::new(DashMap::new()),
             endpoints: Arc::new(DashMap::new()),
             config,
+            rate_limiter: std::sync::Arc::new(tokio::sync::Mutex::new(TokenBucket::new(50.0 * 1024.0 * 1024.0))),
         }
     }
 
@@ -312,6 +353,12 @@ impl ReplicationRpcClient for GrpcReplicationRpcClient {
             broker_id,
             request.records.len()
         );
+
+        let total_bytes: usize = request.records.iter().map(|r| r.size()).sum();
+        if total_bytes > 0 {
+            let mut bucket = self.rate_limiter.lock().await;
+            bucket.acquire(total_bytes as f64).await;
+        }
 
         // Execute with retry logic
         self.execute_with_retry(broker_id, || async {

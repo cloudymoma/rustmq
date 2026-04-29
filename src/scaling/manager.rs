@@ -183,7 +183,8 @@ impl ScalingManagerImpl {
 
         // Step 3: Calculate rebalance plan (75% progress)
         let all_brokers: Vec<BrokerInfo> = brokers.read().await.values().cloned().collect();
-        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers).await?;
+        let empty_assignments = HashMap::new();
+        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers, empty_assignments.clone()).await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -199,7 +200,7 @@ impl ScalingManagerImpl {
         }
 
         // Step 4: Execute rebalance (100% progress)
-        rebalancer.execute_rebalance(rebalance_plan).await?;
+        rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -320,7 +321,8 @@ impl ScalingManagerImpl {
 
         // Step 2: Calculate rebalance plan to move partitions away (40% progress)
         let all_brokers: Vec<BrokerInfo> = brokers.read().await.values().cloned().collect();
-        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers).await?;
+        let empty_assignments = HashMap::new();
+        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers, empty_assignments.clone()).await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -336,7 +338,7 @@ impl ScalingManagerImpl {
         }
 
         // Step 3: Execute rebalance (80% progress)
-        rebalancer.execute_rebalance(rebalance_plan).await?;
+        rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -482,11 +484,12 @@ impl ScalingManager for ScalingManagerImpl {
 
     async fn rebalance_partitions(&self) -> Result<()> {
         let all_brokers: Vec<BrokerInfo> = self.brokers.read().await.values().cloned().collect();
+        let empty_assignments = HashMap::new();
         let rebalance_plan = self
             .rebalancer
-            .calculate_rebalance_plan(all_brokers)
+            .calculate_rebalance_plan(all_brokers, empty_assignments.clone())
             .await?;
-        self.rebalancer.execute_rebalance(rebalance_plan).await?;
+        self.rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
         Ok(())
     }
 }
@@ -504,6 +507,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let rebalancer = Arc::new(MockPartitionRebalancer::new());
@@ -544,6 +548,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let rebalancer = Arc::new(MockPartitionRebalancer::new());
@@ -590,6 +595,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         // Create controller with the same config

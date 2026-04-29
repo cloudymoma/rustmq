@@ -23,6 +23,7 @@ spec:
         app.kubernetes.io/name: rustmq
         app.kubernetes.io/component: broker
     spec:
+      terminationGracePeriodSeconds: 600
       serviceAccountName: rustmq-sa
       priorityClassName: rustmq-high
       securityContext:

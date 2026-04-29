@@ -25,9 +25,7 @@ async fn main() -> Result<()> {
     let scaling_config = ScalingConfig {
         max_concurrent_additions: 3,
         max_concurrent_decommissions: 1,
-        rebalance_timeout_ms: 300_000,
-        traffic_migration_rate: 0.1,
-        health_check_timeout_ms: 30_000,
+        ..Default::default()
     };
 
     let peers = vec!["controller-2".to_string(), "controller-3".to_string()];

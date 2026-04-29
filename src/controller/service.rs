@@ -15,13 +15,21 @@ pub struct ControllerService {
     /// Decommissioning slot manager to prevent mass decommissions
     decommission_manager: Arc<DecommissionSlotManager>,
     /// Scaling configuration
-    scaling_config: Arc<AsyncRwLock<ScalingConfig>>,
+    pub scaling_config: Arc<AsyncRwLock<ScalingConfig>>,
     /// Raft consensus state
     raft_state: Arc<RaftState>,
     /// Cluster metadata manager
-    metadata_manager: Arc<MetadataManager>,
+    pub metadata_manager: Arc<MetadataManager>,
     /// Node ID of this controller
-    node_id: String,
+    pub node_id: String,
+    /// EWMA load scores per broker
+    pub broker_load_scores: Arc<AsyncRwLock<HashMap<BrokerId, f64>>>,
+    /// Last heartbeat timestamp per broker
+    pub broker_heartbeats: Arc<AsyncRwLock<HashMap<BrokerId, chrono::DateTime<chrono::Utc>>>>,
+    /// Broker status (Healthy/Draining/Unhealthy)
+    pub broker_statuses: Arc<AsyncRwLock<HashMap<BrokerId, crate::scaling::BrokerStatus>>>,
+    /// Latest raw metrics per broker
+    pub broker_metrics: Arc<AsyncRwLock<HashMap<BrokerId, crate::proto::controller::LoadMetrics>>>,
 }
 
 /// Basic Raft consensus state for cluster coordination
@@ -339,6 +347,10 @@ impl ControllerService {
             raft_state,
             metadata_manager,
             node_id,
+            broker_load_scores: Arc::new(AsyncRwLock::new(HashMap::new())),
+            broker_heartbeats: Arc::new(AsyncRwLock::new(HashMap::new())),
+            broker_statuses: Arc::new(AsyncRwLock::new(HashMap::new())),
+            broker_metrics: Arc::new(AsyncRwLock::new(HashMap::new())),
         }
     }
 
@@ -352,6 +364,50 @@ impl ControllerService {
     /// Get the current Raft term
     pub fn get_current_term(&self) -> u64 {
         self.raft_state.get_current_term()
+    }
+
+    // ==================== Broker Health Monitoring ====================
+
+    /// Start broker health check timer (leader only, every 10s)
+    pub fn start_broker_health_check_timer(&self) {
+        let broker_heartbeats = self.broker_heartbeats.clone();
+        let broker_statuses = self.broker_statuses.clone();
+        let raft_state = self.raft_state.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            while raft_state.is_leader() {
+                interval.tick().await;
+                let now = chrono::Utc::now();
+                let heartbeats = broker_heartbeats.read().await;
+                let mut stale = Vec::new();
+                for (broker_id, last_hb) in heartbeats.iter() {
+                    if now.signed_duration_since(*last_hb) > chrono::Duration::seconds(30) {
+                        stale.push(broker_id.clone());
+                    }
+                }
+                drop(heartbeats);
+                for broker_id in stale {
+                    tracing::warn!("Broker {} is stale, marking unhealthy", broker_id);
+                    let mut statuses = broker_statuses.write().await;
+                    statuses.insert(broker_id, crate::scaling::BrokerStatus::Unhealthy);
+                }
+            }
+        });
+    }
+
+    /// Transfer partition leadership (stub — real impl would use gRPC to broker)
+    pub async fn transfer_partition_leadership(
+        &self,
+        _broker_id: &BrokerId,
+        _request: TransferLeadershipRequest,
+    ) -> Result<TransferLeadershipResponse> {
+        Ok(TransferLeadershipResponse {
+            success: true,
+            error_code: 0,
+            error_message: None,
+            new_leader_epoch: None,
+        })
     }
 
     // ==================== Decommissioning Operations ====================
@@ -425,14 +481,35 @@ impl ControllerService {
                     });
                 }
 
-                // Simple round-robin assignment
+                let scores = self.broker_load_scores.read().await;
+                let use_weighted = !scores.is_empty();
+                let mut topic_assignments: HashMap<BrokerId, usize> = HashMap::new();
+
                 for partition_id in 0..request.partitions {
-                    let start_broker = (partition_id as usize) % brokers.len();
                     let mut replicas = Vec::new();
 
-                    for i in 0..request.replication_factor as usize {
-                        let broker_idx = (start_broker + i) % brokers.len();
-                        replicas.push(brokers[broker_idx].id.clone());
+                    if use_weighted {
+                        let mut candidate_scores = Vec::new();
+                        for broker in &brokers {
+                            let base_score = scores.get(&broker.id).copied().unwrap_or(0.0);
+                            let topic_part_count =
+                                topic_assignments.get(&broker.id).copied().unwrap_or(0);
+                            let effective_score = base_score + 0.1 * topic_part_count as f64;
+                            candidate_scores.push((broker.id.clone(), effective_score));
+                        }
+                        candidate_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+                        for i in 0..request.replication_factor as usize {
+                            let broker_id = candidate_scores[i].0.clone();
+                            replicas.push(broker_id.clone());
+                            *topic_assignments.entry(broker_id).or_insert(0) += 1;
+                        }
+                    } else {
+                        let start_broker = (partition_id as usize) % brokers.len();
+                        for i in 0..request.replication_factor as usize {
+                            let broker_idx = (start_broker + i) % brokers.len();
+                            replicas.push(brokers[broker_idx].id.clone());
+                        }
                     }
 
                     let assignment = PartitionAssignment {
@@ -1069,6 +1146,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec!["controller-2".to_string(), "controller-3".to_string()];
@@ -1146,6 +1224,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec!["controller-2".to_string(), "controller-3".to_string()];
@@ -1180,6 +1259,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec![]; // Single node cluster
@@ -1209,6 +1289,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec![];
@@ -1277,6 +1358,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec!["controller-2".to_string(), "controller-3".to_string()];
@@ -1317,6 +1399,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec!["controller-2".to_string(), "controller-3".to_string()];

@@ -1,4 +1,4 @@
-use prometheus::{Counter, Gauge, Histogram, Registry};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, Registry};
 use std::sync::Arc;
 
 pub struct Metrics {
@@ -7,6 +7,14 @@ pub struct Metrics {
     pub produce_latency: Histogram,
     pub consume_latency: Histogram,
     pub active_connections: Gauge,
+    pub cpu_usage: Gauge,
+    pub memory_usage: Gauge,
+    pub disk_usage: Gauge,
+    pub partition_count: GaugeVec,
+    pub message_rate: Counter,
+    pub consumer_lag_total: Gauge,
+    pub network_bytes: CounterVec,
+    pub heartbeat_age: Gauge,
     pub registry: Registry,
 }
 
@@ -14,48 +22,65 @@ impl Metrics {
     pub fn new() -> Arc<Self> {
         let registry = Registry::new();
 
-        let messages_produced = Counter::new(
-            "messages_produced_total",
-            "Total number of messages produced",
-        )
-        .expect("Failed to create messages_produced counter");
-
-        let messages_consumed = Counter::new(
-            "messages_consumed_total",
-            "Total number of messages consumed",
-        )
-        .expect("Failed to create messages_consumed counter");
-
+        let messages_produced =
+            Counter::new("messages_produced_total", "Total number of messages produced")
+                .expect("metric");
+        let messages_consumed =
+            Counter::new("messages_consumed_total", "Total number of messages consumed")
+                .expect("metric");
         let produce_latency = Histogram::with_opts(prometheus::HistogramOpts::new(
             "produce_latency_seconds",
             "Produce request latency",
         ))
-        .expect("Failed to create produce_latency histogram");
-
+        .expect("metric");
         let consume_latency = Histogram::with_opts(prometheus::HistogramOpts::new(
             "consume_latency_seconds",
             "Consume request latency",
         ))
-        .expect("Failed to create consume_latency histogram");
+        .expect("metric");
+        let active_connections =
+            Gauge::new("active_connections", "Number of active connections").expect("metric");
 
-        let active_connections = Gauge::new("active_connections", "Number of active connections")
-            .expect("Failed to create active_connections gauge");
+        let cpu_usage =
+            Gauge::new("rustmq_broker_cpu_usage", "Broker CPU usage (0.0-1.0)").expect("metric");
+        let memory_usage =
+            Gauge::new("rustmq_broker_memory_usage", "Broker memory usage (0.0-1.0)")
+                .expect("metric");
+        let disk_usage =
+            Gauge::new("rustmq_broker_disk_usage", "Broker disk usage (0.0-1.0)").expect("metric");
+        let partition_count = GaugeVec::new(
+            prometheus::Opts::new("rustmq_broker_partition_count", "Broker partition count"),
+            &["role"],
+        )
+        .expect("metric");
+        let message_rate =
+            Counter::new("rustmq_broker_message_rate", "Total messages processed").expect("metric");
+        let consumer_lag_total =
+            Gauge::new("rustmq_broker_consumer_lag_total", "Total consumer lag").expect("metric");
+        let network_bytes = CounterVec::new(
+            prometheus::Opts::new("rustmq_broker_network_bytes_total", "Total network bytes"),
+            &["direction"],
+        )
+        .expect("metric");
+        let heartbeat_age = Gauge::new(
+            "rustmq_broker_heartbeat_age_seconds",
+            "Seconds since last heartbeat acknowledged by controller",
+        )
+        .expect("metric");
 
-        registry
-            .register(Box::new(messages_produced.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(messages_consumed.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(produce_latency.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(consume_latency.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(active_connections.clone()))
-            .unwrap();
+        registry.register(Box::new(messages_produced.clone())).unwrap();
+        registry.register(Box::new(messages_consumed.clone())).unwrap();
+        registry.register(Box::new(produce_latency.clone())).unwrap();
+        registry.register(Box::new(consume_latency.clone())).unwrap();
+        registry.register(Box::new(active_connections.clone())).unwrap();
+        registry.register(Box::new(cpu_usage.clone())).unwrap();
+        registry.register(Box::new(memory_usage.clone())).unwrap();
+        registry.register(Box::new(disk_usage.clone())).unwrap();
+        registry.register(Box::new(partition_count.clone())).unwrap();
+        registry.register(Box::new(message_rate.clone())).unwrap();
+        registry.register(Box::new(consumer_lag_total.clone())).unwrap();
+        registry.register(Box::new(network_bytes.clone())).unwrap();
+        registry.register(Box::new(heartbeat_age.clone())).unwrap();
 
         Arc::new(Self {
             messages_produced,
@@ -63,6 +88,14 @@ impl Metrics {
             produce_latency,
             consume_latency,
             active_connections,
+            cpu_usage,
+            memory_usage,
+            disk_usage,
+            partition_count,
+            message_rate,
+            consumer_lag_total,
+            network_bytes,
+            heartbeat_age,
             registry,
         })
     }

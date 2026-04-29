@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 // Type aliases to make the broker core type more manageable
-type BrokerCore = MessageBrokerCore<
+pub(crate) type BrokerCore = MessageBrokerCore<
     DirectIOWal,
     crate::storage::StorageBackend,
     LruCache,
@@ -341,6 +341,33 @@ impl Broker {
         });
         self.background_tasks.push(heartbeat_handle);
 
+        // Start MetricsCollector (Prometheus endpoint + controller heartbeat)
+        let metrics = crate::metrics::Metrics::new();
+        let controller_endpoint = self
+            .config
+            .controller
+            .endpoints
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "localhost:9094".to_string());
+        let admin_port = self
+            .config
+            .network
+            .rpc_listen
+            .split(':')
+            .last()
+            .and_then(|s| s.parse::<u16>().ok())
+            .map(|p| p + 550)
+            .unwrap_or(9643);
+        let collector = crate::broker::metrics_collector::MetricsCollector::new(
+            self.broker_core.clone(),
+            metrics,
+            controller_endpoint,
+            self.config.broker.id.clone(),
+        );
+        let metrics_handle = collector.start(admin_port);
+        self.background_tasks.push(metrics_handle);
+
         // Transition to running state
         {
             let mut state = self.state.write().await;
@@ -454,6 +481,53 @@ impl Broker {
     /// Get the current broker state
     pub async fn state(&self) -> BrokerState {
         self.state.read().await.clone()
+    }
+
+    /// Initiate graceful drain: notify controller and wait for leadership transfers
+    pub async fn drain(&self) -> Result<()> {
+        let controller_endpoint = self
+            .config
+            .controller
+            .endpoints
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let endpoint = format!("http://{}", controller_endpoint);
+
+        let request = crate::proto::controller::DrainRequest {
+            broker_id: self.config.broker.id.clone(),
+        };
+
+        info!("Sending drain request to controller at {}", endpoint);
+        match crate::proto::controller::broker_management_service_client::BrokerManagementServiceClient::connect(endpoint).await {
+            Ok(mut client) => match client.drain_broker(request).await {
+                Ok(_) => info!("Drain request accepted by controller"),
+                Err(e) => error!("Failed to send drain request: {}", e),
+            },
+            Err(e) => error!("Failed to connect to controller for drain: {}", e),
+        }
+
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(300);
+
+        info!("Waiting for leadership transfers to complete...");
+        loop {
+            let (_total, leader_count) = self.broker_core.get_partition_counts().await;
+            if leader_count == 0 {
+                info!("All leadership transfers completed");
+                break;
+            }
+            if start_time.elapsed() > timeout {
+                warn!(
+                    "Timed out waiting for leadership transfers ({} leaders remaining)",
+                    leader_count
+                );
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        }
+
+        Ok(())
     }
 
     /// Check broker health status

@@ -1,0 +1,20 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rustmq-broker-lag
+  namespace: rustmq
+spec:
+  scaleTargetRef:
+    name: rustmq-broker
+  minReplicaCount: 3
+  maxReplicaCount: 50
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-operated.monitoring:9090
+      metricName: rustmq_consumer_lag_total
+      query: sum(rustmq_broker_consumer_lag_total)
+      threshold: "10000"            # Scale when total lag > 10K per pod
+      activationThreshold: "5000"   # Activate scaler at 5K

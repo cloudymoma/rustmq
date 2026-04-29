@@ -1126,6 +1126,7 @@ impl TestEnvironment {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         self.controller_configs.push(config.clone());

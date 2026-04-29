@@ -1,57 +1,76 @@
 use super::*;
 use crate::Result;
+use crate::config::operations::{LoadScoreNormalization, LoadScoreWeights};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
 use uuid::Uuid;
 
+pub fn composite_load_score(
+    m: &LoadMetrics,
+    norm: &LoadScoreNormalization,
+    w: &LoadScoreWeights,
+) -> f64 {
+    let net_usage = (m.network_tx_bytes_sec + m.network_rx_bytes_sec) as f64
+        / norm.max_network_bytes_sec;
+    let part_ratio = m.partition_count as f64 / norm.max_partitions_per_broker;
+    let rate_ratio = m.message_rate as f64 / norm.max_message_rate;
+
+    let weighted_sum = m.cpu_usage * w.cpu
+        + m.memory_usage * w.memory
+        + m.disk_usage * w.disk
+        + net_usage * w.network
+        + part_ratio * w.partition
+        + rate_ratio * w.message_rate;
+
+    let total_weight = w.cpu + w.memory + w.disk + w.network + w.partition + w.message_rate;
+    weighted_sum / total_weight
+}
+
 pub struct PartitionRebalancerImpl {
     operation_progress: Arc<AsyncRwLock<HashMap<String, f64>>>,
+    norm: LoadScoreNormalization,
+    weights: LoadScoreWeights,
 }
 
 impl PartitionRebalancerImpl {
     pub fn new() -> Self {
         Self {
             operation_progress: Arc::new(AsyncRwLock::new(HashMap::new())),
+            norm: LoadScoreNormalization::default(),
+            weights: LoadScoreWeights::default(),
+        }
+    }
+
+    pub fn with_config(norm: LoadScoreNormalization, weights: LoadScoreWeights) -> Self {
+        Self {
+            operation_progress: Arc::new(AsyncRwLock::new(HashMap::new())),
+            norm,
+            weights,
         }
     }
 
     fn calculate_broker_load_score(&self, broker: &BrokerInfo) -> f64 {
-        // Simple load calculation based on multiple factors
-        let cpu_weight = 0.3;
-        let memory_weight = 0.3;
-        let partition_weight = 0.2;
-        let message_rate_weight = 0.2;
-
-        // Normalize partition count (assume max 1000 partitions per broker)
-        let normalized_partitions = (broker.load_metrics.partition_count as f64) / 1000.0;
-
-        // Normalize message rate (assume max 100k msg/s per broker)
-        let normalized_message_rate = (broker.load_metrics.message_rate as f64) / 100_000.0;
-
-        cpu_weight * broker.load_metrics.cpu_usage
-            + memory_weight * broker.load_metrics.memory_usage
-            + partition_weight * normalized_partitions
-            + message_rate_weight * normalized_message_rate
+        composite_load_score(&broker.load_metrics, &self.norm, &self.weights)
     }
 
     fn select_partitions_to_move(
         &self,
         from_broker: &BrokerInfo,
         target_load_reduction: f64,
+        assignments: &HashMap<TopicPartition, PartitionAssignment>,
     ) -> Vec<TopicPartition> {
-        // In a real implementation, this would query the metadata store
-        // For testing, return mock partitions
         let mut partitions = Vec::new();
         let partitions_to_move =
             (target_load_reduction * from_broker.load_metrics.partition_count as f64) as usize;
 
-        for i in 0..partitions_to_move.min(5) {
-            // Limit for testing
-            partitions.push(TopicPartition {
-                topic: format!("topic-{}", i),
-                partition: i as u32,
-            });
+        for (tp, assignment) in assignments {
+            if assignment.leader == from_broker.id || assignment.replicas.contains(&from_broker.id) {
+                partitions.push(tp.clone());
+                if partitions.len() >= partitions_to_move.max(1) {
+                    break;
+                }
+            }
         }
 
         partitions
@@ -68,9 +87,7 @@ impl PartitionRebalancerImpl {
             .min_by(|a, b| {
                 let score_a = self.calculate_broker_load_score(a);
                 let score_b = self.calculate_broker_load_score(b);
-                score_a
-                    .partial_cmp(&score_b)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|b| b.id.clone())
     }
@@ -78,18 +95,17 @@ impl PartitionRebalancerImpl {
 
 #[async_trait]
 impl PartitionRebalancer for PartitionRebalancerImpl {
-    async fn calculate_rebalance_plan(&self, brokers: Vec<BrokerInfo>) -> Result<RebalancePlan> {
+    async fn calculate_rebalance_plan(
+        &self,
+        brokers: Vec<BrokerInfo>,
+        assignments: HashMap<TopicPartition, PartitionAssignment>,
+    ) -> Result<RebalancePlan> {
         let mut moves = Vec::new();
         let operation_id = Uuid::new_v4().to_string();
 
-        // Calculate average load
-        let total_load: f64 = brokers
-            .iter()
-            .map(|b| self.calculate_broker_load_score(b))
-            .sum();
+        let total_load: f64 = brokers.iter().map(|b| self.calculate_broker_load_score(b)).sum();
         let average_load = total_load / brokers.len() as f64;
 
-        // Find brokers that are above average load
         let overloaded_brokers: Vec<&BrokerInfo> = brokers
             .iter()
             .filter(|b| {
@@ -104,7 +120,7 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
             let target_load_reduction = (current_load - average_load) / current_load;
 
             let partitions_to_move =
-                self.select_partitions_to_move(overloaded_broker, target_load_reduction);
+                self.select_partitions_to_move(overloaded_broker, target_load_reduction, &assignments);
 
             for partition in partitions_to_move {
                 if let Some(target_broker) =
@@ -114,15 +130,15 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
                         topic_partition: partition,
                         from_broker: overloaded_broker.id.clone(),
                         to_broker: target_broker,
-                        estimated_bytes: 100 * 1024 * 1024, // 100MB estimate
+                        estimated_bytes: 100 * 1024 * 1024,
                     });
                 }
             }
         }
 
-        // Estimate duration based on number of moves and data size
         let total_bytes: u64 = moves.iter().map(|m| m.estimated_bytes).sum();
-        let estimated_duration = Duration::from_secs(total_bytes / (10 * 1024 * 1024)); // 10MB/s transfer rate
+        let estimated_duration =
+            Duration::from_secs(total_bytes.checked_div(10 * 1024 * 1024).unwrap_or(0));
 
         Ok(RebalancePlan {
             operation_id,
@@ -131,7 +147,11 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
         })
     }
 
-    async fn execute_rebalance(&self, plan: RebalancePlan) -> Result<()> {
+    async fn execute_rebalance(
+        &self,
+        plan: RebalancePlan,
+        _assignments: HashMap<TopicPartition, PartitionAssignment>,
+    ) -> Result<()> {
         let operation_id = plan.operation_id.clone();
         let total_moves = plan.moves.len();
 
@@ -141,7 +161,6 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
         }
 
         for (i, partition_move) in plan.moves.iter().enumerate() {
-            // Simulate partition move operation
             tracing::info!(
                 "Moving partition {}:{} from {} to {}",
                 partition_move.topic_partition.topic,
@@ -150,10 +169,8 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
                 partition_move.to_broker
             );
 
-            // Simulate time for partition move
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
 
-            // Update progress
             let progress = (i + 1) as f64 / total_moves as f64;
             {
                 let mut progress_map = self.operation_progress.write().await;
@@ -170,7 +187,6 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
     }
 }
 
-// Mock implementation for testing
 pub struct MockPartitionRebalancer {
     operation_progress: Arc<AsyncRwLock<HashMap<String, f64>>>,
 }
@@ -185,33 +201,33 @@ impl MockPartitionRebalancer {
 
 #[async_trait]
 impl PartitionRebalancer for MockPartitionRebalancer {
-    async fn calculate_rebalance_plan(&self, _brokers: Vec<BrokerInfo>) -> Result<RebalancePlan> {
-        let operation_id = Uuid::new_v4().to_string();
-
-        // Return empty plan for testing
+    async fn calculate_rebalance_plan(
+        &self,
+        _brokers: Vec<BrokerInfo>,
+        _assignments: HashMap<TopicPartition, PartitionAssignment>,
+    ) -> Result<RebalancePlan> {
         Ok(RebalancePlan {
-            operation_id,
+            operation_id: Uuid::new_v4().to_string(),
             moves: vec![],
             estimated_duration: Duration::from_secs(10),
         })
     }
 
-    async fn execute_rebalance(&self, plan: RebalancePlan) -> Result<()> {
+    async fn execute_rebalance(
+        &self,
+        plan: RebalancePlan,
+        _assignments: HashMap<TopicPartition, PartitionAssignment>,
+    ) -> Result<()> {
         let operation_id = plan.operation_id.clone();
-
         {
             let mut progress_map = self.operation_progress.write().await;
             progress_map.insert(operation_id.clone(), 0.0);
         }
-
-        // Simulate quick rebalance
         tokio::time::sleep(Duration::from_millis(10)).await;
-
         {
             let mut progress_map = self.operation_progress.write().await;
             progress_map.insert(operation_id, 1.0);
         }
-
         Ok(())
     }
 
@@ -224,6 +240,40 @@ impl PartitionRebalancer for MockPartitionRebalancer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::service::PartitionAssignment;
+
+    #[tokio::test]
+    async fn test_composite_load_score_uniform() {
+        let m = LoadMetrics {
+            cpu_usage: 0.5,
+            memory_usage: 0.5,
+            disk_usage: 0.5,
+            network_tx_bytes_sec: 312_500_000,
+            network_rx_bytes_sec: 312_500_000,
+            partition_count: 2000,
+            leader_partition_count: 1000,
+            message_rate: 250_000,
+            consumer_lag_total: 0,
+            timestamp: chrono::Utc::now(),
+        };
+        let score = composite_load_score(
+            &m,
+            &LoadScoreNormalization::default(),
+            &LoadScoreWeights::default(),
+        );
+        assert!((score - 0.5).abs() < 0.01, "Expected ~0.5, got {}", score);
+    }
+
+    #[tokio::test]
+    async fn test_composite_load_score_zero() {
+        let m = LoadMetrics::default();
+        let score = composite_load_score(
+            &m,
+            &LoadScoreNormalization::default(),
+            &LoadScoreWeights::default(),
+        );
+        assert!((score - 0.0).abs() < 0.01, "Expected ~0.0, got {}", score);
+    }
 
     #[tokio::test]
     async fn test_rebalance_plan_calculation() {
@@ -236,11 +286,16 @@ mod tests {
                 endpoints: vec!["broker-1:9092".to_string()],
                 status: BrokerStatus::Healthy,
                 load_metrics: LoadMetrics {
-                    cpu_usage: 0.9, // High CPU
+                    cpu_usage: 0.9,
                     memory_usage: 0.8,
-                    network_io: 1000,
+                    disk_usage: 0.5,
+                    network_tx_bytes_sec: 500_000,
+                    network_rx_bytes_sec: 500_000,
                     partition_count: 100,
+                    leader_partition_count: 50,
                     message_rate: 50000,
+                    consumer_lag_total: 0,
+                    timestamp: chrono::Utc::now(),
                 },
             },
             BrokerInfo {
@@ -249,18 +304,38 @@ mod tests {
                 endpoints: vec!["broker-2:9092".to_string()],
                 status: BrokerStatus::Healthy,
                 load_metrics: LoadMetrics {
-                    cpu_usage: 0.3, // Low CPU
+                    cpu_usage: 0.3,
                     memory_usage: 0.4,
-                    network_io: 500,
+                    disk_usage: 0.3,
+                    network_tx_bytes_sec: 250_000,
+                    network_rx_bytes_sec: 250_000,
                     partition_count: 20,
+                    leader_partition_count: 10,
                     message_rate: 10000,
+                    consumer_lag_total: 0,
+                    timestamp: chrono::Utc::now(),
                 },
             },
         ];
 
-        let plan = rebalancer.calculate_rebalance_plan(brokers).await.unwrap();
+        let mut assignments = HashMap::new();
+        for i in 0..100 {
+            let tp = TopicPartition {
+                topic: format!("topic-{}", i % 10),
+                partition: (i / 10) as u32,
+            };
+            assignments.insert(
+                tp,
+                PartitionAssignment {
+                    leader: "broker-1".to_string(),
+                    replicas: vec!["broker-1".to_string(), "broker-2".to_string()],
+                    in_sync_replicas: vec!["broker-1".to_string(), "broker-2".to_string()],
+                    leader_epoch: 1,
+                },
+            );
+        }
 
-        // Should generate moves from overloaded broker to underloaded broker
+        let plan = rebalancer.calculate_rebalance_plan(brokers, assignments).await.unwrap();
         assert!(!plan.moves.is_empty());
         assert!(plan.moves.iter().all(|m| m.from_broker == "broker-1"));
         assert!(plan.moves.iter().all(|m| m.to_broker == "broker-2"));
@@ -284,7 +359,18 @@ mod tests {
             estimated_duration: Duration::from_secs(10),
         };
 
-        let result = rebalancer.execute_rebalance(plan).await;
+        let mut assignments = HashMap::new();
+        assignments.insert(
+            TopicPartition { topic: "test-topic".to_string(), partition: 0 },
+            PartitionAssignment {
+                leader: "broker-1".to_string(),
+                replicas: vec!["broker-1".to_string(), "broker-2".to_string()],
+                in_sync_replicas: vec!["broker-1".to_string(), "broker-2".to_string()],
+                leader_epoch: 1,
+            },
+        );
+
+        let result = rebalancer.execute_rebalance(plan, assignments).await;
         assert!(result.is_ok());
 
         let progress = rebalancer.get_rebalance_progress("test-op").await.unwrap();

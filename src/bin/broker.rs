@@ -63,8 +63,11 @@ async fn main() -> Result<()> {
         info!("Received shutdown signal (Ctrl+C)");
     }
 
-    // Gracefully stop the broker
+    // Gracefully drain partitions and stop
     info!("Initiating graceful shutdown...");
+    if let Err(e) = broker.drain().await {
+        error!("Failed to drain broker: {}", e);
+    }
     broker.stop().await?;
     info!("Broker shutdown complete");
 

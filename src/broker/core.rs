@@ -27,6 +27,7 @@ where
     network_handler: Arc<N>,
     partitions: Arc<RwLock<HashMap<TopicPartition, PartitionMetadata>>>,
     broker_id: BrokerId,
+    total_messages_processed: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +135,7 @@ where
             network_handler,
             partitions: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
+            total_messages_processed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -169,6 +171,17 @@ where
     }
 
     /// Get partition metadata
+    pub fn get_total_messages_processed(&self) -> u64 {
+        self.total_messages_processed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub async fn get_partition_counts(&self) -> (usize, usize) {
+        let partitions = self.partitions.read().await;
+        let total = partitions.len();
+        let leader_count = partitions.values().filter(|p| p.is_leader).count();
+        (total, leader_count)
+    }
+
     pub async fn get_partition_metadata(
         &self,
         topic_partition: &TopicPartition,
@@ -253,6 +266,7 @@ where
             metadata.high_watermark = base_offset + wal_records.len() as u64;
         }
 
+        self.total_messages_processed.fetch_add(wal_records.len() as u64, std::sync::atomic::Ordering::Relaxed);
         Ok(offsets)
     }
 
@@ -270,6 +284,7 @@ where
             .await
         {
             if let Ok(cached_records) = bincode::deserialize::<Vec<Record>>(&cached_data) {
+                self.total_messages_processed.fetch_add(cached_records.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 return Ok(cached_records);
             }
         }
@@ -278,6 +293,7 @@ where
         match self.wal.read(fetch_offset, max_bytes as usize).await {
             Ok(wal_records) if !wal_records.is_empty() => {
                 let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
+                self.total_messages_processed.fetch_add(records.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 return Ok(records);
             }
             Ok(_) | Err(RustMqError::OffsetOutOfRange(_)) => {
@@ -551,6 +567,7 @@ where
             network_handler: Arc::clone(&self.network_handler),
             partitions: Arc::clone(&self.partitions),
             broker_id: self.broker_id.clone(),
+            total_messages_processed: Arc::clone(&self.total_messages_processed),
         }
     }
 }

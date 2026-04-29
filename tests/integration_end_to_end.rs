@@ -37,7 +37,8 @@ async fn test_full_system_integration() {
         rebalance_timeout_ms: 300_000,
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
-    };
+        ..Default::default()
+        };
 
     let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 
@@ -254,7 +255,8 @@ async fn test_failure_recovery_scenarios() {
         rebalance_timeout_ms: 300_000,
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
-    };
+        ..Default::default()
+        };
 
     let controller = ControllerService::new(
         "controller-1".to_string(),
@@ -369,7 +371,8 @@ async fn test_concurrent_system_operations() {
         rebalance_timeout_ms: 300_000,
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
-    };
+        ..Default::default()
+        };
 
     let controller = Arc::new(ControllerService::new(
         "controller-1".to_string(),
@@ -524,7 +527,8 @@ async fn test_system_configuration_updates() {
         rebalance_timeout_ms: 300_000,
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
-    };
+        ..Default::default()
+        };
 
     let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 
@@ -535,7 +539,8 @@ async fn test_system_configuration_updates() {
         rebalance_timeout_ms: 600_000,
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
-    };
+        ..Default::default()
+        };
 
     let result = controller.update_scaling_config(new_config).await;
     assert!(result.is_ok());
@@ -586,7 +591,8 @@ async fn test_data_consistency_across_components() {
         rebalance_timeout_ms: 300_000,
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
-    };
+        ..Default::default()
+        };
 
     let controller = ControllerService::new("controller-1".to_string(), vec![], scaling_config);
 

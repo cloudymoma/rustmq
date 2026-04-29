@@ -127,6 +127,7 @@ impl Default for Config {
                 rebalance_timeout_ms: 300_000,   // 5 minutes
                 traffic_migration_rate: 0.1,     // 10% per minute
                 health_check_timeout_ms: 30_000, // 30 seconds
+                ..Default::default()
             },
             operations: OperationsConfig {
                 allow_runtime_config_updates: true,

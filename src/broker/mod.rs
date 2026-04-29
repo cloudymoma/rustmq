@@ -1,5 +1,6 @@
 pub mod broker;
 pub mod core;
+pub mod metrics_collector;
 
 pub use broker::{Broker, BrokerBuilder, BrokerState, HealthStatus};
 pub use core::{

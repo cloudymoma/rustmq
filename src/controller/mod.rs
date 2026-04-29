@@ -1,5 +1,7 @@
 pub mod raft_operations; // Raft operations abstraction for ACL (breaks circular dependency)
 pub mod service;
+pub mod broker_management_service;
+pub mod auto_rebalancer;
 
 // Production-ready OpenRaft implementations for RustMQ - fully compatible with OpenRaft 0.9.21
 pub mod openraft_compaction; // Log compaction and snapshot management

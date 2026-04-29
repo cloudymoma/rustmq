@@ -1042,6 +1042,7 @@ mod tests {
             rebalance_timeout_ms: 300_000,
             traffic_migration_rate: 0.1,
             health_check_timeout_ms: 30_000,
+            ..Default::default()
         };
 
         let peers = vec![];

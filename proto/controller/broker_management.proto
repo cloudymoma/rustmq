@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package rustmq.controller;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rustmq/rustmq/proto/controller";
+
+// Broker management service for broker-controller communication
+service BrokerManagementService {
+  // Send heartbeat with load metrics from broker to controller
+  rpc BrokerHeartbeat(BrokerHeartbeatRequest) returns (BrokerHeartbeatResponse);
+
+  // Notify controller that broker is shutting down
+  rpc DrainBroker(DrainRequest) returns (DrainResponse);
+}
+
+message DrainRequest {
+  string broker_id = 1;
+}
+
+message DrainResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message BrokerHeartbeatRequest {
+  string broker_id = 1;
+  LoadMetrics metrics = 2;
+}
+
+message BrokerHeartbeatResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 heartbeat_age_seconds = 3;
+}
+
+message LoadMetrics {
+  double cpu_usage = 1;             // 0.0–1.0
+  double memory_usage = 2;          // 0.0–1.0
+  double disk_usage = 3;            // 0.0–1.0, of WAL volume
+  uint64 network_tx_bytes_sec = 4;  // outbound throughput
+  uint64 network_rx_bytes_sec = 5;  // inbound throughput
+  uint32 partition_count = 6;       // total partitions hosted
+  uint32 leader_partition_count = 7;  // partitions where this broker is leader
+  uint64 message_rate = 8;          // messages/sec (produce + consume)
+  uint64 consumer_lag_total = 9;    // sum of lag across all consumer groups
+  google.protobuf.Timestamp timestamp = 10;
+}
