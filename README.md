@@ -1,9 +1,9 @@
 # RustMQ: Cloud-Native Distributed Message Queue System
 
-[![Build Status](https://github.com/rustmq/rustmq/actions/workflows/rust.yml/badge.svg)](https://github.com/rustmq/rustmq/actions)
+[![Build Status](https://github.com/cloudymoma/rustmq/actions/workflows/rust.yml/badge.svg)](https://github.com/cloudymoma/rustmq/actions)
 [![License: BDL 1.0](https://img.shields.io/badge/License-BDL%201.0-red.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/rustmq/rustmq)
+[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/cloudymoma/rustmq)
 
 RustMQ is a next-generation, cloud-native distributed message queue system that combines the high-performance characteristics of Apache Kafka with the cost-effectiveness and operational simplicity of modern cloud architectures. Built from the ground up in Rust, RustMQ leverages a shared-storage architecture that decouples compute from storage, enabling unprecedented elasticity, cost savings, and operational efficiency.
 
@@ -119,7 +119,7 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 #### Option 1: Docker Environment (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/rustmq/rustmq.git
+git clone https://github.com/cloudymoma/rustmq.git
 cd rustmq
 
 # Start complete RustMQ cluster with all services
@@ -257,7 +257,7 @@ We welcome contributions to help implement the remaining features!
 
 ```bash
 # Clone and setup
-git clone https://github.com/rustmq/rustmq.git
+git clone https://github.com/cloudymoma/rustmq.git
 cd rustmq
 
 # Install development dependencies
@@ -338,7 +338,7 @@ For commercial licensing inquiries, please contact the license holder through th
 
 ## 🔗 Links
 
-- [Issue Tracker](https://github.com/rustmq/rustmq/issues)
+- [Issue Tracker](https://github.com/cloudymoma/rustmq/issues)
 
 ---
 
