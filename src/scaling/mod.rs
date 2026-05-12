@@ -1,9 +1,9 @@
-use crate::{Result, types::TopicPartition};
 use crate::controller::service::PartitionAssignment;
+use crate::{Result, types::TopicPartition};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use tokio::time::{Duration, Instant};
-use chrono::{DateTime, Utc};
 
 pub mod manager;
 pub mod operations;
@@ -25,17 +25,9 @@ pub enum ScalingOperation {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalingStatus {
     NotStarted,
-    InProgress {
-        started_at: Instant,
-        progress: f64,
-    },
-    Completed {
-        completed_at: Instant,
-    },
-    Failed {
-        error: String,
-        failed_at: Instant,
-    },
+    InProgress { started_at: Instant, progress: f64 },
+    Completed { completed_at: Instant },
+    Failed { error: String, failed_at: Instant },
 }
 
 #[derive(Debug, Clone)]

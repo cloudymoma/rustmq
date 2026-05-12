@@ -115,7 +115,9 @@ impl TokenBucket {
     }
 
     async fn acquire(&mut self, amount: f64) {
-        if self.rate <= 0.0 { return; }
+        if self.rate <= 0.0 {
+            return;
+        }
         loop {
             let now = tokio::time::Instant::now();
             let elapsed = now.duration_since(self.last_update).as_secs_f64();
@@ -142,7 +144,9 @@ impl GrpcReplicationRpcClient {
             connections: Arc::new(DashMap::new()),
             endpoints: Arc::new(DashMap::new()),
             config,
-            rate_limiter: std::sync::Arc::new(tokio::sync::Mutex::new(TokenBucket::new(50.0 * 1024.0 * 1024.0))),
+            rate_limiter: std::sync::Arc::new(tokio::sync::Mutex::new(TokenBucket::new(
+                50.0 * 1024.0 * 1024.0,
+            ))),
         }
     }
 

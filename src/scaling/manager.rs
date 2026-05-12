@@ -184,7 +184,9 @@ impl ScalingManagerImpl {
         // Step 3: Calculate rebalance plan (75% progress)
         let all_brokers: Vec<BrokerInfo> = brokers.read().await.values().cloned().collect();
         let empty_assignments = HashMap::new();
-        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers, empty_assignments.clone()).await?;
+        let rebalance_plan = rebalancer
+            .calculate_rebalance_plan(all_brokers, empty_assignments.clone())
+            .await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -200,7 +202,9 @@ impl ScalingManagerImpl {
         }
 
         // Step 4: Execute rebalance (100% progress)
-        rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
+        rebalancer
+            .execute_rebalance(rebalance_plan, empty_assignments)
+            .await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -322,7 +326,9 @@ impl ScalingManagerImpl {
         // Step 2: Calculate rebalance plan to move partitions away (40% progress)
         let all_brokers: Vec<BrokerInfo> = brokers.read().await.values().cloned().collect();
         let empty_assignments = HashMap::new();
-        let rebalance_plan = rebalancer.calculate_rebalance_plan(all_brokers, empty_assignments.clone()).await?;
+        let rebalance_plan = rebalancer
+            .calculate_rebalance_plan(all_brokers, empty_assignments.clone())
+            .await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -338,7 +344,9 @@ impl ScalingManagerImpl {
         }
 
         // Step 3: Execute rebalance (80% progress)
-        rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
+        rebalancer
+            .execute_rebalance(rebalance_plan, empty_assignments)
+            .await?;
 
         {
             let mut status_map = operation_status.write().await;
@@ -489,7 +497,9 @@ impl ScalingManager for ScalingManagerImpl {
             .rebalancer
             .calculate_rebalance_plan(all_brokers, empty_assignments.clone())
             .await?;
-        self.rebalancer.execute_rebalance(rebalance_plan, empty_assignments).await?;
+        self.rebalancer
+            .execute_rebalance(rebalance_plan, empty_assignments)
+            .await?;
         Ok(())
     }
 }

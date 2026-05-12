@@ -2,8 +2,8 @@ use crate::storage::{AlignedBufferPool, BufferPool};
 use crate::{Result, config::*, storage::traits::*};
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::ops::Range;
 use crc32fast::hash;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -375,7 +375,7 @@ impl UploadManager for UploadManagerImpl {
         self.bandwidth_limiter.acquire(segment.size()).await?;
 
         let compressed = self.compress_segment(&segment).await?;
-        
+
         // Compute CRC32 and append to data
         let crc = hash(&compressed);
         let mut data_with_crc = Vec::with_capacity(compressed.len() + 4);
@@ -600,13 +600,16 @@ mod tests {
             .upload_segment(segment.clone())
             .await
             .unwrap();
-            
+
         // Corrupt the file in storage
         let mut file_data = storage.get(&object_key).await.unwrap().to_vec();
         if file_data.len() > 10 {
             file_data[5] = !file_data[5]; // Flip bits
         }
-        storage.put(&object_key, Bytes::from(file_data)).await.unwrap();
+        storage
+            .put(&object_key, Bytes::from(file_data))
+            .await
+            .unwrap();
 
         // Download should fail because of checksum or decompression failure
         let result = upload_manager.download_segment(&object_key).await;

@@ -18,6 +18,7 @@ use crate::storage::{
 };
 use crate::types::*;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock as AsyncRwLock, oneshot};
 use tokio::task::JoinHandle;
@@ -221,6 +222,7 @@ impl Broker {
             broker_handler.clone(),
             broker_handler.clone(),
             broker_handler.clone(),
+            broker_handler.clone(),
         )
         .await?;
 
@@ -364,9 +366,16 @@ impl Broker {
             metrics,
             controller_endpoint,
             self.config.broker.id.clone(),
+            self.broker_handler.coordinator_cache.clone(),
         );
         let metrics_handle = collector.start(admin_port);
         self.background_tasks.push(metrics_handle);
+
+        // Recover consumer group state from snapshots and start background tasks
+        let snapshot_dir = self.config.wal.path.join("snapshots");
+        self.broker_core.group_coordinator.recover_from_snapshots(&snapshot_dir).await;
+        self.broker_core.group_coordinator.start_snapshot_task(snapshot_dir);
+        self.broker_core.group_coordinator.start_reaper_task();
 
         // Transition to running state
         {
@@ -569,10 +578,19 @@ impl Broker {
     }
 }
 
+/// Cached coordinator mapping: partition → (broker_id, host, port)
+#[derive(Debug, Clone)]
+pub struct CoordinatorInfo {
+    pub broker_id: BrokerId,
+    pub host: String,
+    pub port: u16,
+}
+
 /// Handler that bridges QUIC server requests to MessageBrokerCore
 pub struct BrokerHandler {
     config: Config,
     broker_core: Arc<AsyncRwLock<Option<Arc<BrokerCore>>>>,
+    coordinator_cache: Arc<AsyncRwLock<HashMap<u32, CoordinatorInfo>>>,
 }
 
 impl BrokerHandler {
@@ -580,6 +598,7 @@ impl BrokerHandler {
         Ok(Self {
             config,
             broker_core: Arc::new(AsyncRwLock::new(None)),
+            coordinator_cache: Arc::new(AsyncRwLock::new(HashMap::new())),
         })
     }
 
@@ -814,5 +833,78 @@ mod tests {
         // Try to start again (should fail)
         let result = broker.start().await;
         assert!(result.is_err());
+    }
+}
+
+use crate::consumer_group::coordinator::GroupCoordinatorManager;
+use crate::network::quic_server::ConsumerGroupHandler;
+
+#[async_trait]
+impl ConsumerGroupHandler for BrokerHandler {
+    async fn handle_find_coordinator(
+        &self,
+        request: crate::types::FindCoordinatorRequest,
+    ) -> Result<crate::types::FindCoordinatorResponse> {
+        let core = self.get_broker_core().await?;
+        let partition = core.group_coordinator.partition_for(&request.group_id);
+
+        let cache = self.coordinator_cache.read().await;
+        if let Some(info) = cache.get(&partition) {
+            return Ok(crate::types::FindCoordinatorResponse {
+                coordinator_broker_id: info.broker_id.clone(),
+                coordinator_host: info.host.clone(),
+                coordinator_port: info.port,
+                error_code: 0,
+            });
+        }
+        drop(cache);
+
+        let broker_id = core.broker_id().clone();
+        let host = self.config.network.quic_listen
+            .split(':').next().unwrap_or("localhost").to_string();
+        let port = self.config.network.quic_listen
+            .split(':').last().and_then(|s| s.parse().ok()).unwrap_or(9092);
+
+        Ok(crate::types::FindCoordinatorResponse {
+            coordinator_broker_id: broker_id,
+            coordinator_host: host,
+            coordinator_port: port,
+            error_code: 0,
+        })
+    }
+    async fn handle_join_group(
+        &self,
+        request: crate::types::JoinGroupRequest,
+    ) -> Result<crate::types::JoinGroupResponse> {
+        let core = self.get_broker_core().await?;
+        core.group_coordinator.handle_join_group(request).await
+    }
+    async fn handle_consumer_heartbeat(
+        &self,
+        request: crate::types::ConsumerHeartbeatRequest,
+    ) -> Result<crate::types::ConsumerHeartbeatResponse> {
+        let core = self.get_broker_core().await?;
+        core.group_coordinator.handle_heartbeat(request).await
+    }
+    async fn handle_commit_offset(
+        &self,
+        request: crate::types::CommitOffsetRequest,
+    ) -> Result<crate::types::CommitOffsetResponse> {
+        let core = self.get_broker_core().await?;
+        core.group_coordinator.handle_commit_offset(request).await
+    }
+    async fn handle_fetch_offset(
+        &self,
+        request: crate::types::FetchOffsetRequest,
+    ) -> Result<crate::types::FetchOffsetResponse> {
+        let core = self.get_broker_core().await?;
+        core.group_coordinator.handle_fetch_offset(request).await
+    }
+    async fn handle_leave_group(
+        &self,
+        request: crate::types::LeaveGroupRequest,
+    ) -> Result<crate::types::LeaveGroupResponse> {
+        let core = self.get_broker_core().await?;
+        core.group_coordinator.handle_leave_group(request).await
     }
 }

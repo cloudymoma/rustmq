@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 /// High-level message broker core that orchestrates produce/consume operations
 pub struct MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -28,6 +28,7 @@ where
     partitions: Arc<RwLock<HashMap<TopicPartition, PartitionMetadata>>>,
     broker_id: BrokerId,
     total_messages_processed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub group_coordinator: Arc<crate::consumer_group::coordinator::GroupCoordinatorManager>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +114,7 @@ impl ConsumeRecord {
 
 impl<W, O, C, R, N> MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -127,6 +128,14 @@ where
         network_handler: Arc<N>,
         broker_id: BrokerId,
     ) -> Self {
+        let wal_dyn: Arc<dyn crate::storage::traits::WriteAheadLog> = wal.clone();
+        let group_coordinator = Arc::new(
+            crate::consumer_group::coordinator::GroupCoordinatorManager::new(
+                wal_dyn,
+                crate::consumer_group::CONSUMER_OFFSETS_PARTITIONS,
+            ),
+        );
+
         Self {
             wal,
             object_storage,
@@ -136,6 +145,7 @@ where
             partitions: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
             total_messages_processed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_coordinator,
         }
     }
 
@@ -172,7 +182,32 @@ where
 
     /// Get partition metadata
     pub fn get_total_messages_processed(&self) -> u64 {
-        self.total_messages_processed.load(std::sync::atomic::Ordering::Relaxed)
+        self.total_messages_processed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub async fn get_high_watermarks(&self) -> Vec<(TopicPartition, u64)> {
+        let mut results = Vec::new();
+        let partitions = self.partitions.read().await;
+        for (tp, meta) in partitions.iter() {
+            if meta.is_leader {
+                results.push((tp.clone(), meta.high_watermark));
+            }
+        }
+        results
+    }
+
+    pub fn broker_id(&self) -> &BrokerId {
+        &self.broker_id
+    }
+
+    pub async fn get_partitions_for_topic(&self, topic: &str) -> Vec<TopicPartition> {
+        let partitions = self.partitions.read().await;
+        partitions
+            .keys()
+            .filter(|tp| tp.topic == topic)
+            .cloned()
+            .collect()
     }
 
     pub async fn get_partition_counts(&self) -> (usize, usize) {
@@ -266,7 +301,10 @@ where
             metadata.high_watermark = base_offset + wal_records.len() as u64;
         }
 
-        self.total_messages_processed.fetch_add(wal_records.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.total_messages_processed.fetch_add(
+            wal_records.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         Ok(offsets)
     }
 
@@ -284,7 +322,10 @@ where
             .await
         {
             if let Ok(cached_records) = bincode::deserialize::<Vec<Record>>(&cached_data) {
-                self.total_messages_processed.fetch_add(cached_records.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.total_messages_processed.fetch_add(
+                    cached_records.len() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 return Ok(cached_records);
             }
         }
@@ -293,7 +334,8 @@ where
         match self.wal.read(fetch_offset, max_bytes as usize).await {
             Ok(wal_records) if !wal_records.is_empty() => {
                 let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
-                self.total_messages_processed.fetch_add(records.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.total_messages_processed
+                    .fetch_add(records.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 return Ok(records);
             }
             Ok(_) | Err(RustMqError::OffsetOutOfRange(_)) => {
@@ -334,7 +376,7 @@ where
 /// High-level producer implementation
 pub struct MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -345,7 +387,7 @@ where
 
 impl<W, O, C, R, N> MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -361,7 +403,7 @@ where
 #[async_trait]
 impl<W, O, C, R, N> Producer for MessageProducer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -448,7 +490,7 @@ where
 /// High-level consumer implementation
 pub struct MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -463,7 +505,7 @@ where
 
 impl<W, O, C, R, N> MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -482,7 +524,7 @@ where
 #[async_trait]
 impl<W, O, C, R, N> Consumer for MessageConsumer<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -552,7 +594,7 @@ where
 
 impl<W, O, C, R, N> Clone for MessageBrokerCore<W, O, C, R, N>
 where
-    W: WriteAheadLog + Send + Sync + ?Sized,
+    W: WriteAheadLog + Send + Sync + 'static,
     O: ObjectStorage + Send + Sync + ?Sized,
     C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
@@ -568,6 +610,7 @@ where
             partitions: Arc::clone(&self.partitions),
             broker_id: self.broker_id.clone(),
             total_messages_processed: Arc::clone(&self.total_messages_processed),
+            group_coordinator: Arc::clone(&self.group_coordinator),
         }
     }
 }

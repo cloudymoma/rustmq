@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod broker;
 pub mod config;
+pub mod consumer_group;
 pub mod controller;
 pub mod error;
 pub mod etl;

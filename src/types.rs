@@ -371,10 +371,17 @@ pub struct RemovePartitionResponse {
 
 /// Client request types for QUIC server
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum RequestType {
     Produce = 1,
     Fetch = 2,
     Metadata = 3,
+    FindCoordinator = 4,
+    JoinGroup = 5,
+    ConsumerHeartbeat = 6,
+    CommitOffset = 7,
+    FetchOffset = 8,
+    LeaveGroup = 9,
 }
 
 impl TryFrom<u8> for RequestType {
@@ -385,6 +392,12 @@ impl TryFrom<u8> for RequestType {
             1 => Ok(RequestType::Produce),
             2 => Ok(RequestType::Fetch),
             3 => Ok(RequestType::Metadata),
+            4 => Ok(RequestType::FindCoordinator),
+            5 => Ok(RequestType::JoinGroup),
+            6 => Ok(RequestType::ConsumerHeartbeat),
+            7 => Ok(RequestType::CommitOffset),
+            8 => Ok(RequestType::FetchOffset),
+            9 => Ok(RequestType::LeaveGroup),
             _ => Err(crate::error::RustMqError::InvalidOperation(format!(
                 "Invalid request type: {}",
                 value
@@ -525,4 +538,84 @@ impl ComponentHealth {
             details: std::collections::HashMap::new(),
         }
     }
+}
+
+// Consumer Group Coordination Structs
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindCoordinatorRequest {
+    pub group_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindCoordinatorResponse {
+    pub coordinator_broker_id: BrokerId,
+    pub coordinator_host: String,
+    pub coordinator_port: u16,
+    pub error_code: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinGroupRequest {
+    pub group_id: String,
+    pub member_id: String,
+    pub session_timeout_ms: u32,
+    pub topics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinGroupResponse {
+    pub generation_id: u64,
+    pub member_id: String,
+    pub leader_id: String,
+    pub assigned_partitions: std::collections::HashMap<String, Vec<TopicPartition>>,
+    pub error_code: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsumerHeartbeatRequest {
+    pub group_id: String,
+    pub member_id: String,
+    pub generation_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsumerHeartbeatResponse {
+    pub error_code: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitOffsetRequest {
+    pub group_id: String,
+    pub member_id: String,
+    pub generation_id: u64,
+    pub offsets: std::collections::HashMap<TopicPartition, Offset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitOffsetResponse {
+    pub error_code: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchOffsetRequest {
+    pub group_id: String,
+    pub topic_partitions: Vec<TopicPartition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchOffsetResponse {
+    pub offsets: std::collections::HashMap<TopicPartition, Offset>,
+    pub error_code: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaveGroupRequest {
+    pub group_id: String,
+    pub member_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaveGroupResponse {
+    pub error_code: u32,
 }

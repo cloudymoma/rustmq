@@ -30,6 +30,8 @@ pub struct ControllerService {
     pub broker_statuses: Arc<AsyncRwLock<HashMap<BrokerId, crate::scaling::BrokerStatus>>>,
     /// Latest raw metrics per broker
     pub broker_metrics: Arc<AsyncRwLock<HashMap<BrokerId, crate::proto::controller::LoadMetrics>>>,
+    /// Flag to avoid repeated ensure_internal_topics checks
+    internal_topics_created: Arc<AtomicBool>,
 }
 
 /// Basic Raft consensus state for cluster coordination
@@ -351,6 +353,7 @@ impl ControllerService {
             broker_heartbeats: Arc::new(AsyncRwLock::new(HashMap::new())),
             broker_statuses: Arc::new(AsyncRwLock::new(HashMap::new())),
             broker_metrics: Arc::new(AsyncRwLock::new(HashMap::new())),
+            internal_topics_created: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -366,6 +369,35 @@ impl ControllerService {
         self.raft_state.get_current_term()
     }
 
+    /// Ensures that internal system topics exist.
+    pub async fn ensure_internal_topics(&self) -> Result<()> {
+        if self.internal_topics_created.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if !self.raft_state.is_leader() {
+            return Ok(());
+        }
+
+        let topics = self.metadata_manager.get_topics().await;
+        if !topics.iter().any(|t| t.name == "__consumer_offsets") {
+            tracing::info!("Auto-creating __consumer_offsets topic");
+            let topic_info = TopicInfo {
+                name: "__consumer_offsets".to_string(),
+                partitions: crate::consumer_group::CONSUMER_OFFSETS_PARTITIONS,
+                replication_factor: 3,
+                created_at: chrono::Utc::now(),
+                config: TopicConfig {
+                    retention_ms: None,
+                    segment_bytes: Some(104857600),
+                    compression_type: Some("lz4".to_string()),
+                },
+            };
+            let _ = self.metadata_manager.create_topic(topic_info).await;
+        }
+        self.internal_topics_created.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     // ==================== Broker Health Monitoring ====================
 
     /// Start broker health check timer (leader only, every 10s)
@@ -373,10 +405,13 @@ impl ControllerService {
         let broker_heartbeats = self.broker_heartbeats.clone();
         let broker_statuses = self.broker_statuses.clone();
         let raft_state = self.raft_state.clone();
+        let service = self.clone();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             while raft_state.is_leader() {
+                let _ = service.ensure_internal_topics().await;
+
                 interval.tick().await;
                 let now = chrono::Utc::now();
                 let heartbeats = broker_heartbeats.read().await;
@@ -446,6 +481,16 @@ impl ControllerService {
 
     /// Create a new topic (leader-only operation)
     pub async fn create_topic(&self, request: CreateTopicRequest) -> Result<CreateTopicResponse> {
+        if request.name.starts_with("__") {
+            return Ok(CreateTopicResponse {
+                success: false,
+                error_message: Some(
+                    "Cannot manually create internal topics starting with '__'".to_string(),
+                ),
+                leader_hint: self.raft_state.get_current_leader(),
+            });
+        }
+
         if !self.raft_state.is_leader() {
             return Ok(CreateTopicResponse {
                 success: false,
@@ -545,6 +590,14 @@ impl ControllerService {
 
     /// Delete a topic (leader-only operation)
     pub async fn delete_topic(&self, request: DeleteTopicRequest) -> Result<DeleteTopicResponse> {
+        if request.name.starts_with("__") {
+            return Ok(DeleteTopicResponse {
+                success: false,
+                error_message: Some("Cannot delete internal topics starting with '__'".to_string()),
+                leader_hint: self.raft_state.get_current_leader(),
+            });
+        }
+
         if !self.raft_state.is_leader() {
             return Ok(DeleteTopicResponse {
                 success: false,

@@ -11,8 +11,8 @@ pub fn composite_load_score(
     norm: &LoadScoreNormalization,
     w: &LoadScoreWeights,
 ) -> f64 {
-    let net_usage = (m.network_tx_bytes_sec + m.network_rx_bytes_sec) as f64
-        / norm.max_network_bytes_sec;
+    let net_usage =
+        (m.network_tx_bytes_sec + m.network_rx_bytes_sec) as f64 / norm.max_network_bytes_sec;
     let part_ratio = m.partition_count as f64 / norm.max_partitions_per_broker;
     let rate_ratio = m.message_rate as f64 / norm.max_message_rate;
 
@@ -65,7 +65,8 @@ impl PartitionRebalancerImpl {
             (target_load_reduction * from_broker.load_metrics.partition_count as f64) as usize;
 
         for (tp, assignment) in assignments {
-            if assignment.leader == from_broker.id || assignment.replicas.contains(&from_broker.id) {
+            if assignment.leader == from_broker.id || assignment.replicas.contains(&from_broker.id)
+            {
                 partitions.push(tp.clone());
                 if partitions.len() >= partitions_to_move.max(1) {
                     break;
@@ -87,7 +88,9 @@ impl PartitionRebalancerImpl {
             .min_by(|a, b| {
                 let score_a = self.calculate_broker_load_score(a);
                 let score_b = self.calculate_broker_load_score(b);
-                score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+                score_a
+                    .partial_cmp(&score_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|b| b.id.clone())
     }
@@ -103,7 +106,10 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
         let mut moves = Vec::new();
         let operation_id = Uuid::new_v4().to_string();
 
-        let total_load: f64 = brokers.iter().map(|b| self.calculate_broker_load_score(b)).sum();
+        let total_load: f64 = brokers
+            .iter()
+            .map(|b| self.calculate_broker_load_score(b))
+            .sum();
         let average_load = total_load / brokers.len() as f64;
 
         let overloaded_brokers: Vec<&BrokerInfo> = brokers
@@ -119,8 +125,11 @@ impl PartitionRebalancer for PartitionRebalancerImpl {
             let current_load = self.calculate_broker_load_score(overloaded_broker);
             let target_load_reduction = (current_load - average_load) / current_load;
 
-            let partitions_to_move =
-                self.select_partitions_to_move(overloaded_broker, target_load_reduction, &assignments);
+            let partitions_to_move = self.select_partitions_to_move(
+                overloaded_broker,
+                target_load_reduction,
+                &assignments,
+            );
 
             for partition in partitions_to_move {
                 if let Some(target_broker) =
@@ -335,7 +344,10 @@ mod tests {
             );
         }
 
-        let plan = rebalancer.calculate_rebalance_plan(brokers, assignments).await.unwrap();
+        let plan = rebalancer
+            .calculate_rebalance_plan(brokers, assignments)
+            .await
+            .unwrap();
         assert!(!plan.moves.is_empty());
         assert!(plan.moves.iter().all(|m| m.from_broker == "broker-1"));
         assert!(plan.moves.iter().all(|m| m.to_broker == "broker-2"));
@@ -361,7 +373,10 @@ mod tests {
 
         let mut assignments = HashMap::new();
         assignments.insert(
-            TopicPartition { topic: "test-topic".to_string(), partition: 0 },
+            TopicPartition {
+                topic: "test-topic".to_string(),
+                partition: 0,
+            },
             PartitionAssignment {
                 leader: "broker-1".to_string(),
                 replicas: vec!["broker-1".to_string(), "broker-2".to_string()],

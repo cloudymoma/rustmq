@@ -8,6 +8,7 @@ use object_store::{ObjectStore, PutPayload, path::Path};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
+
 use tokio_util::io::StreamReader;
 
 fn validate_key(key: &str) -> Result<()> {
@@ -19,6 +20,13 @@ fn validate_key(key: &str) -> Result<()> {
     }
     Ok(())
 }
+
+use std::time::Duration;
+use tokio::time::sleep;
+
+const MAX_RETRIES: u32 = 3;
+const BASE_RETRY_DELAY_MS: u64 = 500;
+
 
 pub struct CloudObjectStorage {
     store: Arc<dyn ObjectStore>,
@@ -34,37 +42,63 @@ impl CloudObjectStorage {
 impl ObjectStorage for CloudObjectStorage {
     async fn put(&self, key: &str, data: Bytes) -> Result<()> {
         validate_key(key)?;
-        let payload: PutPayload = data.into();
-        self.store
-            .put(&Path::from(key), payload)
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { path, .. } => {
-                    crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
+        
+        let mut attempt = 0;
+        loop {
+            let path_clone = Path::from(key);
+            let payload: PutPayload = data.clone().into();
+            match self.store.put(&path_clone, payload).await {
+                Ok(_) => break,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > 3 {
+                        tracing::error!("GCS put failed after 3 attempts: {}", e);
+                        let mapped_err = match e {
+                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            _ => crate::error::RustMqError::Storage(e.to_string()),
+                        };
+                        return Err(mapped_err);
+                    }
+                    let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
+                    tokio::time::sleep(delay).await;
                 }
-                e => crate::error::RustMqError::Storage(e.to_string()),
-            })?;
+            }
+        }
+        
         Ok(())
     }
 
     async fn get(&self, key: &str) -> Result<Bytes> {
         validate_key(key)?;
-        let result = self
-            .store
-            .get(&Path::from(key))
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { path, .. } => {
-                    crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
+        
+        let mut attempt = 0;
+        let result = loop {
+            let path_clone = Path::from(key);
+            match self.store.get(&path_clone).await {
+                Ok(val) => break val,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > 3 {
+                        tracing::error!("GCS get failed after 3 attempts: {}", e);
+                        let mapped_err = match e {
+                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            _ => crate::error::RustMqError::Storage(e.to_string()),
+                        };
+                        return Err(mapped_err);
+                    }
+                    let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
+                    tokio::time::sleep(delay).await;
                 }
-                e => crate::error::RustMqError::Storage(e.to_string()),
-            })?;
+            }
+        };
+        
         let bytes = result.bytes().await.map_err(|e| match e {
             object_store::Error::NotFound { path, .. } => {
                 crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
             }
             e => crate::error::RustMqError::Storage(e.to_string()),
         })?;
+        
         Ok(bytes)
     }
 
@@ -108,15 +142,27 @@ impl ObjectStorage for CloudObjectStorage {
 
     async fn delete(&self, key: &str) -> Result<()> {
         validate_key(key)?;
-        self.store
-            .delete(&Path::from(key))
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { path, .. } => {
-                    crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
+        
+        let mut attempt = 0;
+        loop {
+            let path_clone = Path::from(key);
+            match self.store.delete(&path_clone).await {
+                Ok(_) => break,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > 3 {
+                        tracing::error!("GCS delete failed after 3 attempts: {}", e);
+                        let mapped_err = match e {
+                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            _ => crate::error::RustMqError::Storage(e.to_string()),
+                        };
+                        return Err(mapped_err);
+                    }
+                    let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
+                    tokio::time::sleep(delay).await;
                 }
-                e => crate::error::RustMqError::Storage(e.to_string()),
-            })?;
+            }
+        }
         Ok(())
     }
 

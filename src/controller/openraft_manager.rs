@@ -239,7 +239,11 @@ impl RaftManager {
         }
 
         // Create network factory
-        let network_factory = RustMqNetworkFactory::new(self.config.network_config.clone(), self.config.node_id, self.blocked_nodes.clone());
+        let network_factory = RustMqNetworkFactory::new(
+            self.config.network_config.clone(),
+            self.config.node_id,
+            self.blocked_nodes.clone(),
+        );
 
         // Build OpenRaft instance
         let raft = Raft::new(
@@ -259,20 +263,17 @@ impl RaftManager {
         // Start gRPC server
         let rpc_port = self.config.rpc_port;
         let raft_clone = raft.clone();
-        
+
         tokio::spawn(async move {
-            use crate::proto::controller::raft_service_server::RaftServiceServer;
             use crate::controller::raft_service::RustMqRaftService;
+            use crate::proto::controller::raft_service_server::RaftServiceServer;
             use tonic::transport::Server;
 
             let addr = format!("0.0.0.0:{}", rpc_port).parse().unwrap();
             let svc = RaftServiceServer::new(RustMqRaftService::new(raft_clone));
 
             info!("Starting Raft gRPC server on {}", addr);
-            if let Err(e) = Server::builder()
-                .add_service(svc)
-                .serve(addr)
-                .await {
+            if let Err(e) = Server::builder().add_service(svc).serve(addr).await {
                 error!("Raft gRPC server failed: {}", e);
             }
         });

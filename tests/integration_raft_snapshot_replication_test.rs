@@ -1,12 +1,16 @@
 mod common;
 
+use rustmq::controller::service::TopicConfig;
 use rustmq::controller::*;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
-use rustmq::controller::service::TopicConfig;
 
-async fn setup_raft_node(node_id: NodeId, temp_dir: &TempDir, snapshot_threshold: u64) -> RaftManager {
+async fn setup_raft_node(
+    node_id: NodeId,
+    temp_dir: &TempDir,
+    snapshot_threshold: u64,
+) -> RaftManager {
     let mut config = RaftManagerConfig::default();
     config.node_id = node_id;
     config.storage_config.data_dir = temp_dir.path().join(format!("node-{}", node_id));
@@ -16,7 +20,7 @@ async fn setup_raft_node(node_id: NodeId, temp_dir: &TempDir, snapshot_threshold
     config.raft_config.election_timeout_min = 200;
     config.raft_config.election_timeout_max = 400;
     config.raft_config.heartbeat_interval = 50;
-    
+
     // Set unique RPC port for each node
     config.rpc_port = 9200 + node_id as u16; // Use different ports
 
@@ -34,14 +38,24 @@ async fn test_raft_snapshot_replication() {
     let mut node1 = setup_raft_node(1, &temp_dir, 5).await;
 
     let mut nodes = BTreeMap::new();
-    nodes.insert(1, RustMqNode { addr: "127.0.0.1".to_string(), rpc_port: 9201, data: "".to_string() });
+    nodes.insert(
+        1,
+        RustMqNode {
+            addr: "127.0.0.1".to_string(),
+            rpc_port: 9201,
+            data: "".to_string(),
+        },
+    );
 
     node1.initialize_cluster(nodes).await.unwrap();
 
     // Wait for node 1 to become leader
     let mut is_leader = false;
     for _ in 0..20 {
-        if node1.is_leader().await { is_leader = true; break; }
+        if node1.is_leader().await {
+            is_leader = true;
+            break;
+        }
         sleep(Duration::from_millis(500)).await;
     }
     assert!(is_leader, "Node 1 failed to become leader");
@@ -72,25 +86,61 @@ async fn test_raft_snapshot_replication() {
     let mut node2 = setup_raft_node(2, &temp_dir, 5).await;
 
     // Add Node 2 to the network mapping of Node 1
-    node1.network().unwrap().add_node(2, RustMqNode { addr: "127.0.0.1".to_string(), rpc_port: 9202, data: "".to_string() }).await;
+    node1
+        .network()
+        .unwrap()
+        .add_node(
+            2,
+            RustMqNode {
+                addr: "127.0.0.1".to_string(),
+                rpc_port: 9202,
+                data: "".to_string(),
+            },
+        )
+        .await;
     // Add Node 1 to the network mapping of Node 2 (so it can respond)
-    node2.network().unwrap().add_node(1, RustMqNode { addr: "127.0.0.1".to_string(), rpc_port: 9201, data: "".to_string() }).await;
+    node2
+        .network()
+        .unwrap()
+        .add_node(
+            1,
+            RustMqNode {
+                addr: "127.0.0.1".to_string(),
+                rpc_port: 9201,
+                data: "".to_string(),
+            },
+        )
+        .await;
 
     // 4. Add Node 2 to the Raft cluster as a learner first
     let raft1 = node1.raft().unwrap();
-    
+
     // Add node 2 as learner
-    raft1.add_learner(2, RustMqNode { addr: "127.0.0.1".to_string(), rpc_port: 9202, data: "".to_string() }, true).await.unwrap();
-    
+    raft1
+        .add_learner(
+            2,
+            RustMqNode {
+                addr: "127.0.0.1".to_string(),
+                rpc_port: 9202,
+                data: "".to_string(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
     // Node 2 should catch up!
     // Since Node 1 has purged logs, it must send a snapshot!
-    
+
     // Wait for Node 2 to catch up and snapshot to be installed
     sleep(Duration::from_secs(5)).await;
 
     // 5. Verify snapshot file exists on Node 2
     let snapshot_file2 = temp_dir.path().join("node-2/snapshot.bin");
-    assert!(snapshot_file2.exists(), "Snapshot file should be replicated to Node 2");
+    assert!(
+        snapshot_file2.exists(),
+        "Snapshot file should be replicated to Node 2"
+    );
 
     // 6. Cleanup
     node1.shutdown().await.unwrap();

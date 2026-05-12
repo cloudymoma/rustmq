@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tonic::{Request, Response, Status};
+use crate::controller::service::ControllerService;
 use crate::proto::controller::broker_management_service_server::BrokerManagementService;
 use crate::proto::controller::{BrokerHeartbeatRequest, BrokerHeartbeatResponse};
-use crate::controller::service::ControllerService;
+use std::sync::Arc;
+use tonic::{Request, Response, Status};
 use tracing::debug;
 
 pub struct BrokerManagementServiceImpl {
@@ -73,10 +73,33 @@ impl BrokerManagementService for BrokerManagementServiceImpl {
             debug!("EWMA score for broker {}: {:.4}", broker_id, ewma_score);
         }
 
+        let coordinator_entries = {
+            let assignments = self.controller_service.metadata_manager.get_partition_assignments().await;
+            let brokers = self.controller_service.metadata_manager.get_brokers().await;
+            let broker_map: std::collections::HashMap<String, &crate::types::BrokerInfo> =
+                brokers.iter().map(|b| (b.id.clone(), b)).collect();
+
+            assignments.iter()
+                .filter(|(tp, _)| tp.topic == "__consumer_offsets")
+                .map(|(tp, a)| {
+                    let (host, port) = broker_map.get(&a.leader)
+                        .map(|b| (b.host.clone(), b.port_quic as u32))
+                        .unwrap_or_else(|| ("localhost".to_string(), 9092));
+                    crate::proto::controller::CoordinatorEntry {
+                        partition: tp.partition,
+                        broker_id: a.leader.clone(),
+                        host,
+                        port,
+                    }
+                })
+                .collect()
+        };
+
         Ok(Response::new(BrokerHeartbeatResponse {
             success: true,
             error_message: String::new(),
             heartbeat_age_seconds: age,
+            coordinator_entries,
         }))
     }
 
@@ -114,14 +137,23 @@ impl BrokerManagementService for BrokerManagementServiceImpl {
                     }
                 }
                 if let Some(new_leader) = best {
-                    tracing::info!("Transferring leadership of {} from {} to {}", tp, broker_id, new_leader);
+                    tracing::info!(
+                        "Transferring leadership of {} from {} to {}",
+                        tp,
+                        broker_id,
+                        new_leader
+                    );
                     let req = crate::types::TransferLeadershipRequest {
                         topic_partition: tp.clone(),
                         current_leader_id: broker_id.clone(),
                         current_leader_epoch: assignment.leader_epoch,
                         new_leader_id: new_leader,
                     };
-                    if let Err(e) = self.controller_service.transfer_partition_leadership(&broker_id, req).await {
+                    if let Err(e) = self
+                        .controller_service
+                        .transfer_partition_leadership(&broker_id, req)
+                        .await
+                    {
                         tracing::error!("Failed to transfer leadership for {}: {}", tp, e);
                     }
                 }

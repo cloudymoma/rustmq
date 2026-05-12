@@ -295,7 +295,12 @@ pub struct RustMqNetwork {
 
 impl RustMqNetwork {
     /// Create a new network instance
-    pub fn new(current_node_id: NodeId, target_id: NodeId, config: RustMqNetworkConfig, blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>) -> Self {
+    pub fn new(
+        current_node_id: NodeId,
+        target_id: NodeId,
+        config: RustMqNetworkConfig,
+        blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>,
+    ) -> Self {
         Self {
             current_node_id,
             target_id,
@@ -330,7 +335,7 @@ impl RustMqNetwork {
     }
 
     /// Get network metrics
-    
+
     pub async fn block_node(&self, node_id: NodeId) {
         self.blocked_nodes.write().await.insert(node_id);
     }
@@ -408,7 +413,10 @@ impl RustMqNetwork {
             entries: Bytes::from(entries_bytes),
             leader_commit: req.leader_commit.map(|id| id.index).unwrap_or(0),
             leader_commit_term: req.leader_commit.map(|id| id.leader_id.term).unwrap_or(0),
-            leader_commit_node_id: req.leader_commit.map(|id| id.leader_id.node_id).unwrap_or(0),
+            leader_commit_node_id: req
+                .leader_commit
+                .map(|id| id.leader_id.node_id)
+                .unwrap_or(0),
         })
     }
 
@@ -442,7 +450,10 @@ impl RustMqNetwork {
         req: &AppendEntriesRequest<RustMqTypeConfig>,
     ) -> Result<AppendEntriesResponse<NodeId>, NetworkError> {
         if self.blocked_nodes.read().await.contains(&target) {
-            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+            return Err(NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "Node blocked by fault injection",
+            )));
         }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
@@ -549,7 +560,10 @@ impl RustMqNetwork {
         req: &VoteRequest<NodeId>,
     ) -> Result<VoteResponse<NodeId>, NetworkError> {
         if self.blocked_nodes.read().await.contains(&target) {
-            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+            return Err(NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "Node blocked by fault injection",
+            )));
         }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
@@ -630,7 +644,10 @@ impl RustMqNetwork {
         req: InstallSnapshotRequest<RustMqTypeConfig>,
     ) -> Result<InstallSnapshotResponse<NodeId>, NetworkError> {
         if self.blocked_nodes.read().await.contains(&target) {
-            return Err(NetworkError::new(&std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Node blocked by fault injection")));
+            return Err(NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "Node blocked by fault injection",
+            )));
         }
         let start = std::time::Instant::now();
         let channel = self.connection_pool.get_connection(&target).await?;
@@ -733,8 +750,16 @@ pub struct RustMqNetworkFactory {
 
 impl RustMqNetworkFactory {
     /// Create a new network factory
-    pub fn new(config: RustMqNetworkConfig, node_id: NodeId, blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>) -> Self {
-        Self { config, node_id, blocked_nodes }
+    pub fn new(
+        config: RustMqNetworkConfig,
+        node_id: NodeId,
+        blocked_nodes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<NodeId>>>,
+    ) -> Self {
+        Self {
+            config,
+            node_id,
+            blocked_nodes,
+        }
     }
 }
 
@@ -742,7 +767,12 @@ impl RaftNetworkFactory<RustMqTypeConfig> for RustMqNetworkFactory {
     type Network = RustMqNetwork;
 
     async fn new_client(&mut self, target: NodeId, node: &RustMqNode) -> Self::Network {
-        let network = RustMqNetwork::new(self.node_id, target, self.config.clone(), self.blocked_nodes.clone());
+        let network = RustMqNetwork::new(
+            self.node_id,
+            target,
+            self.config.clone(),
+            self.blocked_nodes.clone(),
+        );
 
         // Add the target node to the network
         network.add_node(target, node.clone()).await;

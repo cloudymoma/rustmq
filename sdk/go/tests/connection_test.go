@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/binary"
 	"encoding/pem"
 	"io"
 	"io/ioutil"
@@ -100,45 +99,35 @@ func (m *MockBroker) handleConnection(conn *quic.Conn) {
 	}
 }
 
-// handleStream handles a single QUIC stream
+// handleStream handles a single QUIC stream using [1-byte type][payload] protocol
 func (m *MockBroker) handleStream(stream *quic.Stream) {
 	defer stream.Close()
 
-	// Read request length first
-	lengthBytes := make([]byte, 4)
-	_, err := io.ReadFull(stream, lengthBytes)
-	if err != nil {
-		return
-	}
-	
-	requestLength := binary.BigEndian.Uint32(lengthBytes)
-	
-	// Read request data
-	data := make([]byte, requestLength)
-	_, err = io.ReadFull(stream, data)
+	// Read request type byte (1 byte)
+	typeByte := make([]byte, 1)
+	_, err := io.ReadFull(stream, typeByte)
 	if err != nil {
 		return
 	}
 
+	// Read request payload (fixed buffer — mock doesn't need exact framing)
+	buf := make([]byte, 64*1024)
+	n, _ := stream.Read(buf)
+	data := buf[:n]
+
 	m.mutex.Lock()
 	m.requests = append(m.requests, data)
-	
-	// Check for specific responses
+
 	response := []byte(`{"status":"healthy","details":{},"timestamp":"` + time.Now().Format(time.RFC3339) + `"}`)
 	if customResponse, exists := m.responses[string(data)]; exists {
 		response = customResponse
 	} else if customResponse, exists := m.responses[""]; exists {
-		// Fallback to empty key for any request
 		response = customResponse
 	}
 	m.mutex.Unlock()
 
-	// Send response length first
-	responseLengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(responseLengthBytes, uint32(len(response)))
-	stream.Write(responseLengthBytes)
-	
-	// Send response
+	// Send response: [1-byte type][payload]
+	stream.Write([]byte{typeByte[0]})
 	stream.Write(response)
 }
 

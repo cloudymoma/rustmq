@@ -241,7 +241,7 @@ func (c *Consumer) Commit(ctx context.Context) error {
 	}
 
 	// Send commit request to broker
-	responseData, err := c.client.connection.sendRequest(requestData)
+	responseData, err := c.client.connection.sendRequest(7, requestData)
 	if err != nil {
 		return fmt.Errorf("failed to send commit request: %w", err)
 	}
@@ -384,7 +384,7 @@ func (c *Consumer) fetchMessages() error {
 	}
 
 	// Send fetch request to broker
-	responseData, err := c.client.connection.sendRequest(requestData)
+	responseData, err := c.client.connection.sendRequest(2, requestData)
 	if err != nil {
 		return fmt.Errorf("failed to send fetch request: %w", err)
 	}
@@ -605,7 +605,7 @@ func (c *Consumer) joinConsumerGroup() error {
 	}
 
 	// Send join request to broker
-	responseData, err := c.client.connection.sendRequest(requestData)
+	responseData, err := c.client.connection.sendRequest(5, requestData)
 	if err != nil {
 		return fmt.Errorf("failed to send join request: %w", err)
 	}
@@ -654,7 +654,7 @@ func (c *Consumer) seekPartition(ctx context.Context, partition uint32, offset *
 	}
 
 	// Send seek request to broker
-	responseData, err := c.client.connection.sendRequest(requestData)
+	responseData, err := c.client.connection.sendRequest(2, requestData)
 	if err != nil {
 		return fmt.Errorf("failed to send seek request: %w", err)
 	}

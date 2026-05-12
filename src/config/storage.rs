@@ -54,19 +54,13 @@ pub enum StorageType {
 impl ObjectStorageConfig {
     /// Validate storage configuration for security issues.
     pub fn validate(&self) -> crate::Result<()> {
-        // Warn if access_key/secret_key are set with GCS (should use Workload Identity)
+        // Reject static credentials for GCS in production (mandate Workload Identity)
         if matches!(self.storage_type, StorageType::Gcs) {
-            if self.access_key.as_ref().is_some_and(|k| !k.is_empty()) {
-                tracing::warn!(
-                    "object_storage.access_key is set with GCS storage type. \
-                     On GKE, use Workload Identity instead of static credentials."
-                );
-            }
-            if self.secret_key.as_ref().is_some_and(|k| !k.is_empty()) {
-                tracing::warn!(
-                    "object_storage.secret_key is set with GCS storage type. \
-                     On GKE, use Workload Identity instead of static credentials."
-                );
+            if self.access_key.as_ref().is_some_and(|k| !k.is_empty()) || 
+               self.secret_key.as_ref().is_some_and(|k| !k.is_empty()) {
+                return Err(crate::error::RustMqError::InvalidConfig(
+                    "object_storage.access_key/secret_key are strictly forbidden with GCS storage type.                      On GKE, use Workload Identity (DefaultCredentialProvider).".to_string()
+                ));
             }
         }
 

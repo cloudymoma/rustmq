@@ -1,6 +1,4 @@
-use crate::controller::{
-    NodeId, RustMqNode, RustMqTypeConfig,
-};
+use crate::controller::{NodeId, RustMqNode, RustMqTypeConfig};
 use crate::proto::controller::raft_service_server::RaftService;
 use crate::proto::controller::{
     SimpleAppendEntriesRequest, SimpleAppendEntriesResponse, SimpleInstallSnapshotRequest,
@@ -8,8 +6,8 @@ use crate::proto::controller::{
 };
 use openraft::Raft;
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
 };
 use tonic::{Request, Response, Status};
 use tracing::debug;
@@ -37,8 +35,9 @@ impl RaftService for RustMqRaftService {
         let last_log_id: Option<openraft::LogId<NodeId>> = if req.last_log_id.is_empty() {
             None
         } else {
-            Some(bincode::deserialize(&req.last_log_id)
-                .map_err(|e| Status::internal(format!("Failed to deserialize last_log_id: {}", e)))?)
+            Some(bincode::deserialize(&req.last_log_id).map_err(|e| {
+                Status::internal(format!("Failed to deserialize last_log_id: {}", e))
+            })?)
         };
 
         // Pass to OpenRaft
@@ -65,12 +64,13 @@ impl RaftService for RustMqRaftService {
         request: Request<SimpleAppendEntriesRequest>,
     ) -> Result<Response<SimpleAppendEntriesResponse>, Status> {
         let req = request.into_inner();
-        
+
         let prev_log_id: Option<openraft::LogId<NodeId>> = if req.prev_log_id.is_empty() {
             None
         } else {
-            Some(bincode::deserialize(&req.prev_log_id)
-                .map_err(|e| Status::internal(format!("Failed to deserialize prev_log_id: {}", e)))?)
+            Some(bincode::deserialize(&req.prev_log_id).map_err(|e| {
+                Status::internal(format!("Failed to deserialize prev_log_id: {}", e))
+            })?)
         };
 
         let entries: Vec<openraft::Entry<RustMqTypeConfig>> = bincode::deserialize(&req.entries)
@@ -88,7 +88,10 @@ impl RaftService for RustMqRaftService {
                 entries,
                 leader_commit: if req.leader_commit > 0 {
                     Some(openraft::LogId::new(
-                        openraft::CommittedLeaderId::new(req.leader_commit_term, req.leader_commit_node_id),
+                        openraft::CommittedLeaderId::new(
+                            req.leader_commit_term,
+                            req.leader_commit_node_id,
+                        ),
                         req.leader_commit,
                     ))
                 } else {

@@ -102,8 +102,8 @@ pub struct SnapshotPayload {
 impl openraft::storage::RaftSnapshotBuilder<RustMqTypeConfig> for std::io::Cursor<Vec<u8>> {
     async fn build_snapshot(&mut self) -> Result<Snapshot<RustMqTypeConfig>, StorageError<NodeId>> {
         let data = self.get_ref().clone();
-        let payload: SnapshotPayload = bincode::deserialize(&data).map_err(|e| {
-            StorageError::IO {
+        let payload: SnapshotPayload =
+            bincode::deserialize(&data).map_err(|e| StorageError::IO {
                 source: openraft::StorageIOError::new(
                     openraft::ErrorSubject::Store,
                     openraft::ErrorVerb::Read,
@@ -112,8 +112,7 @@ impl openraft::storage::RaftSnapshotBuilder<RustMqTypeConfig> for std::io::Curso
                         e.to_string(),
                     )),
                 ),
-            }
-        })?;
+            })?;
 
         Ok(Snapshot {
             meta: SnapshotMeta {
@@ -128,11 +127,23 @@ impl openraft::storage::RaftSnapshotBuilder<RustMqTypeConfig> for std::io::Curso
 
 /// Simple responder for RustMQ Raft implementation
 pub struct RustMqResponder {
-    tx: Option<tokio::sync::oneshot::Sender<Result<openraft::raft::ClientWriteResponse<RustMqTypeConfig>, openraft::error::ClientWriteError<NodeId, RustMqNode>>>>,
+    tx: Option<
+        tokio::sync::oneshot::Sender<
+            Result<
+                openraft::raft::ClientWriteResponse<RustMqTypeConfig>,
+                openraft::error::ClientWriteError<NodeId, RustMqNode>,
+            >,
+        >,
+    >,
 }
 
 impl openraft::raft::responder::Responder<RustMqTypeConfig> for RustMqResponder {
-    type Receiver = tokio::sync::oneshot::Receiver<Result<openraft::raft::ClientWriteResponse<RustMqTypeConfig>, openraft::error::ClientWriteError<NodeId, RustMqNode>>>;
+    type Receiver = tokio::sync::oneshot::Receiver<
+        Result<
+            openraft::raft::ClientWriteResponse<RustMqTypeConfig>,
+            openraft::error::ClientWriteError<NodeId, RustMqNode>,
+        >,
+    >;
 
     fn from_app_data(app_data: RustMqAppData) -> (RustMqAppData, Self, Self::Receiver) {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -849,7 +860,7 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
 
         let mut state = self.state.write().await;
         *state = payload.data;
-        
+
         let mut last_applied = self.last_applied.write().await;
         *last_applied = payload.last_log_id;
 
@@ -895,8 +906,6 @@ impl RaftStateMachine<RustMqTypeConfig> for RustMqStateMachine {
         }
     }
 }
-
-
 
 impl RustMqStateMachine {
     /// Apply application data to state machine

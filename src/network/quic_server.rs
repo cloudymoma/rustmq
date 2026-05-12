@@ -132,6 +132,7 @@ pub struct RequestRouter {
     producer_handler: Arc<dyn ProduceHandler>,
     consumer_handler: Arc<dyn FetchHandler>,
     metadata_handler: Arc<dyn MetadataHandler>,
+    group_handler: Arc<dyn ConsumerGroupHandler>,
 }
 
 #[async_trait::async_trait]
@@ -147,6 +148,26 @@ pub trait FetchHandler: Send + Sync {
 #[async_trait::async_trait]
 pub trait MetadataHandler: Send + Sync {
     async fn handle_metadata(&self, request: MetadataRequest) -> Result<MetadataResponse>;
+}
+
+#[async_trait::async_trait]
+pub trait ConsumerGroupHandler: Send + Sync {
+    async fn handle_find_coordinator(
+        &self,
+        request: FindCoordinatorRequest,
+    ) -> Result<FindCoordinatorResponse>;
+    async fn handle_join_group(&self, request: JoinGroupRequest) -> Result<JoinGroupResponse>;
+    async fn handle_consumer_heartbeat(
+        &self,
+        request: ConsumerHeartbeatRequest,
+    ) -> Result<ConsumerHeartbeatResponse>;
+    async fn handle_commit_offset(
+        &self,
+        request: CommitOffsetRequest,
+    ) -> Result<CommitOffsetResponse>;
+    async fn handle_fetch_offset(&self, request: FetchOffsetRequest)
+    -> Result<FetchOffsetResponse>;
+    async fn handle_leave_group(&self, request: LeaveGroupRequest) -> Result<LeaveGroupResponse>;
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -186,11 +207,13 @@ impl RequestRouter {
         producer_handler: Arc<dyn ProduceHandler>,
         consumer_handler: Arc<dyn FetchHandler>,
         metadata_handler: Arc<dyn MetadataHandler>,
+        group_handler: Arc<dyn ConsumerGroupHandler>,
     ) -> Self {
         Self {
             producer_handler,
             consumer_handler,
             metadata_handler,
+            group_handler,
         }
     }
 
@@ -214,28 +237,45 @@ impl RequestRouter {
                 let response_data = bincode::serialize(&response)?;
                 Ok(Bytes::from(response_data))
             }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum RequestType {
-    Produce = 1,
-    Fetch = 2,
-    Metadata = 3,
-}
-
-impl TryFrom<u8> for RequestType {
-    type Error = crate::error::RustMqError;
-
-    fn try_from(value: u8) -> Result<Self> {
-        match value {
-            1 => Ok(RequestType::Produce),
-            2 => Ok(RequestType::Fetch),
-            3 => Ok(RequestType::Metadata),
-            _ => Err(crate::error::RustMqError::Network(format!(
-                "Invalid request type: {value}"
-            ))),
+            RequestType::FindCoordinator => {
+                let request: FindCoordinatorRequest = bincode::deserialize(&data)?;
+                let response = self.group_handler.handle_find_coordinator(request).await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
+            RequestType::JoinGroup => {
+                let request: JoinGroupRequest = bincode::deserialize(&data)?;
+                let response = self.group_handler.handle_join_group(request).await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
+            RequestType::ConsumerHeartbeat => {
+                let request: ConsumerHeartbeatRequest = bincode::deserialize(&data)?;
+                let response = self
+                    .group_handler
+                    .handle_consumer_heartbeat(request)
+                    .await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
+            RequestType::CommitOffset => {
+                let request: CommitOffsetRequest = bincode::deserialize(&data)?;
+                let response = self.group_handler.handle_commit_offset(request).await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
+            RequestType::FetchOffset => {
+                let request: FetchOffsetRequest = bincode::deserialize(&data)?;
+                let response = self.group_handler.handle_fetch_offset(request).await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
+            RequestType::LeaveGroup => {
+                let request: LeaveGroupRequest = bincode::deserialize(&data)?;
+                let response = self.group_handler.handle_leave_group(request).await?;
+                let response_data = bincode::serialize(&response)?;
+                Ok(Bytes::from(response_data))
+            }
         }
     }
 }
@@ -246,6 +286,7 @@ impl QuicServer {
         producer_handler: Arc<dyn ProduceHandler>,
         consumer_handler: Arc<dyn FetchHandler>,
         metadata_handler: Arc<dyn MetadataHandler>,
+        group_handler: Arc<dyn ConsumerGroupHandler>,
     ) -> Result<Self> {
         let server_config = Self::create_server_config(&config.quic_config)?;
         let addr: SocketAddr = config
@@ -260,6 +301,7 @@ impl QuicServer {
             producer_handler,
             consumer_handler,
             metadata_handler,
+            group_handler,
         ));
 
         // Initialize buffer pool for network I/O
@@ -454,6 +496,7 @@ impl SecureQuicServer {
         producer_handler: Arc<dyn ProduceHandler>,
         consumer_handler: Arc<dyn FetchHandler>,
         metadata_handler: Arc<dyn MetadataHandler>,
+        group_handler: Arc<dyn ConsumerGroupHandler>,
     ) -> Result<Self> {
         let server_config = Self::create_secure_server_config(
             &config.quic_config,
@@ -480,6 +523,7 @@ impl SecureQuicServer {
             producer_handler,
             consumer_handler,
             metadata_handler,
+            group_handler,
         ));
 
         // Initialize buffer pool for network I/O
@@ -1053,6 +1097,36 @@ impl SecureQuicServer {
                 // Metadata requests access cluster information
                 "cluster:metadata".to_string()
             }
+            RequestType::FindCoordinator => {
+                if let Ok(request) = bincode::deserialize::<FindCoordinatorRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
+            RequestType::JoinGroup => {
+                if let Ok(request) = bincode::deserialize::<JoinGroupRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
+            RequestType::ConsumerHeartbeat => {
+                if let Ok(request) = bincode::deserialize::<ConsumerHeartbeatRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
+            RequestType::CommitOffset => {
+                if let Ok(request) = bincode::deserialize::<CommitOffsetRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
+            RequestType::FetchOffset => {
+                if let Ok(request) = bincode::deserialize::<FetchOffsetRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
+            RequestType::LeaveGroup => {
+                if let Ok(request) = bincode::deserialize::<LeaveGroupRequest>(data) {
+                    format!("consumer_group:{}", request.group_id)
+                } else { "cluster:consumer_group".to_string() }
+            }
         }
     }
 
@@ -1062,6 +1136,12 @@ impl SecureQuicServer {
             RequestType::Produce => crate::security::Permission::Write,
             RequestType::Fetch => crate::security::Permission::Read,
             RequestType::Metadata => crate::security::Permission::Read,
+            RequestType::FindCoordinator
+            | RequestType::ConsumerHeartbeat
+            | RequestType::FetchOffset => crate::security::Permission::Read,
+            RequestType::CommitOffset
+            | RequestType::JoinGroup
+            | RequestType::LeaveGroup => crate::security::Permission::Write,
         }
     }
 
@@ -1160,15 +1240,45 @@ pub struct MockMetadataHandler;
 impl MetadataHandler for MockMetadataHandler {
     async fn handle_metadata(&self, _request: MetadataRequest) -> Result<MetadataResponse> {
         Ok(MetadataResponse {
-            brokers: vec![BrokerInfo {
-                id: "broker-1".to_string(),
-                host: "localhost".to_string(),
-                port_quic: 9092,
-                port_rpc: 9093,
-                rack_id: "rack-1".to_string(),
-            }],
+            brokers: vec![],
             topics_metadata: vec![],
         })
+    }
+}
+
+pub struct MockConsumerGroupHandler;
+
+#[async_trait::async_trait]
+impl ConsumerGroupHandler for MockConsumerGroupHandler {
+    async fn handle_find_coordinator(
+        &self,
+        _request: FindCoordinatorRequest,
+    ) -> Result<FindCoordinatorResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
+    }
+    async fn handle_join_group(&self, _request: JoinGroupRequest) -> Result<JoinGroupResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
+    }
+    async fn handle_consumer_heartbeat(
+        &self,
+        _request: ConsumerHeartbeatRequest,
+    ) -> Result<ConsumerHeartbeatResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
+    }
+    async fn handle_commit_offset(
+        &self,
+        _request: CommitOffsetRequest,
+    ) -> Result<CommitOffsetResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
+    }
+    async fn handle_fetch_offset(
+        &self,
+        _request: FetchOffsetRequest,
+    ) -> Result<FetchOffsetResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
+    }
+    async fn handle_leave_group(&self, _request: LeaveGroupRequest) -> Result<LeaveGroupResponse> {
+        Err(RustMqError::InvalidOperation("Not implemented".to_string()))
     }
 }
 
@@ -1294,6 +1404,7 @@ mod tests {
             Arc::new(MockProduceHandler),
             Arc::new(MockFetchHandler),
             Arc::new(MockMetadataHandler),
+            Arc::new(MockConsumerGroupHandler),
         )
         .await;
 
@@ -1332,6 +1443,7 @@ mod tests {
             Arc::new(MockProduceHandler),
             Arc::new(MockFetchHandler),
             Arc::new(MockMetadataHandler),
+            Arc::new(MockConsumerGroupHandler),
         )
         .await
         .unwrap();
@@ -1376,6 +1488,7 @@ mod tests {
             Arc::new(MockProduceHandler),
             Arc::new(MockFetchHandler),
             Arc::new(MockMetadataHandler),
+            Arc::new(MockConsumerGroupHandler),
         );
 
         let produce_request = ProduceRequest {

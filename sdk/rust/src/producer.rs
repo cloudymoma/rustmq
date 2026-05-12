@@ -748,7 +748,11 @@ impl Producer {
         })?;
 
         // Send via connection and get response
-        let response_bytes = self.client.connection().send_request(request_bytes).await?;
+        let response_bytes = self
+            .client
+            .connection()
+            .send_request(rustmq::types::RequestType::Produce as u8, request_bytes)
+            .await?;
 
         // Deserialize response with bincode (matches server format)
         let response: ProduceResponse = bincode::deserialize(&response_bytes).map_err(|e| {

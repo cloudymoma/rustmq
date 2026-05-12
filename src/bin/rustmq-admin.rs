@@ -121,7 +121,7 @@ async fn create_admin_controller() -> Result<Arc<ControllerService>> {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     // Connect to existing controller at default endpoints
     let controller_endpoints = vec![
@@ -521,7 +521,7 @@ async fn main() -> Result<()> {
                 traffic_migration_rate: 0.1,
                 health_check_timeout_ms: 30_000,
                 ..Default::default()
-        };
+            };
 
             let peers = vec!["controller-2".to_string(), "controller-3".to_string()];
             let controller = std::sync::Arc::new(rustmq::controller::ControllerService::new(

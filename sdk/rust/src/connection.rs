@@ -425,6 +425,24 @@ impl Connection {
 
     /// Get the next available connection (round-robin)
     #[instrument(skip(self))]
+    
+    /// Get the connection for a specific broker ID if known
+    pub async fn get_connection_for_broker(&self, broker_addr: &SocketAddr) -> Result<QuicConnection> {
+        let connections = self.connections.read().await;
+        
+        if let Some(entry) = connections.get(broker_addr) {
+            let mut last_used = entry.last_used.write().await;
+            *last_used = Instant::now();
+            return Ok(entry.connection.clone());
+        }
+        
+        Err(ClientError::Connection(format!(
+            "No connection found for broker {}",
+            broker_addr
+        )))
+    }
+
+    /// Get a healthy connection using round-robin
     pub async fn get_connection(&self) -> Result<QuicConnection> {
         let connections = self.connections.read().await;
         if connections.is_empty() {
@@ -495,17 +513,17 @@ impl Connection {
 
     /// Send a request and wait for response with security context
     #[instrument(skip(self, request))]
-    pub async fn send_request(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+    pub async fn send_request(&self, request_type: u8, request: Vec<u8>) -> Result<Vec<u8>> {
         // Check authorization if security is enabled
         if let Some(_security_manager) = &self.security_manager {
             self.check_request_authorization(&request).await?;
         }
 
-        self.send_request_internal(request).await
+        self.send_request_internal(request_type, request).await
     }
 
     /// Internal method to send request without authorization check
-    async fn send_request_internal(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+    async fn send_request_internal(&self, request_type: u8, request: Vec<u8>) -> Result<Vec<u8>> {
         let _permit = self.connection_semaphore.acquire().await.map_err(|_| {
             ClientError::ResourceExhausted {
                 resource: "connection_pool".to_string(),
@@ -522,10 +540,10 @@ impl Connection {
             ClientError::QuicTransport(format!("Failed to open bidirectional stream: {}", e))
         })?;
 
-        // Create request frame with request type byte (1 = Produce)
+        // Create request frame with request type byte
         // Protocol: [1-byte request type][request data]
         let mut frame = Vec::with_capacity(1 + request.len());
-        frame.push(1u8); // RequestType::Produce
+        frame.push(request_type);
         frame.extend_from_slice(&request);
 
         // Send request with timeout

@@ -4,8 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/binary"
-	"encoding/json"
+		"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -210,7 +209,7 @@ func (c *Connection) getConnection() (*quic.Conn, error) {
 }
 
 // sendRequest sends a request and waits for response
-func (c *Connection) sendRequest(request []byte) ([]byte, error) {
+func (c *Connection) sendRequest(requestType byte, request []byte) ([]byte, error) {
 	conn, err := c.getConnection()
 	if err != nil {
 		return nil, err
@@ -226,17 +225,16 @@ func (c *Connection) sendRequest(request []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to open stream: %w", err)
 	}
 
-	// Send request length first (4 bytes, big endian)
-	lengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBytes, uint32(len(request)))
-	_, err = stream.Write(lengthBytes)
+	// Send request type first (1 byte)
+	typeByte := []byte{requestType}
+	_, err = stream.Write(typeByte)
 	if err != nil {
 		atomic.AddUint64(&c.stats.Errors, 1)
 		stream.Close()
-		return nil, fmt.Errorf("failed to write request length: %w", err)
+		return nil, fmt.Errorf("failed to write request type: %w", err)
 	}
 
-	// Send request
+	// Send request payload
 	_, err = stream.Write(request)
 	if err != nil {
 		atomic.AddUint64(&c.stats.Errors, 1)
@@ -244,32 +242,35 @@ func (c *Connection) sendRequest(request []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	atomic.AddUint64(&c.stats.BytesSent, uint64(len(request)+4))
+	atomic.AddUint64(&c.stats.BytesSent, uint64(len(request)+1))
 	atomic.AddUint64(&c.stats.RequestsSent, 1)
 
-	// Read response length first
-	responseLengthBytes := make([]byte, 4)
-	_, err = io.ReadFull(stream, responseLengthBytes)
+	// Read response type byte (1 byte)
+	responseType := make([]byte, 1)
+	_, err = io.ReadFull(stream, responseType)
 	if err != nil {
 		atomic.AddUint64(&c.stats.Errors, 1)
 		stream.Close()
-		return nil, fmt.Errorf("failed to read response length: %w", err)
+		return nil, fmt.Errorf("failed to read response type: %w", err)
 	}
 
-	responseLength := binary.BigEndian.Uint32(responseLengthBytes)
-	
-	// Read response
-	response := make([]byte, responseLength)
-	_, err = io.ReadFull(stream, response)
+	// Check for error indicator (255)
+	if responseType[0] == 255 {
+		errData, _ := io.ReadAll(stream)
+		stream.Close()
+		return nil, fmt.Errorf("broker error: %s", string(errData))
+	}
+
+	// Read remaining response payload
+	response, err := io.ReadAll(stream)
 	if err != nil {
 		atomic.AddUint64(&c.stats.Errors, 1)
 		stream.Close()
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	atomic.AddUint64(&c.stats.BytesReceived, uint64(len(response)+4))
+	atomic.AddUint64(&c.stats.BytesReceived, uint64(len(response)+1))
 	atomic.AddUint64(&c.stats.ResponsesReceived, 1)
-	
 	stream.Close()
 	return response, nil
 }
@@ -350,7 +351,7 @@ func (c *Connection) HealthCheck() error {
 		return fmt.Errorf("failed to marshal health check message: %w", err)
 	}
 
-	response, err := c.sendRequest(data)
+	response, err := c.sendRequest(3, data)
 	if err != nil {
 		atomic.AddUint64(&c.stats.HealthCheckErrors, 1)
 		return fmt.Errorf("health check request failed: %w", err)

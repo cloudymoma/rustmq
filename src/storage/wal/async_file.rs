@@ -2,10 +2,10 @@
 use crate::Result;
 use crate::storage::{AlignedBufferPool, BufferPool};
 use async_trait::async_trait;
-use std::path::Path;
-use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::sync::Arc;
 #[cfg(target_os = "linux")]
 extern crate libc;
 
@@ -751,10 +751,13 @@ mod tests {
 
             // O_DIRECT usually requires size to be a multiple of logical block size (usually 512 or 4096)
             // Passing 100 bytes should fail.
-            let test_data = vec![1; 100]; 
-            
+            let test_data = vec![1; 100];
+
             let result = file.write_at(test_data, 0).await;
-            assert!(result.is_err(), "Expected error for unaligned write due to O_DIRECT");
+            assert!(
+                result.is_err(),
+                "Expected error for unaligned write due to O_DIRECT"
+            );
             println!("Unaligned write failed as expected: {:?}", result.err());
         });
     }

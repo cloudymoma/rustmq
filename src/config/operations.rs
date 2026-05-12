@@ -74,14 +74,30 @@ pub struct ScalingConfig {
     pub graceful_shutdown_timeout_secs: u64,
 }
 
-fn default_60() -> u64 { 60 }
-fn default_1_5() -> f64 { 1.5 }
-fn default_5() -> usize { 5 }
-fn default_50mb() -> u64 { 52428800 }
-fn default_300() -> u64 { 300 }
-fn default_10() -> u64 { 10 }
-fn default_0_3() -> f64 { 0.3 }
-fn default_120() -> u64 { 120 }
+fn default_60() -> u64 {
+    60
+}
+fn default_1_5() -> f64 {
+    1.5
+}
+fn default_5() -> usize {
+    5
+}
+fn default_50mb() -> u64 {
+    52428800
+}
+fn default_300() -> u64 {
+    300
+}
+fn default_10() -> u64 {
+    10
+}
+fn default_0_3() -> f64 {
+    0.3
+}
+fn default_120() -> u64 {
+    120
+}
 
 impl Default for ScalingConfig {
     fn default() -> Self {
@@ -106,7 +122,6 @@ impl Default for ScalingConfig {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationsConfig {

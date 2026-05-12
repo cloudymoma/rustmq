@@ -1,12 +1,16 @@
 mod common;
 
+use rustmq::controller::service::TopicConfig;
 use rustmq::controller::*;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
-use rustmq::controller::service::TopicConfig;
 
-async fn setup_raft_node(node_id: NodeId, temp_dir: &TempDir, snapshot_threshold: u64) -> RaftManager {
+async fn setup_raft_node(
+    node_id: NodeId,
+    temp_dir: &TempDir,
+    snapshot_threshold: u64,
+) -> RaftManager {
     let mut config = RaftManagerConfig::default();
     config.node_id = node_id;
     config.storage_config.data_dir = temp_dir.path().join(format!("node-{}", node_id));
@@ -27,7 +31,7 @@ async fn setup_raft_node(node_id: NodeId, temp_dir: &TempDir, snapshot_threshold
 async fn test_raft_snapshot_trigger() {
     let temp_dir = TempDir::new().unwrap();
     let node_id = 1;
-    
+
     // Start node with threshold 5
     let mut node = setup_raft_node(node_id, &temp_dir, 5).await;
 
@@ -40,7 +44,7 @@ async fn test_raft_snapshot_trigger() {
             data: "".to_string(),
         },
     );
-    
+
     node.initialize_cluster(nodes).await.unwrap();
 
     // Wait for node to become leader
@@ -62,7 +66,7 @@ async fn test_raft_snapshot_trigger() {
             replication_factor: 1,
             config: TopicConfig::default(),
         };
-        
+
         let response = node.apply_command(app_data).await.unwrap();
         assert!(response.success);
     }
@@ -71,8 +75,14 @@ async fn test_raft_snapshot_trigger() {
     sleep(Duration::from_secs(2)).await;
 
     // Verify snapshot file exists
-    let snapshot_file = temp_dir.path().join(format!("node-{}/snapshot.bin", node_id));
-    assert!(snapshot_file.exists(), "Snapshot file should exist at {:?}", snapshot_file);
+    let snapshot_file = temp_dir
+        .path()
+        .join(format!("node-{}/snapshot.bin", node_id));
+    assert!(
+        snapshot_file.exists(),
+        "Snapshot file should exist at {:?}",
+        snapshot_file
+    );
 
     node.shutdown().await.unwrap();
 }

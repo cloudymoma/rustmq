@@ -5,8 +5,8 @@ use super::{
 };
 use crate::{Result, config::WalConfig, storage::traits::*, types::*};
 use async_trait::async_trait;
-use parking_lot::RwLock;
 use crc32fast::Hasher;
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
@@ -346,7 +346,7 @@ impl OptimizedDirectIOWal {
                     hasher.update(&buffer[buffer_pos..buffer_pos + 8]);
                     hasher.update(&buffer[buffer_pos + 8..buffer_pos + 8 + record_size as usize]);
                     let computed_crc = hasher.finalize();
-                    
+
                     let crc_pos = buffer_pos + 8 + record_size as usize;
                     let stored_crc = u32::from_le_bytes([
                         buffer[crc_pos],
@@ -356,7 +356,10 @@ impl OptimizedDirectIOWal {
                     ]);
 
                     if computed_crc != stored_crc {
-                        tracing::warn!("WAL recovery: checksum mismatch at offset {}", file_offset + buffer_pos as u64);
+                        tracing::warn!(
+                            "WAL recovery: checksum mismatch at offset {}",
+                            file_offset + buffer_pos as u64
+                        );
                         break; // Stop recovery at first corrupted record
                     }
 
@@ -479,7 +482,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
         buffer.clear(); // Ensure buffer is empty
         buffer.extend_from_slice(&record_size.to_le_bytes());
         buffer.extend_from_slice(&serialized);
-        
+
         // Compute CRC32 over length and data
         let crc = crc32fast::hash(&buffer);
         buffer.extend_from_slice(&crc.to_le_bytes());
@@ -572,7 +575,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                 hasher.update(&size_buffer);
                 hasher.update(&record_buffer[..record_size]);
                 let computed_crc = hasher.finalize();
-                
+
                 let stored_crc = u32::from_le_bytes([
                     record_buffer[record_size],
                     record_buffer[record_size + 1],
@@ -658,7 +661,7 @@ impl WriteAheadLog for OptimizedDirectIOWal {
                 hasher.update(&size_buffer);
                 hasher.update(&record_buffer[..record_size]);
                 let computed_crc = hasher.finalize();
-                
+
                 let stored_crc = u32::from_le_bytes([
                     record_buffer[record_size],
                     record_buffer[record_size + 1],

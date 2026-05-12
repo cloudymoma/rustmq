@@ -388,7 +388,7 @@ func (b *MessageBatcher) sendBatch(batch []*BatchItem) {
 	var sendErr error
 	
 	for attempt := 0; attempt <= b.producer.client.config.RetryConfig.MaxRetries; attempt++ {
-		responseData, err := b.producer.client.connection.sendRequest(requestData)
+		responseData, err := b.producer.client.connection.sendRequest(1, requestData)
 		if err != nil {
 			sendErr = err
 			if attempt < b.producer.client.config.RetryConfig.MaxRetries {

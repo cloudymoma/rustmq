@@ -413,7 +413,7 @@ impl WasmInstancePool {
 
         // Create store with state
         let mut store = Store::new(&self.engine, state);
-        
+
         // Register limiter
         store.limiter(|state| &mut state.limits);
 

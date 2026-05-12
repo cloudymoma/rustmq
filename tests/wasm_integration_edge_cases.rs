@@ -11,8 +11,7 @@ async fn test_wasm_fuel_exhaustion() {
 
     // Load fuel exhaustion WASM bytecode
     let wasm_path = "tests/wasm_binaries/fuel_exhaustion.wasm";
-    let bytecode = std::fs::read(wasm_path)
-        .expect("Failed to load WASM binary");
+    let bytecode = std::fs::read(wasm_path).expect("Failed to load WASM binary");
 
     // Create pool
     let pool_config = EtlInstancePoolConfig {
@@ -48,7 +47,7 @@ async fn test_wasm_fuel_exhaustion() {
 
     // Execute WASM transformation with input that triggers heavy computation
     // Value 30 results in fibonacci(30) which is very expensive
-    let input = &[30u8]; 
+    let input = &[30u8];
     let result = checkout
         .instance
         .wasm_context
@@ -56,10 +55,21 @@ async fn test_wasm_fuel_exhaustion() {
         .await;
 
     // We expect failure due to fuel exhaustion
-    assert!(result.is_err(), "WASM execution should have failed due to fuel exhaustion");
-    
-    let remaining = checkout.instance.wasm_context.remaining_fuel().unwrap_or(999);
-    assert_eq!(remaining, 0, "Remaining fuel should be 0 on exhaustion, got: {}", remaining);
+    assert!(
+        result.is_err(),
+        "WASM execution should have failed due to fuel exhaustion"
+    );
+
+    let remaining = checkout
+        .instance
+        .wasm_context
+        .remaining_fuel()
+        .unwrap_or(999);
+    assert_eq!(
+        remaining, 0,
+        "Remaining fuel should be 0 on exhaustion, got: {}",
+        remaining
+    );
 
     println!("✅ Fuel exhaustion test passed - module was correctly terminated.");
 }
@@ -74,8 +84,7 @@ async fn test_wasm_infinite_loop() {
 
     // Load infinite loop WASM bytecode
     let wasm_path = "tests/wasm_binaries/infinite_loop.wasm";
-    let bytecode = std::fs::read(wasm_path)
-        .expect("Failed to load WASM binary");
+    let bytecode = std::fs::read(wasm_path).expect("Failed to load WASM binary");
 
     // Create pool
     let pool_config = EtlInstancePoolConfig {
@@ -110,7 +119,7 @@ async fn test_wasm_infinite_loop() {
         .expect("Failed to checkout instance");
 
     // Execute WASM transformation
-    let input = b"test input"; 
+    let input = b"test input";
     let result = checkout
         .instance
         .wasm_context
@@ -118,10 +127,21 @@ async fn test_wasm_infinite_loop() {
         .await;
 
     // We expect failure due to fuel exhaustion (simulating timeout)
-    assert!(result.is_err(), "WASM execution should have failed due to infinite loop");
-    
-    let remaining = checkout.instance.wasm_context.remaining_fuel().unwrap_or(999);
-    assert_eq!(remaining, 0, "Remaining fuel should be 0 on exhaustion, got: {}", remaining);
+    assert!(
+        result.is_err(),
+        "WASM execution should have failed due to infinite loop"
+    );
+
+    let remaining = checkout
+        .instance
+        .wasm_context
+        .remaining_fuel()
+        .unwrap_or(999);
+    assert_eq!(
+        remaining, 0,
+        "Remaining fuel should be 0 on exhaustion, got: {}",
+        remaining
+    );
 
     println!("✅ Infinite loop test passed - module was correctly terminated.");
 }

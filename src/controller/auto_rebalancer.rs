@@ -1,9 +1,9 @@
+use crate::controller::service::ControllerService;
+use crate::scaling::PartitionRebalancer;
+use crate::scaling::operations::PartitionRebalancerImpl;
 use std::sync::Arc;
 use tokio::time::{Duration, interval};
-use tracing::{info, error, debug};
-use crate::controller::service::ControllerService;
-use crate::scaling::operations::PartitionRebalancerImpl;
-use crate::scaling::PartitionRebalancer;
+use tracing::{debug, error, info};
 
 pub struct AutoRebalancer {
     controller_service: Arc<ControllerService>,
@@ -90,7 +90,10 @@ impl AutoRebalancer {
 
             let status = {
                 let statuses = self.controller_service.broker_statuses.read().await;
-                statuses.get(&broker.id).cloned().unwrap_or(crate::scaling::BrokerStatus::Healthy)
+                statuses
+                    .get(&broker.id)
+                    .cloned()
+                    .unwrap_or(crate::scaling::BrokerStatus::Healthy)
             };
 
             scaling_brokers.push(crate::scaling::BrokerInfo {
@@ -120,7 +123,10 @@ impl AutoRebalancer {
                 config.imbalance_threshold_ratio
             };
             if min_score > 0.0 && max_score / min_score > threshold {
-                info!("Trigger: Load imbalance (max/min = {:.2})", max_score / min_score);
+                info!(
+                    "Trigger: Load imbalance (max/min = {:.2})",
+                    max_score / min_score
+                );
                 trigger = true;
             }
         }
@@ -137,8 +143,15 @@ impl AutoRebalancer {
 
         if trigger {
             info!("Auto-rebalance triggered");
-            let assignments = self.controller_service.metadata_manager.get_partition_assignments().await;
-            let plan = self.rebalancer.calculate_rebalance_plan(scaling_brokers, assignments.clone()).await?;
+            let assignments = self
+                .controller_service
+                .metadata_manager
+                .get_partition_assignments()
+                .await;
+            let plan = self
+                .rebalancer
+                .calculate_rebalance_plan(scaling_brokers, assignments.clone())
+                .await?;
             if !plan.moves.is_empty() {
                 info!("Executing rebalance plan with {} moves", plan.moves.len());
                 self.rebalancer.execute_rebalance(plan, assignments).await?;

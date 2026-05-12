@@ -14,7 +14,7 @@ async fn test_controller_decommission_slot_management() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec!["controller-2".to_string(), "controller-3".to_string()];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -74,7 +74,7 @@ async fn test_controller_duplicate_broker_prevention() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec![];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -102,7 +102,7 @@ async fn test_controller_raft_leadership() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     // Single node cluster for simple testing
     let peers = vec![];
@@ -133,7 +133,7 @@ async fn test_controller_topic_management() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec![];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -208,7 +208,7 @@ async fn test_controller_non_leader_operations() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec!["controller-2".to_string()];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -235,7 +235,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec![];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -248,7 +248,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
         ..Default::default()
-        };
+    };
 
     let result = controller.update_scaling_config(new_config).await;
     assert!(result.is_ok());
@@ -261,7 +261,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
         ..Default::default()
-        };
+    };
 
     let result = controller.update_scaling_config(invalid_config).await;
     assert!(result.is_err());
@@ -274,7 +274,7 @@ async fn test_controller_scaling_config_updates() {
         traffic_migration_rate: 0.2,
         health_check_timeout_ms: 60_000,
         ..Default::default()
-        };
+    };
 
     let result = controller.update_scaling_config(invalid_config2).await;
     assert!(result.is_err());
@@ -289,7 +289,7 @@ async fn test_controller_concurrent_operations() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec![];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);
@@ -329,7 +329,7 @@ async fn test_controller_metadata_consistency() {
         traffic_migration_rate: 0.1,
         health_check_timeout_ms: 30_000,
         ..Default::default()
-        };
+    };
 
     let peers = vec![];
     let controller = ControllerService::new("controller-1".to_string(), peers, scaling_config);

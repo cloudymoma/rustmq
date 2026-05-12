@@ -1,7 +1,7 @@
+pub mod auto_rebalancer;
+pub mod broker_management_service;
 pub mod raft_operations; // Raft operations abstraction for ACL (breaks circular dependency)
 pub mod service;
-pub mod broker_management_service;
-pub mod auto_rebalancer;
 
 // Production-ready OpenRaft implementations for RustMQ - fully compatible with OpenRaft 0.9.21
 pub mod openraft_compaction; // Log compaction and snapshot management
@@ -18,8 +18,8 @@ pub use service::*;
 
 pub use openraft_storage::{
     NodeId, PartitionAssignment, RustMqAppData, RustMqAppDataResponse, RustMqLogStorage,
-    RustMqNode, RustMqResponder, RustMqSnapshotData, RustMqStateMachine,
-    RustMqStorageConfig, RustMqTypeConfig,
+    RustMqNode, RustMqResponder, RustMqSnapshotData, RustMqStateMachine, RustMqStorageConfig,
+    RustMqTypeConfig,
 };
 
 pub use openraft_manager::{
