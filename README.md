@@ -39,7 +39,9 @@ For detailed setup, see [GKE Deployment Guide](docs/gke-deployment-guide.md).
 - **Sub-Microsecond Security**: Enterprise-grade security with 547ns authorization decisions and 2M+ ops/sec
 - **QUIC/HTTP3 Protocol**: Reduced connection overhead and head-of-line blocking elimination
 - **WebAssembly ETL**: Real-time data processing with secure sandboxing and smart filtering
-- **Auto-Balancing**: Continuous load distribution optimization
+- **Auto-Scaling & Auto-Rebalancing**: EWMA-weighted load scoring with continuous partition redistribution
+- **Consumer Groups**: Kafka-compatible consumer group protocol with WAL-backed offset persistence, snapshot recovery, and coordinator discovery
+- **Broker Metrics**: Prometheus metrics with per-broker CPU/memory/disk/network monitoring and heartbeat-based controller reporting
 - **Google Cloud Native**: Default configurations optimized for GCP services 
 
 
@@ -69,7 +71,7 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore, enhanced QUIC/gRPC servers featuring circuit breaker patterns, connection pooling, and real-time health monitoring
 - **🟠 Tiered Storage** - Intelligent WAL with upload triggers, workload-isolated caching (hot/cold), and optimized object storage with bandwidth limiting
 - **🟣 Controller Cluster** - Raft consensus with distributed ACL storage, metadata management, cluster coordination, and comprehensive admin REST API with advanced rate limiting
-- **🔴 Operational Layer** - Production-ready operations with zero-downtime rolling upgrades, automated scaling with partition rebalancing, and Kubernetes integration with volume recovery
+- **🔴 Operational Layer** - Production-ready operations with zero-downtime rolling upgrades, automated scaling with partition rebalancing, consumer group coordination, and Kubernetes integration with volume recovery
 - **🟦 Integration Layer** - WebAssembly ETL processing with sandboxing, BigQuery streaming with schema mapping, and comprehensive monitoring infrastructure
 
 ### Data Flow Patterns
@@ -105,11 +107,11 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
 
-## 🏃 Quick Start
+## 🔧 Development & Production Setup
 
 ### Prerequisites
 
-- **Rust 1.73+ and Cargo** - Core development environment
+- **Rust 1.88+ and Cargo** - Core development environment
 - **Docker and Docker Compose** - Container orchestration (see [docker/README.md](docker/README.md))
 - **Google Cloud SDK** - For BigQuery integration and GCP services
 - **kubectl** - For Kubernetes deployment (see [docker/README.md](docker/README.md))
@@ -142,7 +144,7 @@ cargo build --release
 # Build with io_uring for optimal I/O performance (Linux only)
 cargo build --release --features io-uring
 
-# Verify all tests pass (300+ tests)
+# Verify all tests pass (522+ tests in debug, 531+ in release)
 cargo test --release
 
 # Start controller cluster (Raft consensus + ACL storage)
@@ -247,11 +249,11 @@ We welcome contributions to help implement the remaining features!
 
 ### Current Development Priorities
 
-1. **Message Broker Core**: Implement actual produce/consume functionality
-2. **Network Layer**: Complete QUIC/gRPC server implementations
-3. **Distributed Coordination**: Implement Raft consensus and metadata management
-4. **Client Libraries**: Build Rust and Go client libraries
-5. **Admin API**: Implement REST API for cluster management
+1. **Consumer Group Enhancements**: Multi-broker coordinator discovery for high availability
+2. **Metrics & Observability**: Enhanced monitoring with per-partition metrics and consumer lag tracking
+3. **Snapshot Recovery**: Improved consumer group state recovery with snapshot validation
+4. **Load Balancing**: Advanced partition assignment strategies with weighted rebalancing
+5. **Multi-Region Support**: Geographic distribution and cross-region replication optimization
 
 ### Development Setup
 
@@ -276,7 +278,7 @@ RustMQ includes comprehensive test coverage across multiple levels:
 
 #### Unit Tests
 ```bash
-# Run all unit tests (501 tests passing in release mode)
+# Run all unit tests (531 tests passing in release mode, 522 in debug)
 cargo test --lib
 
 # Run specific module tests

@@ -58,6 +58,7 @@ Two master scripts handle all image operations:
 - **Dockerfile.admin** - Admin CLI tool
 - **Dockerfile.admin-server** - Admin REST API server
 - **Dockerfile.bigquery-subscriber** - BigQuery real-time streaming
+- **Dockerfile.webui** - Web UI management console (Vue.js + Nginx)
 
 ### Local Development
 - **docker-compose.yml** - Complete local cluster for development and testing
@@ -171,21 +172,21 @@ RustMQ Docker images are optimized for production with significant improvements 
 **cargo-chef Pattern:**
 ```dockerfile
 # Stage 1: Planner - Generate dependency recipe
-FROM rust:1.75-slim as planner
+FROM rust:1.88-slim as planner
 WORKDIR /app
 RUN cargo install cargo-chef
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 2: Cacher - Build dependencies only
-FROM rust:1.75-slim as cacher
+FROM rust:1.88-slim as cacher
 WORKDIR /app
 RUN cargo install cargo-chef
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Stage 3: Builder - Build application (cached dependencies)
-FROM rust:1.75-slim as builder
+FROM rust:1.88-slim as builder
 WORKDIR /app
 COPY --from=cacher /app/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo

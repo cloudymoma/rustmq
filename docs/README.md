@@ -19,6 +19,9 @@ Welcome to the comprehensive documentation for RustMQ.
 - [💾 High Watermark Logic](./high-watermark-optimization.md)
 - [⚡ IO-Uring Optimization](./io-uring-optimization.md)
 - [🩺 Health Monitoring](./broker-health-monitoring.md)
+- [👥 Consumer Groups](./consumer-groups.md)
+- [📊 Broker Metrics & Monitoring](./operations/monitoring.md)
+- [⚖️ Auto-Scaling & Auto-Rebalancing](./auto-scaling.md)
 
 ## 🛠️ Development
 

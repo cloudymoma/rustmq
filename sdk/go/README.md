@@ -54,6 +54,7 @@ The RustMQ Go SDK provides a native, high-performance client library for interac
 - **🌊 Streaming**: Real-time message processing pipelines
 - **⚡ Goroutines**: Efficient concurrent processing
 - **🔄 Auto-retry**: Configurable retry logic with backoff
+- **👥 Consumer Groups**: Full consumer group support with coordinator discovery and offset management
 
 ## Installation
 
@@ -75,7 +76,7 @@ require github.com/rustmq/rustmq/sdk/go v0.1.0
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.26.2 or later
 - Network access to RustMQ brokers
 
 ## Building

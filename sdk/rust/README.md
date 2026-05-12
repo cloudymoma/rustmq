@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.88 or later
 - Tokio runtime
 - Network access to RustMQ brokers
 
