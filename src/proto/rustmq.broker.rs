@@ -719,8 +719,10 @@ pub struct ComponentHealth {
     pub last_error: ::prost::alloc::string::String,
     /// Additional component details
     #[prost(map = "string, string", tag = "6")]
-    pub details:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub details: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// Performance metrics
     ///
     /// Operations per second
@@ -822,10 +824,10 @@ pub mod broker_replication_service_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     /// Broker replication service for inter-broker communication
     /// All RPCs enforce leader epoch validation to prevent stale leader attacks
     /// This service implements the critical leader-follower replication protocol
@@ -867,15 +869,18 @@ pub mod broker_replication_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                    http::Request<tonic::body::BoxBody>,
-                    Response = http::Response<
-                        <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
-                    >,
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
-            BrokerReplicationServiceClient::new(InterceptedService::new(inner, interceptor))
+            BrokerReplicationServiceClient::new(
+                InterceptedService::new(inner, interceptor),
+            )
         }
         /// Compress requests with the given encoding.
         ///
@@ -913,20 +918,30 @@ pub mod broker_replication_service_client {
         pub async fn replicate_data(
             &mut self,
             request: impl tonic::IntoRequest<super::ReplicateDataRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReplicateDataResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ReplicateDataResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/ReplicateData",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "ReplicateData",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "ReplicateData",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Send heartbeat from leader to follower
@@ -934,19 +949,30 @@ pub mod broker_replication_service_client {
         pub async fn send_heartbeat(
             &mut self,
             request: impl tonic::IntoRequest<super::HeartbeatRequest>,
-        ) -> std::result::Result<tonic::Response<super::HeartbeatResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::HeartbeatResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/SendHeartbeat",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "SendHeartbeat",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "SendHeartbeat",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Transfer partition leadership to another broker
@@ -954,20 +980,30 @@ pub mod broker_replication_service_client {
         pub async fn transfer_leadership(
             &mut self,
             request: impl tonic::IntoRequest<super::TransferLeadershipRequest>,
-        ) -> std::result::Result<tonic::Response<super::TransferLeadershipResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::TransferLeadershipResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/TransferLeadership",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "TransferLeadership",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "TransferLeadership",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Assign new partition to this broker from controller
@@ -975,20 +1011,30 @@ pub mod broker_replication_service_client {
         pub async fn assign_partition(
             &mut self,
             request: impl tonic::IntoRequest<super::AssignPartitionRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssignPartitionResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::AssignPartitionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/AssignPartition",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "AssignPartition",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "AssignPartition",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Remove partition from this broker per controller request
@@ -996,79 +1042,117 @@ pub mod broker_replication_service_client {
         pub async fn remove_partition(
             &mut self,
             request: impl tonic::IntoRequest<super::RemovePartitionRequest>,
-        ) -> std::result::Result<tonic::Response<super::RemovePartitionResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::RemovePartitionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/RemovePartition",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "RemovePartition",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "RemovePartition",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Fetch replication status for monitoring and debugging
         pub async fn get_replication_status(
             &mut self,
             request: impl tonic::IntoRequest<super::ReplicationStatusRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReplicationStatusResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ReplicationStatusResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/GetReplicationStatus",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "GetReplicationStatus",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "GetReplicationStatus",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Sync ISR (In-Sync Replicas) state between leader and controller
         pub async fn sync_isr(
             &mut self,
             request: impl tonic::IntoRequest<super::SyncIsrRequest>,
-        ) -> std::result::Result<tonic::Response<super::SyncIsrResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::SyncIsrResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/SyncISR",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "SyncISR",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("rustmq.broker.BrokerReplicationService", "SyncISR"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Request leader to truncate log to specific offset (used during recovery)
         pub async fn truncate_log(
             &mut self,
             request: impl tonic::IntoRequest<super::TruncateLogRequest>,
-        ) -> std::result::Result<tonic::Response<super::TruncateLogResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::TruncateLogResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/TruncateLog",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "TruncateLog",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "TruncateLog",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Comprehensive health check for broker components (WAL, cache, storage, network)
@@ -1076,20 +1160,30 @@ pub mod broker_replication_service_client {
         pub async fn health_check(
             &mut self,
             request: impl tonic::IntoRequest<super::HealthCheckRequest>,
-        ) -> std::result::Result<tonic::Response<super::HealthCheckResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::HealthCheckResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/rustmq.broker.BrokerReplicationService/HealthCheck",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "rustmq.broker.BrokerReplicationService",
-                "HealthCheck",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "rustmq.broker.BrokerReplicationService",
+                        "HealthCheck",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -1101,7 +1195,7 @@ pub mod broker_replication_service_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with BrokerReplicationServiceServer.
@@ -1112,36 +1206,54 @@ pub mod broker_replication_service_server {
         async fn replicate_data(
             &self,
             request: tonic::Request<super::ReplicateDataRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReplicateDataResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ReplicateDataResponse>,
+            tonic::Status,
+        >;
         /// Send heartbeat from leader to follower
         /// CRITICAL: Must validate leader epoch to prevent stale leader attacks
         async fn send_heartbeat(
             &self,
             request: tonic::Request<super::HeartbeatRequest>,
-        ) -> std::result::Result<tonic::Response<super::HeartbeatResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::HeartbeatResponse>,
+            tonic::Status,
+        >;
         /// Transfer partition leadership to another broker
         /// Used for graceful leader transitions and load balancing
         async fn transfer_leadership(
             &self,
             request: tonic::Request<super::TransferLeadershipRequest>,
-        ) -> std::result::Result<tonic::Response<super::TransferLeadershipResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::TransferLeadershipResponse>,
+            tonic::Status,
+        >;
         /// Assign new partition to this broker from controller
         /// Used during partition rebalancing and broker scaling
         async fn assign_partition(
             &self,
             request: tonic::Request<super::AssignPartitionRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssignPartitionResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::AssignPartitionResponse>,
+            tonic::Status,
+        >;
         /// Remove partition from this broker per controller request
         /// Used during partition rebalancing and broker decommissioning
         async fn remove_partition(
             &self,
             request: tonic::Request<super::RemovePartitionRequest>,
-        ) -> std::result::Result<tonic::Response<super::RemovePartitionResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::RemovePartitionResponse>,
+            tonic::Status,
+        >;
         /// Fetch replication status for monitoring and debugging
         async fn get_replication_status(
             &self,
             request: tonic::Request<super::ReplicationStatusRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReplicationStatusResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ReplicationStatusResponse>,
+            tonic::Status,
+        >;
         /// Sync ISR (In-Sync Replicas) state between leader and controller
         async fn sync_isr(
             &self,
@@ -1151,13 +1263,19 @@ pub mod broker_replication_service_server {
         async fn truncate_log(
             &self,
             request: tonic::Request<super::TruncateLogRequest>,
-        ) -> std::result::Result<tonic::Response<super::TruncateLogResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::TruncateLogResponse>,
+            tonic::Status,
+        >;
         /// Comprehensive health check for broker components (WAL, cache, storage, network)
         /// Used by controllers and admin systems to monitor broker health
         async fn health_check(
             &self,
             request: tonic::Request<super::HealthCheckRequest>,
-        ) -> std::result::Result<tonic::Response<super::HealthCheckResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::HealthCheckResponse>,
+            tonic::Status,
+        >;
     }
     /// Broker replication service for inter-broker communication
     /// All RPCs enforce leader epoch validation to prevent stale leader attacks
@@ -1183,7 +1301,10 @@ pub mod broker_replication_service_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -1218,7 +1339,8 @@ pub mod broker_replication_service_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for BrokerReplicationServiceServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for BrokerReplicationServiceServer<T>
     where
         T: BrokerReplicationService,
         B: Body + std::marker::Send + 'static,
@@ -1238,19 +1360,25 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/ReplicateData" => {
                     #[allow(non_camel_case_types)]
                     struct ReplicateDataSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::ReplicateDataRequest>
-                        for ReplicateDataSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::ReplicateDataRequest>
+                    for ReplicateDataSvc<T> {
                         type Response = super::ReplicateDataResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReplicateDataRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::replicate_data(&inner, request)
+                                <T as BrokerReplicationService>::replicate_data(
+                                        &inner,
+                                        request,
+                                    )
                                     .await
                             };
                             Box::pin(fut)
@@ -1281,19 +1409,25 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/SendHeartbeat" => {
                     #[allow(non_camel_case_types)]
                     struct SendHeartbeatSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::HeartbeatRequest>
-                        for SendHeartbeatSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::HeartbeatRequest>
+                    for SendHeartbeatSvc<T> {
                         type Response = super::HeartbeatResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::HeartbeatRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::send_heartbeat(&inner, request)
+                                <T as BrokerReplicationService>::send_heartbeat(
+                                        &inner,
+                                        request,
+                                    )
                                     .await
                             };
                             Box::pin(fut)
@@ -1323,13 +1457,18 @@ pub mod broker_replication_service_server {
                 }
                 "/rustmq.broker.BrokerReplicationService/TransferLeadership" => {
                     #[allow(non_camel_case_types)]
-                    struct TransferLeadershipSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::TransferLeadershipRequest>
-                        for TransferLeadershipSvc<T>
-                    {
+                    struct TransferLeadershipSvc<T: BrokerReplicationService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::TransferLeadershipRequest>
+                    for TransferLeadershipSvc<T> {
                         type Response = super::TransferLeadershipResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::TransferLeadershipRequest>,
@@ -1337,9 +1476,10 @@ pub mod broker_replication_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as BrokerReplicationService>::transfer_leadership(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1369,19 +1509,25 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/AssignPartition" => {
                     #[allow(non_camel_case_types)]
                     struct AssignPartitionSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::AssignPartitionRequest>
-                        for AssignPartitionSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::AssignPartitionRequest>
+                    for AssignPartitionSvc<T> {
                         type Response = super::AssignPartitionResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::AssignPartitionRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::assign_partition(&inner, request)
+                                <T as BrokerReplicationService>::assign_partition(
+                                        &inner,
+                                        request,
+                                    )
                                     .await
                             };
                             Box::pin(fut)
@@ -1412,19 +1558,25 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/RemovePartition" => {
                     #[allow(non_camel_case_types)]
                     struct RemovePartitionSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::RemovePartitionRequest>
-                        for RemovePartitionSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::RemovePartitionRequest>
+                    for RemovePartitionSvc<T> {
                         type Response = super::RemovePartitionResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::RemovePartitionRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::remove_partition(&inner, request)
+                                <T as BrokerReplicationService>::remove_partition(
+                                        &inner,
+                                        request,
+                                    )
                                     .await
                             };
                             Box::pin(fut)
@@ -1454,13 +1606,18 @@ pub mod broker_replication_service_server {
                 }
                 "/rustmq.broker.BrokerReplicationService/GetReplicationStatus" => {
                     #[allow(non_camel_case_types)]
-                    struct GetReplicationStatusSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::ReplicationStatusRequest>
-                        for GetReplicationStatusSvc<T>
-                    {
+                    struct GetReplicationStatusSvc<T: BrokerReplicationService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::ReplicationStatusRequest>
+                    for GetReplicationStatusSvc<T> {
                         type Response = super::ReplicationStatusResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReplicationStatusRequest>,
@@ -1468,9 +1625,10 @@ pub mod broker_replication_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as BrokerReplicationService>::get_replication_status(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1500,18 +1658,23 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/SyncISR" => {
                     #[allow(non_camel_case_types)]
                     struct SyncISRSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::SyncIsrRequest> for SyncISRSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::SyncIsrRequest>
+                    for SyncISRSvc<T> {
                         type Response = super::SyncIsrResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::SyncIsrRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::sync_isr(&inner, request).await
+                                <T as BrokerReplicationService>::sync_isr(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1541,19 +1704,26 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/TruncateLog" => {
                     #[allow(non_camel_case_types)]
                     struct TruncateLogSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::TruncateLogRequest>
-                        for TruncateLogSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::TruncateLogRequest>
+                    for TruncateLogSvc<T> {
                         type Response = super::TruncateLogResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::TruncateLogRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::truncate_log(&inner, request).await
+                                <T as BrokerReplicationService>::truncate_log(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1583,19 +1753,26 @@ pub mod broker_replication_service_server {
                 "/rustmq.broker.BrokerReplicationService/HealthCheck" => {
                     #[allow(non_camel_case_types)]
                     struct HealthCheckSvc<T: BrokerReplicationService>(pub Arc<T>);
-                    impl<T: BrokerReplicationService>
-                        tonic::server::UnaryService<super::HealthCheckRequest>
-                        for HealthCheckSvc<T>
-                    {
+                    impl<
+                        T: BrokerReplicationService,
+                    > tonic::server::UnaryService<super::HealthCheckRequest>
+                    for HealthCheckSvc<T> {
                         type Response = super::HealthCheckResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::HealthCheckRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as BrokerReplicationService>::health_check(&inner, request).await
+                                <T as BrokerReplicationService>::health_check(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -1622,19 +1799,23 @@ pub mod broker_replication_service_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(empty_body());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(empty_body());
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
             }
         }
     }

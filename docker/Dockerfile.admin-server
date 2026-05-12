@@ -9,7 +9,7 @@
 # ============================================================
 # Stage 1: Chef - Install cargo-chef
 # ============================================================
-FROM rust:1.88-slim-bookworm@sha256:c9849206b02b545d9b5eb0092eeaa1f31f9b940bf0373ab1ee4fc8d83311029c AS chef
+FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS chef
 
 # Install cargo-chef for dependency caching
 RUN cargo install cargo-chef --locked
@@ -67,7 +67,7 @@ RUN ls -la target/release/
 # ============================================================
 # Stage 4: Runtime - Distroless for minimal attack surface
 # ============================================================
-FROM gcr.io/distroless/cc-debian12@sha256:1a153205dfed6674a230552b7556f8f537b83f3e1d0d934bb61d8ff87cc04fc1 AS runtime
+FROM gcr.io/distroless/cc-debian12@sha256:847433844c7e04bcf07a3a0f0f5a8de554c6df6fa9e3e3ab14d3f6b73d780235 AS runtime
 
 # Copy CA certificates for HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

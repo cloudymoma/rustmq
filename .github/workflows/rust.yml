@@ -39,7 +39,4 @@ jobs:
       run: cd sdk/go && go build ./...
 
     - name: Build Docker Images
-      run: |
-        docker build -f docker/Dockerfile.broker .
-        docker build -f docker/Dockerfile.controller .
-        docker build -f docker/Dockerfile.admin .
+      run: ./docker/build-and-push.sh build

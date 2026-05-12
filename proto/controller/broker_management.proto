@@ -33,6 +33,14 @@ message BrokerHeartbeatResponse {
   bool success = 1;
   string error_message = 2;
   uint64 heartbeat_age_seconds = 3;
+  repeated CoordinatorEntry coordinator_entries = 4;
+}
+
+message CoordinatorEntry {
+  uint32 partition = 1;
+  string broker_id = 2;
+  string host = 3;
+  uint32 port = 4;
 }
 
 message LoadMetrics {

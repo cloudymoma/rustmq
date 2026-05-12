@@ -1,7 +1,7 @@
 # Optimized Multi-stage build for RustMQ Admin CLI with cargo-chef
 # Phase 1: Docker Build Optimization (October 2025)
 
-FROM rust:1.88-slim-bookworm@sha256:c9849206b02b545d9b5eb0092eeaa1f31f9b940bf0373ab1ee4fc8d83311029c AS chef
+FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /usr/src/rustmq
 
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     protobuf-compiler \
     libprotobuf-dev \
+    libssl-dev \
     cmake \
     g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -36,7 +37,7 @@ COPY build.rs ./
 RUN cargo build --release --bin rustmq-admin
 
 # Runtime stage
-FROM debian:bookworm-slim@sha256:b4aa902587c2e61ce789849cb54c332b0400fe27b1ee33af4669e1f7e7c3e22f
+FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3
 
 LABEL org.opencontainers.image.title="rustmq-admin"
 LABEL org.opencontainers.image.description="RustMQ Administrator CLI"

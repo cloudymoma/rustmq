@@ -315,7 +315,7 @@ build_images() {
     
     local current=0
     for component in "${components[@]}"; do
-        ((current++))
+        ((current++)) || true
         progress "$current" "${#components[@]}" "$component" "Building"
         build_component "$component"
     done
@@ -368,7 +368,7 @@ push_images() {
     
     local current=0
     for component in "${components[@]}"; do
-        ((current++))
+        ((current++)) || true
         progress "$current" "${#components[@]}" "$component" "Pushing"
         push_component "$component"
     done
