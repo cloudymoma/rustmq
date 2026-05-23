@@ -56,3 +56,5 @@ tmp/
 sdk/go/bin/
 sdk/go/coverage.out
 sdk/go/admin_api_example
+
+.jetskicli
