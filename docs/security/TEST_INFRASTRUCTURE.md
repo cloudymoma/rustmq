@@ -228,7 +228,7 @@ cargo test --lib
 cargo test --release --lib
 
 # Feature-specific testing
-cargo test --features "io-uring,wasm"
+cargo test --features "wasm"
 
 # Security-specific testing
 cargo test security::

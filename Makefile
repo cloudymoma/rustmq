@@ -4,28 +4,12 @@
 
 # Platform detection
 UNAME_S := $(shell uname -s)
-KERNEL_VERSION := $(shell uname -r | cut -d. -f1-2)
 NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-# Feature flags based on platform
-ifeq ($(UNAME_S),Linux)
-	KERNEL_MAJOR := $(shell echo $(KERNEL_VERSION) | cut -d. -f1)
-	KERNEL_MINOR := $(shell echo $(KERNEL_VERSION) | cut -d. -f2)
-	IO_URING_SUPPORTED := $(shell if [ $(KERNEL_MAJOR) -gt 5 ] || ([ $(KERNEL_MAJOR) -eq 5 ] && [ $(KERNEL_MINOR) -ge 1 ]); then echo "yes"; else echo "no"; fi)
-
-	ifeq ($(IO_URING_SUPPORTED),yes)
-		FEATURES := --features "io-uring,wasm,moka-cache"
-		FEATURES_NO_DEFAULT := --no-default-features --features "io-uring,wasm,moka-cache"
-	else
-		FEATURES := --features "wasm,moka-cache"
-		FEATURES_NO_DEFAULT := --no-default-features --features "wasm,moka-cache"
-	endif
-	PLATFORM_INFO := Linux, $(NPROC) cores, io-uring: $(IO_URING_SUPPORTED)
-else
-	FEATURES := --features "wasm,moka-cache"
-	FEATURES_NO_DEFAULT := --no-default-features --features "wasm,moka-cache"
-	PLATFORM_INFO := $(UNAME_S), $(NPROC) cores, no io-uring
-endif
+# Feature flags (wasm + moka-cache are the default set)
+FEATURES := --features "wasm,moka-cache"
+FEATURES_NO_DEFAULT := --no-default-features --features "wasm,moka-cache"
+PLATFORM_INFO := $(UNAME_S), $(NPROC) cores
 
 # Parallel test execution for cargo (number of test threads)
 TEST_THREADS := $(NPROC)

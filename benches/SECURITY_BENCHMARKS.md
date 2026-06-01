@@ -227,7 +227,7 @@ memory_reduction = 60
    - Check for memory fragmentation
 
 3. **Benchmark Compilation Errors**
-   - Ensure all features are enabled: `--features "io-uring,wasm"`
+   - Ensure all features are enabled: `--features "wasm"`
    - Update dependencies: `cargo update`
    - Clean build: `cargo clean && cargo build --release`
 

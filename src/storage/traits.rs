@@ -6,22 +6,6 @@ use std::ops::Range;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[async_trait]
-pub trait WriteAheadLog: Send + Sync {
-    /// Append a record to the WAL (now accepts reference to avoid cloning)
-    async fn append(&self, record: &WalRecord) -> Result<u64>;
-    async fn read(&self, offset: u64, max_bytes: usize) -> Result<Vec<WalRecord>>;
-
-    /// Read records within a specific offset range.
-    /// This is more efficient than read() + filtering when only a small range is needed.
-    async fn read_range(&self, start_offset: u64, end_offset: u64) -> Result<Vec<WalRecord>>;
-
-    async fn sync(&self) -> Result<()>;
-    async fn truncate(&self, offset: u64) -> Result<()>;
-    async fn get_end_offset(&self) -> Result<u64>;
-    fn register_upload_callback(&self, callback: Box<dyn Fn(u64, u64) + Send + Sync>);
-}
-
-#[async_trait]
 pub trait ObjectStorage: Send + Sync {
     async fn put(&self, key: &str, data: Bytes) -> Result<()>;
     async fn get(&self, key: &str) -> Result<Bytes>;
@@ -69,23 +53,32 @@ pub trait UploadManager: Send + Sync {
     async fn verify_upload(&self, object_key: &str, expected_data: &[u8]) -> Result<bool>;
 }
 
+/// Append-oriented view of the storage engine used by subsystems that write to the
+/// shared WAL but do not need partition-correct reads (replication, consumer-group
+/// offset commits). Implemented by `PartitionStore`, which also updates the
+/// partition index on every append so follower-replicated records are indexed.
 #[async_trait]
-pub trait CompactionManager: Send + Sync {
-    async fn compact_segments(&self, segments: Vec<String>) -> Result<String>;
-    async fn schedule_compaction(&self, topic_partition: TopicPartition) -> Result<()>;
-    async fn get_compaction_status(
-        &self,
-        topic_partition: &TopicPartition,
-    ) -> Result<CompactionStatus>;
+pub trait RecordLog: Send + Sync {
+    /// Append a record to the shared WAL and index it.
+    async fn append(&self, record: &WalRecord) -> Result<()>;
+    /// Flush the WAL to disk.
+    async fn sync(&self) -> Result<()>;
+    /// One past the highest indexed offset for `tp` (0 if unknown). Used for
+    /// follower lag and next-write position.
+    fn next_offset(&self, tp: &TopicPartition) -> Offset;
 }
 
-#[derive(Debug, Clone)]
-pub enum CompactionStatus {
-    NotScheduled,
-    Scheduled,
-    InProgress,
-    Completed,
-    Failed(String),
+/// Physical location of a record body within the segmented WAL.
+///
+/// Returned by the segmented WAL on append and stored in the partition index so a
+/// per-partition logical offset can be resolved to its exact bytes on disk.
+/// `file_offset` points at the record body (after the 8-byte frame length prefix);
+/// `frame_len` is the body length in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhysicalLocation {
+    pub wal_segment_seq: u64,
+    pub file_offset: u64,
+    pub frame_len: u32,
 }
 
 #[derive(Debug, Clone)]

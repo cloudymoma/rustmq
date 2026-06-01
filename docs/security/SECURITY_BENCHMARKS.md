@@ -66,7 +66,7 @@ Operating System: Linux 6.12.27-1rodete1-amd64
 Rust Version: 1.88+ (2024 Edition)
 Compiler: rustc with optimizations enabled
 Test Framework: cargo test with --release mode
-Build Features: moka-cache (default), io-uring, wasm
+Build Features: moka-cache (default), wasm
 Dependencies: Latest stable versions (August 2025)
 Security Features: Full X.509 certificate chain validation
 ```

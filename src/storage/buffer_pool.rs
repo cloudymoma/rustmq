@@ -2,8 +2,24 @@ use crate::{Result, storage::traits::BufferPool};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 
+/// A size-classed pool that recycles `Vec<u8>` buffers to reduce allocation churn
+/// on hot I/O paths.
+///
+/// NOTE ON ALIGNMENT: despite the name, this pool does **not** provide hardware
+/// page alignment. A `Vec<u8>` cannot safely carry a custom base alignment (e.g.
+/// 4 KiB), because it must be freed with the same `Layout` the global allocator
+/// used for `u8` (align 1) — reconstructing one over a custom-aligned allocation
+/// is undefined behavior. The pool's value is buffer *reuse*, not alignment.
+///
+/// The only code path that genuinely requires O_DIRECT alignment is the
+/// segmented WAL writer, which uses its own page-aligned `AlignedBuf`
+/// (`wal::aligned_buf`) for block-aligned `pwrite`s and must not rely on this
+/// pool. This pool's job is size-classed buffer *reuse*, not alignment.
 pub struct AlignedBufferPool {
     pools: Vec<Mutex<VecDeque<Vec<u8>>>>,
+    /// Capacity rounding granularity for pooled buffers (improves reuse across
+    /// similarly-sized requests). Not a hardware-alignment guarantee — see the
+    /// type-level note above.
     alignment: usize,
     max_buffers_per_size: usize,
 }
@@ -43,19 +59,16 @@ impl AlignedBufferPool {
         (size + self.alignment - 1) & !(self.alignment - 1)
     }
 
+    /// Allocate a fresh buffer of exactly `size` bytes, with capacity rounded up to
+    /// the pool's granularity so it slots cleanly into a size class on reuse.
+    ///
+    /// This does NOT page-align the allocation (see the type-level note). The old
+    /// implementation tried to via `drain(0..offset)`, which was a no-op: `drain`
+    /// shifts the retained elements back to the `Vec`'s original (unaligned) base
+    /// pointer, so the returned data was never aligned.
     fn allocate_aligned(&self, size: usize) -> Vec<u8> {
-        let aligned_size = self.aligned_size(size);
-
-        // Allocate extra space for alignment
-        let mut buffer = vec![0u8; aligned_size + self.alignment];
-        let ptr = buffer.as_ptr() as usize;
-        let aligned_ptr = (ptr + self.alignment - 1) & !(self.alignment - 1);
-        let offset = aligned_ptr - ptr;
-
-        // Return the aligned portion
-        buffer.drain(0..offset);
-        buffer.truncate(aligned_size);
-
+        let mut buffer = Vec::with_capacity(self.aligned_size(size));
+        buffer.resize(size, 0);
         buffer
     }
 }
@@ -101,17 +114,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_buffer_pool_alignment() {
-        let pool = AlignedBufferPool::new(64, 10); // Use smaller alignment
+    fn test_get_buffer_returns_exact_requested_size() {
+        // Callers (e.g. LocalObjectStorage reads) rely on the returned buffer being
+        // exactly the requested length, not the rounded capacity.
+        let pool = AlignedBufferPool::new(4096, 10);
         let buffer = pool.get_aligned_buffer(1024).unwrap();
-
-        // Just test that we get a buffer of the right size
-        // Vec allocation doesn't guarantee alignment on the heap
-        assert!(buffer.len() >= 1024);
+        assert_eq!(buffer.len(), 1024);
+        // Buffer must be usable as backing storage without further growth.
+        assert!(buffer.capacity() >= 1024);
     }
 
     #[test]
-    fn test_buffer_pool_reuse() {
+    fn test_buffer_pool_reuses_allocation() {
+        // The whole point of the pool is to avoid re-allocating on hot I/O paths:
+        // a returned buffer must come back out on the next same-size request.
         let pool = AlignedBufferPool::new(512, 10);
         let buffer1 = pool.get_aligned_buffer(1024).unwrap();
         let ptr1 = buffer1.as_ptr();
@@ -121,6 +137,25 @@ mod tests {
         let buffer2 = pool.get_aligned_buffer(1024).unwrap();
         let ptr2 = buffer2.as_ptr();
 
-        assert_eq!(ptr1, ptr2);
+        assert_eq!(
+            ptr1, ptr2,
+            "pool should hand back the same recycled allocation"
+        );
+        assert_eq!(buffer2.len(), 1024);
+    }
+
+    #[test]
+    fn test_recycled_buffer_is_independently_writable() {
+        // Recycled buffers must be safe to write to without aliasing live buffers.
+        let pool = AlignedBufferPool::new(4096, 10);
+        let mut a = pool.get_aligned_buffer(2048).unwrap();
+        a.iter_mut().for_each(|b| *b = 0xAB);
+        pool.return_buffer(a);
+
+        let mut b = pool.get_aligned_buffer(2048).unwrap();
+        // Reused storage may retain old bytes; callers overwrite before use.
+        b.iter_mut().for_each(|x| *x = 0xCD);
+        assert!(b.iter().all(|&x| x == 0xCD));
+        assert_eq!(b.len(), 2048);
     }
 }

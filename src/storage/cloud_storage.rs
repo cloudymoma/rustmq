@@ -27,7 +27,6 @@ use tokio::time::sleep;
 const MAX_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 500;
 
-
 pub struct CloudObjectStorage {
     store: Arc<dyn ObjectStore>,
 }
@@ -42,7 +41,7 @@ impl CloudObjectStorage {
 impl ObjectStorage for CloudObjectStorage {
     async fn put(&self, key: &str, data: Bytes) -> Result<()> {
         validate_key(key)?;
-        
+
         let mut attempt = 0;
         loop {
             let path_clone = Path::from(key);
@@ -54,7 +53,12 @@ impl ObjectStorage for CloudObjectStorage {
                     if attempt > 3 {
                         tracing::error!("GCS put failed after 3 attempts: {}", e);
                         let mapped_err = match e {
-                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            object_store::Error::NotFound { path, .. } => {
+                                crate::error::RustMqError::NotFound(format!(
+                                    "Object not found: {}",
+                                    path
+                                ))
+                            }
                             _ => crate::error::RustMqError::Storage(e.to_string()),
                         };
                         return Err(mapped_err);
@@ -64,13 +68,13 @@ impl ObjectStorage for CloudObjectStorage {
                 }
             }
         }
-        
+
         Ok(())
     }
 
     async fn get(&self, key: &str) -> Result<Bytes> {
         validate_key(key)?;
-        
+
         let mut attempt = 0;
         let result = loop {
             let path_clone = Path::from(key);
@@ -81,7 +85,12 @@ impl ObjectStorage for CloudObjectStorage {
                     if attempt > 3 {
                         tracing::error!("GCS get failed after 3 attempts: {}", e);
                         let mapped_err = match e {
-                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            object_store::Error::NotFound { path, .. } => {
+                                crate::error::RustMqError::NotFound(format!(
+                                    "Object not found: {}",
+                                    path
+                                ))
+                            }
                             _ => crate::error::RustMqError::Storage(e.to_string()),
                         };
                         return Err(mapped_err);
@@ -91,14 +100,14 @@ impl ObjectStorage for CloudObjectStorage {
                 }
             }
         };
-        
+
         let bytes = result.bytes().await.map_err(|e| match e {
             object_store::Error::NotFound { path, .. } => {
                 crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
             }
             e => crate::error::RustMqError::Storage(e.to_string()),
         })?;
-        
+
         Ok(bytes)
     }
 
@@ -142,7 +151,7 @@ impl ObjectStorage for CloudObjectStorage {
 
     async fn delete(&self, key: &str) -> Result<()> {
         validate_key(key)?;
-        
+
         let mut attempt = 0;
         loop {
             let path_clone = Path::from(key);
@@ -153,7 +162,12 @@ impl ObjectStorage for CloudObjectStorage {
                     if attempt > 3 {
                         tracing::error!("GCS delete failed after 3 attempts: {}", e);
                         let mapped_err = match e {
-                            object_store::Error::NotFound { path, .. } => crate::error::RustMqError::NotFound(format!("Object not found: {}", path)),
+                            object_store::Error::NotFound { path, .. } => {
+                                crate::error::RustMqError::NotFound(format!(
+                                    "Object not found: {}",
+                                    path
+                                ))
+                            }
                             _ => crate::error::RustMqError::Storage(e.to_string()),
                         };
                         return Err(mapped_err);

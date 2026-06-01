@@ -1,4 +1,4 @@
-use crate::{Result, error::RustMqError, storage::WriteAheadLog, types::*};
+use crate::{Result, error::RustMqError, storage::RecordLog, types::*};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,8 +11,8 @@ pub struct FollowerReplicationHandler {
     current_leader: RwLock<Option<BrokerId>>,
     /// Topic partition this handler is responsible for
     topic_partition: TopicPartition,
-    /// WAL for persisting replicated records
-    wal: Arc<dyn WriteAheadLog>,
+    /// Append path for persisting + indexing replicated records
+    record_log: Arc<dyn RecordLog>,
     /// Current broker ID (this follower)
     broker_id: BrokerId,
 }
@@ -22,14 +22,14 @@ impl FollowerReplicationHandler {
         topic_partition: TopicPartition,
         initial_leader_epoch: u64,
         initial_leader: Option<BrokerId>,
-        wal: Arc<dyn WriteAheadLog>,
+        record_log: Arc<dyn RecordLog>,
         broker_id: BrokerId,
     ) -> Self {
         Self {
             leader_epoch: AtomicU64::new(initial_leader_epoch),
             current_leader: RwLock::new(initial_leader),
             topic_partition,
-            wal,
+            record_log,
             broker_id,
         }
     }
@@ -78,33 +78,18 @@ impl FollowerReplicationHandler {
 
         // Process the records
         for record in request.records {
-            match self.wal.append(&record).await {
-                Ok(_offset) => {
-                    // Record appended successfully
-                }
-                Err(e) => {
-                    return Ok(ReplicateDataResponse {
-                        success: false,
-                        error_code: 1003, // WAL_APPEND_FAILED
-                        error_message: Some(format!("WAL append failed: {}", e)),
-                        follower_state: None,
-                    });
-                }
-            }
-        }
-
-        // Get current WAL offset for lag calculation
-        let current_offset = match self.wal.get_end_offset().await {
-            Ok(offset) => offset,
-            Err(e) => {
+            if let Err(e) = self.record_log.append(&record).await {
                 return Ok(ReplicateDataResponse {
                     success: false,
-                    error_code: 1004, // WAL_OFFSET_READ_FAILED
-                    error_message: Some(format!("Failed to read WAL offset: {}", e)),
+                    error_code: 1003, // WAL_APPEND_FAILED
+                    error_message: Some(format!("WAL append failed: {}", e)),
                     follower_state: None,
                 });
             }
-        };
+        }
+
+        // Current partition offset for lag calculation.
+        let current_offset = self.record_log.next_offset(&self.topic_partition);
 
         // Calculate lag - since we just processed records from the leader,
         // and last_offset is the highest offset we wrote, we should be caught up
@@ -154,8 +139,8 @@ impl FollowerReplicationHandler {
             )));
         }
 
-        // Get current WAL offset
-        let current_offset = self.wal.get_end_offset().await?;
+        // Current partition offset.
+        let current_offset = self.record_log.next_offset(&self.topic_partition);
         let lag = request.high_watermark.saturating_sub(current_offset);
 
         Ok(FollowerState {
@@ -187,26 +172,46 @@ impl FollowerReplicationHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WalConfig;
-    use crate::storage::{AlignedBufferPool, DirectIOWal};
-    use tempfile::TempDir;
+    use crate::storage::RecordLog;
+
+    /// In-memory RecordLog used to back follower replication tests after the storage refactor.
+    struct MockRecordLog {
+        records: parking_lot::Mutex<Vec<WalRecord>>,
+    }
+
+    impl MockRecordLog {
+        fn new() -> Self {
+            Self {
+                records: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RecordLog for MockRecordLog {
+        async fn append(&self, record: &WalRecord) -> crate::error::Result<()> {
+            self.records.lock().push(record.clone());
+            Ok(())
+        }
+
+        async fn sync(&self) -> crate::error::Result<()> {
+            Ok(())
+        }
+
+        fn next_offset(&self, tp: &TopicPartition) -> Offset {
+            self.records
+                .lock()
+                .iter()
+                .filter(|r| &r.topic_partition == tp)
+                .map(|r| r.offset + 1)
+                .max()
+                .unwrap_or(0)
+        }
+    }
 
     #[tokio::test]
     async fn test_follower_rejects_stale_leader_epoch() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -244,20 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_follower_accepts_higher_epoch() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -290,20 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_heartbeat_stale_epoch_rejection() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -344,20 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lag_calculation_in_heartbeat() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -376,14 +342,14 @@ mod tests {
         let heartbeat = HeartbeatRequest {
             leader_epoch: 5,
             leader_id: "leader-1".to_string(),
-            topic_partition,
+            topic_partition: topic_partition.clone(),
             high_watermark: 100,
         };
 
         let follower_state = handler.handle_heartbeat(heartbeat).await.unwrap();
 
         // Should calculate lag correctly (high_watermark - current_wal_offset)
-        let current_offset = wal.get_end_offset().await.unwrap();
+        let current_offset = wal.next_offset(&topic_partition);
         let expected_lag = 100u64.saturating_sub(current_offset);
 
         assert_eq!(follower_state.lag, expected_lag);
@@ -393,20 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wal_offset_retrieval_in_replicate_data() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -446,7 +399,7 @@ mod tests {
         assert!(response.success);
 
         let follower_state = response.follower_state.unwrap();
-        let current_offset = wal.get_end_offset().await.unwrap();
+        let current_offset = wal.next_offset(&topic_partition);
 
         // Should return actual WAL offset
         assert_eq!(follower_state.last_known_offset, current_offset);

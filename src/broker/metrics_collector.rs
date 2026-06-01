@@ -18,7 +18,9 @@ pub struct MetricsCollector {
     last_message_count: u64,
     controller_endpoint: String,
     broker_id: String,
-    coordinator_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<u32, crate::broker::broker::CoordinatorInfo>>>,
+    coordinator_cache: Arc<
+        tokio::sync::RwLock<std::collections::HashMap<u32, crate::broker::broker::CoordinatorInfo>>,
+    >,
 }
 
 impl MetricsCollector {
@@ -27,7 +29,11 @@ impl MetricsCollector {
         metrics: Arc<Metrics>,
         controller_endpoint: String,
         broker_id: String,
-        coordinator_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<u32, crate::broker::broker::CoordinatorInfo>>>,
+        coordinator_cache: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<u32, crate::broker::broker::CoordinatorInfo>,
+            >,
+        >,
     ) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
@@ -229,17 +235,25 @@ impl MetricsCollector {
             Ok(mut client) => match client.broker_heartbeat(request).await {
                 Ok(response) => {
                     let resp = response.into_inner();
-                    self.metrics.heartbeat_age.set(resp.heartbeat_age_seconds as f64);
-                    debug!("Heartbeat sent (age={}s, msg_rate={}/s)", resp.heartbeat_age_seconds, message_rate);
+                    self.metrics
+                        .heartbeat_age
+                        .set(resp.heartbeat_age_seconds as f64);
+                    debug!(
+                        "Heartbeat sent (age={}s, msg_rate={}/s)",
+                        resp.heartbeat_age_seconds, message_rate
+                    );
 
                     if !resp.coordinator_entries.is_empty() {
                         let mut cache = self.coordinator_cache.write().await;
                         for entry in resp.coordinator_entries {
-                            cache.insert(entry.partition, crate::broker::broker::CoordinatorInfo {
-                                broker_id: entry.broker_id,
-                                host: entry.host,
-                                port: entry.port as u16,
-                            });
+                            cache.insert(
+                                entry.partition,
+                                crate::broker::broker::CoordinatorInfo {
+                                    broker_id: entry.broker_id,
+                                    host: entry.host,
+                                    port: entry.port as u16,
+                                },
+                            );
                         }
                     }
                 }

@@ -94,7 +94,7 @@ Adjusted performance thresholds to realistic values based on actual hardware cap
 ### Continuous Integration
 - **Build Verification**: Both debug and release mode compilation testing
 - **Cross-Platform Testing**: Tests run on multiple environments with consistent results
-- **Feature Flag Testing**: Validation across different feature combinations (`io-uring`, `wasm`, `moka-cache`)
+- **Feature Flag Testing**: Validation across different feature combinations (`wasm`, `moka-cache`)
 - **Performance Monitoring**: Automated detection of performance regressions
 - **Memory Safety**: Weekly Miri validation runs for comprehensive memory safety verification
 
@@ -110,9 +110,8 @@ cargo test storage::                               # Storage layer tests
 cargo test security::                             # Security component tests
 cargo test admin::                                # Admin functionality tests
 
-# Feature-specific testing  
-cargo test --features "io-uring,wasm"            # Platform-specific features
-cargo test --features "io-uring,wasm,moka-cache" # All features enabled
+# Feature-specific testing
+cargo test --features "wasm,moka-cache"          # All features enabled
 
 # Performance testing (release mode only)
 cargo test --release security::performance       # Security performance benchmarks

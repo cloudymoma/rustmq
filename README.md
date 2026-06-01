@@ -141,9 +141,6 @@ curl http://localhost:9642/health
 # Build all production binaries
 cargo build --release
 
-# Build with io_uring for optimal I/O performance (Linux only)
-cargo build --release --features io-uring
-
 # Verify all tests pass (522+ tests in debug, 531+ in release)
 cargo test --release
 
@@ -311,7 +308,7 @@ cargo test --release
 #### Running Tests with Features
 ```bash
 # Test with specific features
-cargo test --features "io-uring,wasm"
+cargo test --features "wasm"
 
 # Test in release mode (recommended for performance tests)
 cargo test --release

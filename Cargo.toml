@@ -20,7 +20,6 @@ exclude = [
 [dependencies]
 # Async runtime
 tokio = { version = "1.42", features = ["full"] }
-tokio-uring = { version = "0.4", optional = true }
 futures = "0.3"
 libc = "0.2"
 
@@ -169,7 +168,6 @@ serde_yaml = "0.9.34"
 
 [features]
 default = ["wasm", "moka-cache"]
-io-uring = ["tokio-uring"]
 # wasmtime is the default WASM runtime for production ETL
 wasm = ["wasmtime", "wasmtime-wasi"]
 moka-cache = ["moka"]
@@ -214,10 +212,6 @@ overflow-checks = true
 
 [[bench]]
 name = "replication_manager_benchmarks"
-harness = false
-
-[[bench]]
-name = "wal_performance_bench"
 harness = false
 
 [[bench]]

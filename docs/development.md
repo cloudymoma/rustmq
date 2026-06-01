@@ -214,29 +214,33 @@ The Message Broker Core includes comprehensive test coverage:
 
 ### Performance Characteristics
 
-#### I/O Performance Optimizations
+#### WAL I/O Design
 
-RustMQ features advanced I/O optimizations with automatic backend selection for maximum performance:
+RustMQ uses a single shared, sequential write-ahead log optimized for append throughput and durability:
 
-- **🔥 io_uring Backend** (Linux): True asynchronous I/O with 2-10x lower latency (0.5-2μs vs 5-20μs)
-  - **Throughput**: 3-5x higher IOPS for small random I/O operations
-  - **CPU Efficiency**: 50-80% reduction in CPU usage for I/O-heavy workloads
-  - **Memory Efficiency**: No thread pool overhead, direct kernel communication
-  - **Feature Flag**: Enable with `--features io-uring` (automatic detection on Linux 5.6+)
+- **O_DIRECT block-aligned writer**: WAL records are packed into 4 KiB-aligned blocks and written
+  with `pwrite`, bypassing the page cache to avoid double-buffering and cache pollution from cold reads.
+- **Dedicated writer thread**: the WAL runs on its own OS thread issuing blocking `pwrite`/`fsync`
+  (`std::os::unix::fs::FileExt`), fed over an `mpsc` channel. (`tokio::fs` cannot do O_DIRECT — it
+  copies through an unaligned internal buffer — so a dedicated thread is required for aligned I/O.)
+- **Group commit**: appends are acknowledged after the WAL append; `fsync` is batched across records
+  to amortize device-flush latency rather than paying it per record.
+- **Buffered fallback**: O_DIRECT support is probed at runtime; on filesystems that reject it (e.g.
+  tmpfs, some sandboxes) the identical write path runs with buffered I/O — only the open flag differs.
 
-- **🛡️ Fallback Backend**: High-performance tokio::fs implementation for cross-platform compatibility
-  - **Automatic Selection**: Runtime detection with transparent fallback
-  - **Platform Support**: Windows, macOS, Linux (when io_uring unavailable)
-  - **Consistent API**: Same performance characteristics across all platforms
+> **Note:** io_uring was evaluated and deliberately **not** adopted. For a single sequential, already
+> block-batched and group-committed append stream, io_uring offers no throughput gain (the bottleneck
+> is device bandwidth + fsync latency, which it does not change) while adding kernel attack surface and
+> deployment fragility in sandboxed environments (gVisor, restrictive seccomp). See `plan.md` for the
+> full rationale.
 
 #### Overall Performance
 
-- **Low Latency**: Sub-millisecond produce latency for local WAL writes (optimized with io_uring)
+- **Low Latency**: Sub-millisecond produce latency for local WAL writes (O_DIRECT + group commit)
 - **High Throughput**: Batch production for maximum throughput scenarios
 - **Automatic Partitioning**: Intelligent partition selection based on message keys
 - **Zero-Copy Operations**: Efficient memory usage throughout the message path with buffer reuse ([detailed optimization guide](docs/zero-copy-optimization.md))
 - **Async Throughout**: Non-blocking I/O for maximum concurrency
-- **Platform Adaptive**: Automatically selects optimal I/O backend based on system capabilities
 
 ## 📊 Future Performance Tuning (Not Yet Implemented)
 

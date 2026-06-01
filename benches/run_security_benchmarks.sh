@@ -54,7 +54,7 @@ fi
 
 # Build in release mode first
 echo -e "${YELLOW}Building in release mode...${NC}"
-cargo build --release --features "io-uring,wasm"
+cargo build --release --features "wasm"
 echo -e "${GREEN}✓ Build complete${NC}\n"
 
 # Run each benchmark suite

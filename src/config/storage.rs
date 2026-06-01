@@ -16,7 +16,12 @@ pub struct WalConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfig {
+    /// Budget (bytes) for the in-memory hot serving tier — every un-tiered record is
+    /// held here for read-your-writes. When full, appends apply backpressure
+    /// (force-seal + tier) so memory stays bounded.
     pub write_cache_size_bytes: u64,
+    /// Size (bytes) of the cold-segment download cache that accelerates repeated reads
+    /// of tiered (object-storage) data.
     pub read_cache_size_bytes: u64,
     pub eviction_policy: EvictionPolicy,
 }
@@ -56,8 +61,9 @@ impl ObjectStorageConfig {
     pub fn validate(&self) -> crate::Result<()> {
         // Reject static credentials for GCS in production (mandate Workload Identity)
         if matches!(self.storage_type, StorageType::Gcs) {
-            if self.access_key.as_ref().is_some_and(|k| !k.is_empty()) || 
-               self.secret_key.as_ref().is_some_and(|k| !k.is_empty()) {
+            if self.access_key.as_ref().is_some_and(|k| !k.is_empty())
+                || self.secret_key.as_ref().is_some_and(|k| !k.is_empty())
+            {
                 return Err(crate::error::RustMqError::InvalidConfig(
                     "object_storage.access_key/secret_key are strictly forbidden with GCS storage type.                      On GKE, use Workload Identity (DefaultCredentialProvider).".to_string()
                 ));

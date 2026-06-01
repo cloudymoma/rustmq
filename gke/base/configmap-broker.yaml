@@ -72,8 +72,7 @@ data:
     max_concurrent_requests = 2000
     request_timeout_ms = 30000
     connection_pool_size = 100
-    io_uring_enabled = true
-    
+
     # Monitoring Configuration
     [monitoring]
     prometheus_enabled = true

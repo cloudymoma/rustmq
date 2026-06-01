@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use rustmq::Result;
 use rustmq::config::ReplicationConfig;
-use rustmq::config::WalConfig;
 /// Comprehensive tests for FuturesUnordered replication optimization
 ///
 /// These tests validate that the FuturesUnordered implementation:
@@ -11,13 +10,47 @@ use rustmq::config::WalConfig;
 /// 4. Improves performance over join_all approach
 use rustmq::replication::manager::{ReplicationManager, ReplicationRpcClient};
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
-use rustmq::storage::{AlignedBufferPool, DirectIOWal, WriteAheadLog};
+use rustmq::storage::RecordLog;
 use rustmq::types::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tempfile::TempDir;
 use tokio::time::Instant;
+
+/// In-memory RecordLog backing replication tests after the storage refactor.
+struct MockRecordLog {
+    records: parking_lot::Mutex<Vec<WalRecord>>,
+}
+
+impl MockRecordLog {
+    fn new() -> Self {
+        Self {
+            records: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl RecordLog for MockRecordLog {
+    async fn append(&self, record: &WalRecord) -> Result<()> {
+        self.records.lock().push(record.clone());
+        Ok(())
+    }
+
+    async fn sync(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn next_offset(&self, tp: &TopicPartition) -> Offset {
+        self.records
+            .lock()
+            .iter()
+            .filter(|r| &r.topic_partition == tp)
+            .map(|r| r.offset + 1)
+            .max()
+            .unwrap_or(0)
+    }
+}
 
 /// Mock RPC client that simulates variable latencies
 struct VariableLatencyRpcClient {
@@ -121,21 +154,8 @@ async fn setup_test_replication_manager(
     rpc_client: Arc<dyn ReplicationRpcClient>,
     min_in_sync_replicas: usize,
     followers: Vec<String>,
-) -> (ReplicationManager, TempDir) {
-    let temp_dir = TempDir::new().unwrap();
-    let wal_config = WalConfig {
-        path: temp_dir.path().to_path_buf(),
-        capacity_bytes: 1024 * 1024,
-        fsync_on_write: false,
-        segment_size_bytes: 64 * 1024,
-        buffer_size: 4096,
-        upload_interval_ms: 60_000,
-        flush_interval_ms: 1000,
-    };
-
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-        as Arc<dyn WriteAheadLog>;
+) -> ReplicationManager {
+    let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
     let config = ReplicationConfig {
         min_in_sync_replicas,
@@ -163,7 +183,7 @@ async fn setup_test_replication_manager(
         rpc_client,
     );
 
-    (manager, temp_dir)
+    manager
 }
 
 fn create_test_record(offset: u64) -> WalRecord {
@@ -205,8 +225,7 @@ async fn test_early_return_with_majority() {
         "broker-4".to_string(),
     ];
 
-    let (manager, _temp_dir) =
-        setup_test_replication_manager(rpc_client.clone(), 3, followers).await;
+    let manager = setup_test_replication_manager(rpc_client.clone(), 3, followers).await;
 
     let record = create_test_record(0);
 
@@ -241,7 +260,7 @@ async fn test_handles_slow_followers_gracefully() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 2, followers).await;
+    let manager = setup_test_replication_manager(rpc_client, 2, followers).await;
 
     let record = create_test_record(0);
 
@@ -278,7 +297,7 @@ async fn test_handles_follower_failures() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 2, followers).await;
+    let manager = setup_test_replication_manager(rpc_client, 2, followers).await;
 
     let record = create_test_record(0);
 
@@ -307,7 +326,7 @@ async fn test_insufficient_acks_returns_local_only() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 3, followers).await;
+    let manager = setup_test_replication_manager(rpc_client, 3, followers).await;
 
     let record = create_test_record(0);
 
@@ -341,7 +360,7 @@ async fn test_performance_improvement_over_join_all() {
         "broker-5".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 3, followers).await;
+    let manager = setup_test_replication_manager(rpc_client, 3, followers).await;
 
     let record = create_test_record(0);
 
@@ -380,8 +399,7 @@ async fn test_concurrent_replication_requests() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) =
-        setup_test_replication_manager(rpc_client.clone(), 2, followers).await;
+    let manager = setup_test_replication_manager(rpc_client.clone(), 2, followers).await;
     let manager = Arc::new(manager);
 
     // Send 10 concurrent replication requests
@@ -425,7 +443,7 @@ async fn test_preserves_follower_state_updates() {
         "broker-3".to_string(),
     ];
 
-    let (manager, _temp_dir) = setup_test_replication_manager(rpc_client, 2, followers).await;
+    let manager = setup_test_replication_manager(rpc_client, 2, followers).await;
 
     let record = create_test_record(0);
     manager.replicate_record(&record).await.unwrap();

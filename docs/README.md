@@ -17,7 +17,6 @@ Welcome to the comprehensive documentation for RustMQ.
 - [🏗️ Protobuf Architecture](./protobuf-architecture.md)
 - [🚀 Performance Optimization](./PERFORMANCE_OPTIMIZATION_SUMMARY.md)
 - [💾 High Watermark Logic](./high-watermark-optimization.md)
-- [⚡ IO-Uring Optimization](./io-uring-optimization.md)
 - [🩺 Health Monitoring](./broker-health-monitoring.md)
 - [👥 Consumer Groups](./consumer-groups.md)
 - [📊 Broker Metrics & Monitoring](./operations/monitoring.md)

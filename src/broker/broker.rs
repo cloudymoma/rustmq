@@ -14,7 +14,8 @@ use crate::replication::grpc_client::{
 };
 use crate::replication::manager::ReplicationManager;
 use crate::storage::{
-    AlignedBufferPool, DirectIOWal, LocalObjectStorage, LruCache, UploadManagerImpl,
+    Cache, LocalObjectStorage, LruCache, PartitionStore, RecordLog, SegmentedLog, SegmentedWal,
+    UploadManager, UploadManagerImpl,
 };
 use crate::types::*;
 use async_trait::async_trait;
@@ -24,14 +25,8 @@ use tokio::sync::{RwLock as AsyncRwLock, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-// Type aliases to make the broker core type more manageable
-pub(crate) type BrokerCore = MessageBrokerCore<
-    DirectIOWal,
-    crate::storage::StorageBackend,
-    LruCache,
-    ReplicationManager,
-    SimpleNetworkHandler,
->;
+// Type alias for the concrete broker core.
+pub(crate) type BrokerCore = MessageBrokerCore<ReplicationManager, SimpleNetworkHandler>;
 
 /// Main broker instance that manages all broker lifecycle and components
 pub struct Broker {
@@ -113,11 +108,10 @@ impl Broker {
 
         // Initialize storage components
         info!("Initializing storage components...");
-        let buffer_pool = Arc::new(AlignedBufferPool::new(config.wal.buffer_size, 10));
-        let wal = Arc::new(DirectIOWal::new(config.wal.clone(), buffer_pool).await?);
-        let cache = Arc::new(LruCache::new(
-            config.cache.write_cache_size_bytes + config.cache.read_cache_size_bytes,
-        ));
+        let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(config.wal.clone()).await?);
+        // The hot serving tier lives in the partition index (bounded by the budget
+        // below); this cache only accelerates repeated cold (object-storage) reads.
+        let cache: Arc<dyn Cache> = Arc::new(LruCache::new(config.cache.read_cache_size_bytes));
 
         let object_storage = match &config.object_storage.storage_type {
             crate::config::StorageType::Local { path } => {
@@ -154,10 +148,21 @@ impl Broker {
             }
         };
 
-        let _upload_manager = Arc::new(UploadManagerImpl::new(
+        let upload_manager: Arc<dyn UploadManager> = Arc::new(UploadManagerImpl::new(
             object_storage.clone(),
             config.object_storage.clone(),
         ));
+
+        // Single partition-aware storage engine over the shared WAL. The hot in-memory
+        // serving tier is bounded by write_cache_size_bytes; appends apply backpressure
+        // (force-seal + tier) when it is full, keeping memory bounded.
+        let store = PartitionStore::new(
+            wal,
+            upload_manager,
+            cache,
+            config.cache.write_cache_size_bytes,
+        )
+        .await?;
 
         // Initialize replication manager
         info!("Initializing production replication manager with gRPC client...");
@@ -194,7 +199,7 @@ impl Broker {
             1, // leader_epoch
             vec![config.broker.id.clone()],
             config.replication.clone(),
-            wal.clone(),
+            store.clone() as Arc<dyn RecordLog>,
             rpc_client,
         ));
 
@@ -204,9 +209,7 @@ impl Broker {
         // Create MessageBrokerCore
         info!("Creating MessageBrokerCore...");
         let broker_core = Arc::new(BrokerCore::new(
-            wal,
-            object_storage.clone(),
-            cache,
+            store,
             replication_manager,
             network_handler,
             config.broker.id.clone(),
@@ -373,9 +376,18 @@ impl Broker {
 
         // Recover consumer group state from snapshots and start background tasks
         let snapshot_dir = self.config.wal.path.join("snapshots");
-        self.broker_core.group_coordinator.recover_from_snapshots(&snapshot_dir).await;
-        self.broker_core.group_coordinator.start_snapshot_task(snapshot_dir);
+        self.broker_core
+            .group_coordinator
+            .recover_from_snapshots(&snapshot_dir)
+            .await;
+        self.broker_core
+            .group_coordinator
+            .start_snapshot_task(snapshot_dir);
         self.broker_core.group_coordinator.start_reaper_task();
+
+        // Start the storage tiering loop (seal WAL segments → upload to object storage → reclaim).
+        let tiering_handle = self.broker_core.get_store().spawn_tiering_task();
+        self.background_tasks.push(tiering_handle);
 
         // Transition to running state
         {
@@ -440,7 +452,7 @@ impl Broker {
         let wal_shutdown_start = std::time::Instant::now();
         if let Err(e) = tokio::time::timeout(
             std::time::Duration::from_secs(5), // 5s timeout for WAL flush
-            self.broker_core.get_wal().shutdown(),
+            self.broker_core.get_store().shutdown(),
         )
         .await
         {
@@ -860,10 +872,22 @@ impl ConsumerGroupHandler for BrokerHandler {
         drop(cache);
 
         let broker_id = core.broker_id().clone();
-        let host = self.config.network.quic_listen
-            .split(':').next().unwrap_or("localhost").to_string();
-        let port = self.config.network.quic_listen
-            .split(':').last().and_then(|s| s.parse().ok()).unwrap_or(9092);
+        let host = self
+            .config
+            .network
+            .quic_listen
+            .split(':')
+            .next()
+            .unwrap_or("localhost")
+            .to_string();
+        let port = self
+            .config
+            .network
+            .quic_listen
+            .split(':')
+            .last()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9092);
 
         Ok(crate::types::FindCoordinatorResponse {
             coordinator_broker_id: broker_id,

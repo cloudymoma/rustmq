@@ -541,7 +541,13 @@ impl Consumer {
 
         let mut binary_offsets = std::collections::HashMap::new();
         for (p, o) in offsets.clone() {
-            binary_offsets.insert(rustmq::types::TopicPartition { topic: self.topic.clone(), partition: p }, o);
+            binary_offsets.insert(
+                rustmq::types::TopicPartition {
+                    topic: self.topic.clone(),
+                    partition: p,
+                },
+                o,
+            );
         }
         let request = rustmq::types::CommitOffsetRequest {
             group_id: self.consumer_group.clone(),
@@ -549,10 +555,20 @@ impl Consumer {
             generation_id: 1, // MVP
             offsets: binary_offsets,
         };
-        let request_bytes = bincode::serialize(&request).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        let response_bytes = self.client.connection().send_request(rustmq::types::RequestType::CommitOffset as u8, request_bytes).await?;
-        let response: rustmq::types::CommitOffsetResponse = bincode::deserialize(&response_bytes).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        
+        let request_bytes =
+            bincode::serialize(&request).map_err(|e| ClientError::Serialization(e.to_string()))?;
+        let response_bytes = self
+            .client
+            .connection()
+            .send_request(
+                rustmq::types::RequestType::CommitOffset as u8,
+                request_bytes,
+            )
+            .await?;
+        let response: rustmq::types::CommitOffsetResponse =
+            bincode::deserialize(&response_bytes)
+                .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
         match response.error_code {
             0 => {
                 let committed_partitions: Vec<u32> = offsets.keys().cloned().collect();
@@ -562,7 +578,10 @@ impl Consumer {
                 );
                 Ok(())
             }
-            code => Err(ClientError::Consumer(format!("Commit failed with error code: {}", code))),
+            code => Err(ClientError::Consumer(format!(
+                "Commit failed with error code: {}",
+                code
+            ))),
         }
     }
 
@@ -1338,15 +1357,21 @@ impl Consumer {
                 }
             }
         }
-        
+
         let request = rustmq::types::FetchOffsetRequest {
             group_id: self.consumer_group.clone(),
             topic_partitions,
         };
-        let request_bytes = bincode::serialize(&request).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        let response_bytes = self.client.connection().send_request(rustmq::types::RequestType::FetchOffset as u8, request_bytes).await?;
-        let response: rustmq::types::FetchOffsetResponse = bincode::deserialize(&response_bytes).map_err(|e| ClientError::Serialization(e.to_string()))?;
-        
+        let request_bytes =
+            bincode::serialize(&request).map_err(|e| ClientError::Serialization(e.to_string()))?;
+        let response_bytes = self
+            .client
+            .connection()
+            .send_request(rustmq::types::RequestType::FetchOffset as u8, request_bytes)
+            .await?;
+        let response: rustmq::types::FetchOffsetResponse = bincode::deserialize(&response_bytes)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
         let offset_tracker = self.offset_tracker.read().await;
         for (tp, broker_committed_offset) in response.offsets {
             let local_committed_offset = offset_tracker.get_committed_offset(tp.partition);

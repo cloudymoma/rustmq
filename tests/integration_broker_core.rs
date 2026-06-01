@@ -11,195 +11,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-// Mock implementations for integration testing
-struct MockWal {
-    records: Arc<RwLock<Vec<WalRecord>>>,
-}
-
-impl MockWal {
-    fn new() -> Self {
-        Self {
-            records: Arc::new(RwLock::new(Vec::new())),
-        }
-    }
-}
+// Mock upload manager: tiering is not exercised by these tests.
+struct NoUpload;
 
 #[async_trait]
-impl WriteAheadLog for MockWal {
-    async fn append(&self, record: &WalRecord) -> Result<u64> {
-        let mut stored_records = self.records.write().await;
-        let offset = stored_records.len() as u64;
-        stored_records.push(record.clone());
-        Ok(offset)
+impl UploadManager for NoUpload {
+    async fn upload_segment(&self, _segment: WalSegment) -> Result<String> {
+        unreachable!("tiering not exercised in these tests")
     }
-
-    async fn read(&self, offset: u64, max_bytes: usize) -> Result<Vec<WalRecord>> {
-        let stored_records = self.records.read().await;
-        let matching_records: Vec<WalRecord> = stored_records
-            .iter()
-            .skip(offset as usize)
-            .take(max_bytes / 1024) // Simple size limit
-            .cloned()
-            .collect();
-        Ok(matching_records)
+    async fn download_segment(&self, _key: &str) -> Result<WalSegment> {
+        unreachable!("tiering not exercised in these tests")
     }
-
-    async fn read_range(&self, start_offset: u64, end_offset: u64) -> Result<Vec<WalRecord>> {
-        let stored_records = self.records.read().await;
-        let matching_records: Vec<WalRecord> = stored_records
-            .iter()
-            .skip(start_offset as usize)
-            .take((end_offset - start_offset) as usize)
-            .cloned()
-            .collect();
-        Ok(matching_records)
-    }
-
-    async fn sync(&self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn truncate(&self, offset: u64) -> Result<()> {
-        let mut stored_records = self.records.write().await;
-        stored_records.truncate(offset as usize);
-        Ok(())
-    }
-
-    async fn get_end_offset(&self) -> Result<u64> {
-        let stored_records = self.records.read().await;
-        Ok(stored_records.len() as u64)
-    }
-
-    fn register_upload_callback(&self, _callback: Box<dyn Fn(u64, u64) + Send + Sync>) {
-        // No-op for mock
+    async fn verify_upload(&self, _key: &str, _expected: &[u8]) -> Result<bool> {
+        Ok(true)
     }
 }
 
-struct MockObjectStorage {
-    storage: Arc<RwLock<HashMap<String, Vec<u8>>>>,
-}
-
-impl MockObjectStorage {
-    fn new() -> Self {
-        Self {
-            storage: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-}
-
-#[async_trait]
-impl ObjectStorage for MockObjectStorage {
-    async fn put(&self, key: &str, data: bytes::Bytes) -> Result<()> {
-        let mut storage = self.storage.write().await;
-        storage.insert(key.to_string(), data.to_vec());
-        Ok(())
-    }
-
-    async fn get(&self, key: &str) -> Result<bytes::Bytes> {
-        let storage = self.storage.read().await;
-        storage
-            .get(key)
-            .cloned()
-            .map(|v| bytes::Bytes::from(v))
-            .ok_or_else(|| rustmq::error::RustMqError::NotFound(key.to_string()))
-    }
-
-    async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<bytes::Bytes> {
-        let storage = self.storage.read().await;
-        if let Some(data) = storage.get(key) {
-            let start = range.start as usize;
-            let end = std::cmp::min(range.end as usize, data.len());
-            if start < data.len() {
-                Ok(bytes::Bytes::from(data[start..end].to_vec()))
-            } else {
-                Ok(bytes::Bytes::new())
-            }
-        } else {
-            Err(rustmq::error::RustMqError::NotFound(key.to_string()))
-        }
-    }
-
-    async fn delete(&self, key: &str) -> Result<()> {
-        let mut storage = self.storage.write().await;
-        storage.remove(key);
-        Ok(())
-    }
-
-    async fn list(&self, prefix: &str) -> Result<Vec<String>> {
-        let storage = self.storage.read().await;
-        let keys: Vec<String> = storage
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .cloned()
-            .collect();
-        Ok(keys)
-    }
-
-    async fn exists(&self, key: &str) -> Result<bool> {
-        let storage = self.storage.read().await;
-        Ok(storage.contains_key(key))
-    }
-
-    async fn open_read_stream(
-        &self,
-        key: &str,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
-        Err(rustmq::error::RustMqError::NotFound("mock".to_string()))
-    }
-
-    async fn open_write_stream(
-        &self,
-        key: &str,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
-        Err(rustmq::error::RustMqError::NotFound("mock".to_string()))
-    }
-}
-
-struct MockCache {
-    cache: Arc<RwLock<HashMap<String, bytes::Bytes>>>,
-}
-
-impl MockCache {
-    fn new() -> Self {
-        Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-}
-
-#[async_trait]
-impl Cache for MockCache {
-    async fn get(&self, key: &str) -> Result<Option<bytes::Bytes>> {
-        let cache = self.cache.read().await;
-        Ok(cache.get(key).cloned())
-    }
-
-    async fn put(&self, key: &str, value: bytes::Bytes) -> Result<()> {
-        let mut cache = self.cache.write().await;
-        cache.insert(key.to_string(), value);
-        Ok(())
-    }
-
-    async fn remove(&self, key: &str) -> Result<()> {
-        let mut cache = self.cache.write().await;
-        cache.remove(key);
-        Ok(())
-    }
-
-    async fn clear(&self) -> Result<()> {
-        let mut cache = self.cache.write().await;
-        cache.clear();
-        Ok(())
-    }
-
-    async fn size(&self) -> Result<usize> {
-        let cache = self.cache.read().await;
-        Ok(cache.len())
-    }
-
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
+/// Build a real [`PartitionStore`] backed by a segmented WAL in `dir`.
+async fn make_store(dir: &std::path::Path) -> Arc<rustmq::storage::PartitionStore> {
+    let cfg = rustmq::config::WalConfig {
+        path: dir.to_path_buf(),
+        capacity_bytes: 1 << 20,
+        fsync_on_write: false,
+        segment_size_bytes: 64 * 1024,
+        buffer_size: 4096,
+        upload_interval_ms: 60_000,
+        flush_interval_ms: 1000,
+    };
+    let wal: Arc<dyn rustmq::storage::SegmentedLog> =
+        Arc::new(rustmq::storage::SegmentedWal::new(cfg).await.unwrap());
+    let upload: Arc<dyn UploadManager> = Arc::new(NoUpload);
+    let cache: Arc<dyn Cache> = Arc::new(rustmq::storage::LruCache::new(1 << 20));
+    rustmq::storage::PartitionStore::new(wal, upload, cache, 0)
+        .await
+        .unwrap()
 }
 
 struct MockReplicationManager {
@@ -259,25 +104,19 @@ impl NetworkHandler for MockNetworkHandler {
     }
 }
 
-async fn create_test_broker() -> Arc<
-    MessageBrokerCore<
-        MockWal,
-        MockObjectStorage,
-        MockCache,
-        MockReplicationManager,
-        MockNetworkHandler,
-    >,
-> {
-    let wal = Arc::new(MockWal::new());
-    let object_storage = Arc::new(MockObjectStorage::new());
-    let cache = Arc::new(MockCache::new());
+/// Returns the broker core plus the [`TempDir`] backing its WAL. The directory
+/// must be kept alive for the lifetime of the store, so callers bind it.
+async fn create_test_broker() -> (
+    Arc<MessageBrokerCore<MockReplicationManager, MockNetworkHandler>>,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = make_store(dir.path()).await;
     let replication_manager = Arc::new(MockReplicationManager::new());
     let network_handler = Arc::new(MockNetworkHandler);
 
     let core = Arc::new(MessageBrokerCore::new(
-        wal,
-        object_storage,
-        cache,
+        store,
         replication_manager,
         network_handler,
         "test-broker-1".to_string(),
@@ -297,12 +136,12 @@ async fn create_test_broker() -> Arc<
     };
     core.add_partition(topic_partition, metadata).await.unwrap();
 
-    core
+    (core, dir)
 }
 
 #[tokio::test]
 async fn test_end_to_end_produce_consume_workflow() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
     let mut consumer = core.create_consumer("test-group".to_string());
 
@@ -354,7 +193,7 @@ async fn test_end_to_end_produce_consume_workflow() {
 
 #[tokio::test]
 async fn test_batch_produce_operations() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
 
     let batch_records = vec![
@@ -400,7 +239,7 @@ async fn test_batch_produce_operations() {
 
 #[tokio::test]
 async fn test_consumer_seek_functionality() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
     let mut consumer = core.create_consumer("test-group".to_string());
 
@@ -439,7 +278,7 @@ async fn test_consumer_seek_functionality() {
 
 #[tokio::test]
 async fn test_offset_commit_functionality() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let mut consumer = core.create_consumer("test-group".to_string());
 
     consumer
@@ -461,7 +300,7 @@ async fn test_offset_commit_functionality() {
 
 #[tokio::test]
 async fn test_producer_flush() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
 
     // Flush should succeed
@@ -470,7 +309,7 @@ async fn test_producer_flush() {
 
 #[tokio::test]
 async fn test_multiple_consumers_same_group() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let mut consumer1 = core.create_consumer("test-group".to_string());
     let mut consumer2 = core.create_consumer("test-group".to_string());
 
@@ -492,7 +331,7 @@ async fn test_multiple_consumers_same_group() {
 
 #[tokio::test]
 async fn test_error_handling_invalid_partition() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
 
     // Try to produce to a partition that doesn't exist
@@ -512,7 +351,7 @@ async fn test_error_handling_invalid_partition() {
 
 #[tokio::test]
 async fn test_different_acknowledgment_levels() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
     let producer = core.create_producer();
 
     let ack_levels = vec![
@@ -541,7 +380,7 @@ async fn test_different_acknowledgment_levels() {
 
 #[tokio::test]
 async fn test_partition_metadata_operations() {
-    let core = create_test_broker().await;
+    let (core, _dir) = create_test_broker().await;
 
     let topic_partition = TopicPartition {
         topic: "metadata-test".to_string(),

@@ -74,15 +74,21 @@ impl BrokerManagementService for BrokerManagementServiceImpl {
         }
 
         let coordinator_entries = {
-            let assignments = self.controller_service.metadata_manager.get_partition_assignments().await;
+            let assignments = self
+                .controller_service
+                .metadata_manager
+                .get_partition_assignments()
+                .await;
             let brokers = self.controller_service.metadata_manager.get_brokers().await;
             let broker_map: std::collections::HashMap<String, &crate::types::BrokerInfo> =
                 brokers.iter().map(|b| (b.id.clone(), b)).collect();
 
-            assignments.iter()
+            assignments
+                .iter()
                 .filter(|(tp, _)| tp.topic == "__consumer_offsets")
                 .map(|(tp, a)| {
-                    let (host, port) = broker_map.get(&a.leader)
+                    let (host, port) = broker_map
+                        .get(&a.leader)
                         .map(|b| (b.host.clone(), b.port_quic as u32))
                         .unwrap_or_else(|| ("localhost".to_string(), 9092));
                     crate::proto::controller::CoordinatorEntry {

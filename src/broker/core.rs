@@ -7,27 +7,26 @@ use tokio::sync::RwLock;
 use crate::error::{Result, RustMqError};
 use crate::network::traits::NetworkHandler;
 use crate::replication::traits::ReplicationManager;
-use crate::storage::traits::{Cache, ObjectStorage, WriteAheadLog};
+use crate::storage::{PartitionStore, RecordLog};
 use crate::types::*;
-use smallvec::SmallVec;
 
-/// High-level message broker core that orchestrates produce/consume operations
-pub struct MessageBrokerCore<W, O, C, R, N>
+/// High-level message broker core that orchestrates produce/consume operations.
+///
+/// All durability and reads go through a single [`PartitionStore`], so produce and
+/// fetch are partition-correct over the shared WAL. Replication and network handling
+/// remain generic collaborators.
+pub struct MessageBrokerCore<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
-    wal: Arc<W>,
-    object_storage: Arc<O>,
-    cache: Arc<C>,
+    store: Arc<PartitionStore>,
     replication_manager: Arc<R>,
+    #[allow(dead_code)]
     network_handler: Arc<N>,
     partitions: Arc<RwLock<HashMap<TopicPartition, PartitionMetadata>>>,
     broker_id: BrokerId,
-    total_messages_processed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    total_messages_processed: Arc<std::sync::atomic::AtomicU64>,
     pub group_coordinator: Arc<crate::consumer_group::coordinator::GroupCoordinatorManager>,
 }
 
@@ -112,62 +111,55 @@ impl ConsumeRecord {
     }
 }
 
-impl<W, O, C, R, N> MessageBrokerCore<W, O, C, R, N>
+impl<R, N> MessageBrokerCore<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
     pub fn new(
-        wal: Arc<W>,
-        object_storage: Arc<O>,
-        cache: Arc<C>,
+        store: Arc<PartitionStore>,
         replication_manager: Arc<R>,
         network_handler: Arc<N>,
         broker_id: BrokerId,
     ) -> Self {
-        let wal_dyn: Arc<dyn crate::storage::traits::WriteAheadLog> = wal.clone();
+        let record_log: Arc<dyn RecordLog> = store.clone();
         let group_coordinator = Arc::new(
             crate::consumer_group::coordinator::GroupCoordinatorManager::new(
-                wal_dyn,
+                record_log,
                 crate::consumer_group::CONSUMER_OFFSETS_PARTITIONS,
             ),
         );
 
         Self {
-            wal,
-            object_storage,
-            cache,
+            store,
             replication_manager,
             network_handler,
             partitions: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
-            total_messages_processed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            total_messages_processed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             group_coordinator,
         }
     }
 
     /// Create a new producer instance
-    pub fn create_producer(self: &Arc<Self>) -> MessageProducer<W, O, C, R, N> {
+    pub fn create_producer(self: &Arc<Self>) -> MessageProducer<R, N> {
         MessageProducer::new(Arc::clone(self))
     }
 
     /// Create a new consumer instance
-    pub fn create_consumer(
-        self: &Arc<Self>,
-        consumer_group: String,
-    ) -> MessageConsumer<W, O, C, R, N> {
+    pub fn create_consumer(self: &Arc<Self>, consumer_group: String) -> MessageConsumer<R, N> {
         MessageConsumer::new(Arc::clone(self), consumer_group)
     }
 
-    /// Add a partition to this broker
+    /// Add a partition to this broker. The high watermark is advanced to any
+    /// offset already recovered for this partition so produce never reuses offsets.
     pub async fn add_partition(
         &self,
         topic_partition: TopicPartition,
-        metadata: PartitionMetadata,
+        mut metadata: PartitionMetadata,
     ) -> Result<()> {
+        let recovered = self.store.next_offset(&topic_partition);
+        metadata.high_watermark = metadata.high_watermark.max(recovered);
         let mut partitions = self.partitions.write().await;
         partitions.insert(topic_partition, metadata);
         Ok(())
@@ -180,7 +172,6 @@ where
         Ok(())
     }
 
-    /// Get partition metadata
     pub fn get_total_messages_processed(&self) -> u64 {
         self.total_messages_processed
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -225,9 +216,9 @@ where
         Ok(partitions.get(topic_partition).cloned())
     }
 
-    /// Get reference to WAL for shutdown operations
-    pub fn get_wal(&self) -> &Arc<W> {
-        &self.wal
+    /// Get reference to the partition store (for shutdown / metrics / tiering wiring).
+    pub fn get_store(&self) -> &Arc<PartitionStore> {
+        &self.store
     }
 
     /// Get reference to replication manager for shutdown operations
@@ -235,14 +226,13 @@ where
         &self.replication_manager
     }
 
-    /// Internal method to append records to WAL and replicate
+    /// Internal method to append records to the store and replicate
     async fn append_records(
         &self,
         topic_partition: &TopicPartition,
         records: Vec<Record>,
         acks: AcknowledgmentLevel,
     ) -> Result<Vec<Offset>> {
-        // Get partition metadata
         let metadata = self
             .get_partition_metadata(topic_partition)
             .await?
@@ -252,50 +242,40 @@ where
             return Err(RustMqError::NotLeader(topic_partition.to_string()));
         }
 
-        // Create WAL records with offsets
+        // Assign per-partition offsets and frame records.
         let mut wal_records = Vec::new();
         let mut offsets = Vec::new();
         let base_offset = metadata.high_watermark;
 
         for (i, record) in records.into_iter().enumerate() {
             let offset = base_offset + i as u64;
-            let wal_record = WalRecord {
+            wal_records.push(WalRecord {
                 topic_partition: topic_partition.clone(),
                 offset,
                 record,
-                crc32: 0, // Calculate actual CRC32
-            };
-            wal_records.push(wal_record);
+                crc32: 0,
+            });
             offsets.push(offset);
         }
 
-        // Append to WAL (pass by reference - no cloning!)
+        // Append+index every record through the store.
         for record in &wal_records {
-            self.wal.append(record).await?;
+            self.store.append(record).await?;
         }
 
-        // Replicate based on acknowledgment level
+        // Replicate based on acknowledgment level.
         match acks {
-            AcknowledgmentLevel::None => {
-                // Fire and forget - no replication wait
-            }
-            AcknowledgmentLevel::Leader => {
-                // Leader acknowledgment only - records are already in WAL
-            }
-            AcknowledgmentLevel::Majority | AcknowledgmentLevel::All => {
-                // Wait for replication (pass by reference - no cloning!)
-                for record in &wal_records {
-                    self.replication_manager.replicate_record(record).await?;
-                }
-            }
-            AcknowledgmentLevel::Custom(_n) => {
+            AcknowledgmentLevel::None | AcknowledgmentLevel::Leader => {}
+            AcknowledgmentLevel::Majority
+            | AcknowledgmentLevel::All
+            | AcknowledgmentLevel::Custom(_) => {
                 for record in &wal_records {
                     self.replication_manager.replicate_record(record).await?;
                 }
             }
         }
 
-        // Update high watermark
+        // Update high watermark.
         let mut partitions = self.partitions.write().await;
         if let Some(metadata) = partitions.get_mut(topic_partition) {
             metadata.high_watermark = base_offset + wal_records.len() as u64;
@@ -308,118 +288,61 @@ where
         Ok(offsets)
     }
 
-    /// Fetch records from cache, WAL, or object storage
+    /// Fetch records for a partition; resolution (cache → hot WAL → cold object) and
+    /// partition scoping are handled by the store.
     pub async fn fetch_records(
         &self,
         topic_partition: &TopicPartition,
         fetch_offset: Offset,
         max_bytes: u32,
     ) -> Result<Vec<Record>> {
-        // Try cache first
-        if let Ok(Some(cached_data)) = self
-            .cache
-            .get(&format!("{}:{}", topic_partition, fetch_offset))
-            .await
-        {
-            if let Ok(cached_records) = bincode::deserialize::<Vec<Record>>(&cached_data) {
-                self.total_messages_processed.fetch_add(
-                    cached_records.len() as u64,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                return Ok(cached_records);
-            }
-        }
-
-        // Try WAL for recent records
-        match self.wal.read(fetch_offset, max_bytes as usize).await {
-            Ok(wal_records) if !wal_records.is_empty() => {
-                let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
-                self.total_messages_processed
-                    .fetch_add(records.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                return Ok(records);
-            }
-            Ok(_) | Err(RustMqError::OffsetOutOfRange(_)) => {
-                // Fall through to object storage
-            }
-            Err(e) => return Err(e),
-        }
-
-        // Fetch from object storage
-        let object_key = format!("{}/{}", topic_partition, fetch_offset);
-        let data = match self.object_storage.get(&object_key).await {
-            Ok(d) => d,
-            Err(RustMqError::NotFound(_)) => return Ok(vec![]),
-            Err(e) => return Err(e),
-        };
-
-        // Decompress the segment data (lz4_flex is the standard compression algorithm used by the UploadManager)
-        let decompressed = match lz4_flex::decompress_size_prepended(&data) {
-            Ok(d) => d,
-            Err(_) => data.to_vec(),
-        };
-
-        // Try deserializing as Vec<WalRecord> first (production format), then Vec<Record>
-        let records = match bincode::deserialize::<Vec<WalRecord>>(&decompressed) {
-            Ok(wal_records) => wal_records.into_iter().map(|wr| wr.record).collect(),
-            Err(_) => bincode::deserialize::<Vec<Record>>(&decompressed)?,
-        };
-
-        // Cache the results
-        let cache_key = format!("{}:{}", topic_partition, fetch_offset);
-        let serialized_records = bincode::serialize(&records)?;
-        let _ = self.cache.put(&cache_key, serialized_records.into()).await;
-
+        let wal_records = self
+            .store
+            .read(topic_partition, fetch_offset, max_bytes as usize)
+            .await?;
+        let records: Vec<Record> = wal_records.into_iter().map(|wr| wr.record).collect();
+        self.total_messages_processed
+            .fetch_add(records.len() as u64, std::sync::atomic::Ordering::Relaxed);
         Ok(records)
     }
 }
 
 /// High-level producer implementation
-pub struct MessageProducer<W, O, C, R, N>
+pub struct MessageProducer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
-    core: Arc<MessageBrokerCore<W, O, C, R, N>>,
+    core: Arc<MessageBrokerCore<R, N>>,
 }
 
-impl<W, O, C, R, N> MessageProducer<W, O, C, R, N>
+impl<R, N> MessageProducer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
-    fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>) -> Self {
-        Self {
-            core, // Just store the Arc, no cloning needed!
-        }
+    fn new(core: Arc<MessageBrokerCore<R, N>>) -> Self {
+        Self { core }
     }
 }
 
 #[async_trait]
-impl<W, O, C, R, N> Producer for MessageProducer<W, O, C, R, N>
+impl<R, N> Producer for MessageProducer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
     async fn send(&self, record: ProduceRecord) -> Result<ProduceResult> {
-        let partition_id = record.partition.unwrap_or(0); // Simple partitioning
+        let partition_id = record.partition.unwrap_or(0);
         let topic_partition = TopicPartition {
             topic: record.topic.clone(),
             partition: partition_id,
         };
 
         let wal_record = Record::with_headers(
-            record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
-            Bytes::from(record.value),   // Convert Vec<u8> to Bytes
-            record.headers,              // SmallVec directly (no conversion)
+            record.key.map(Bytes::from),
+            Bytes::from(record.value),
+            record.headers,
             chrono::Utc::now().timestamp_millis(),
         );
 
@@ -438,7 +361,6 @@ where
     async fn send_batch(&self, records: Vec<ProduceRecord>) -> Result<Vec<ProduceResult>> {
         let mut results = Vec::new();
 
-        // Group records by topic-partition
         let mut grouped_records: HashMap<TopicPartition, (Vec<Record>, AcknowledgmentLevel)> =
             HashMap::new();
 
@@ -450,9 +372,9 @@ where
             };
 
             let wal_record = Record::with_headers(
-                record.key.map(Bytes::from), // Convert Vec<u8> to Bytes
-                Bytes::from(record.value),   // Convert Vec<u8> to Bytes
-                record.headers,              // SmallVec directly (no conversion)
+                record.key.map(Bytes::from),
+                Bytes::from(record.value),
+                record.headers,
                 chrono::Utc::now().timestamp_millis(),
             );
 
@@ -463,7 +385,6 @@ where
                 .push(wal_record);
         }
 
-        // Send each group
         for (topic_partition, (group_records, acks)) in grouped_records {
             let offsets = self
                 .core
@@ -483,37 +404,31 @@ where
     }
 
     async fn flush(&self) -> Result<()> {
-        self.core.wal.sync().await
+        self.core.store.sync().await
     }
 }
 
 /// High-level consumer implementation
-pub struct MessageConsumer<W, O, C, R, N>
+pub struct MessageConsumer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
-    core: Arc<MessageBrokerCore<W, O, C, R, N>>,
+    core: Arc<MessageBrokerCore<R, N>>,
     #[allow(dead_code)]
     consumer_group: String,
     subscribed_topics: Vec<TopicName>,
     partition_offsets: HashMap<TopicPartition, Offset>,
 }
 
-impl<W, O, C, R, N> MessageConsumer<W, O, C, R, N>
+impl<R, N> MessageConsumer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
-    fn new(core: Arc<MessageBrokerCore<W, O, C, R, N>>, consumer_group: String) -> Self {
+    fn new(core: Arc<MessageBrokerCore<R, N>>, consumer_group: String) -> Self {
         Self {
-            core, // Just store the Arc, no cloning needed!
+            core,
             consumer_group,
             subscribed_topics: Vec::new(),
             partition_offsets: HashMap::new(),
@@ -522,19 +437,13 @@ where
 }
 
 #[async_trait]
-impl<W, O, C, R, N> Consumer for MessageConsumer<W, O, C, R, N>
+impl<R, N> Consumer for MessageConsumer<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
     async fn subscribe(&mut self, topics: Vec<TopicName>) -> Result<()> {
         self.subscribed_topics = topics;
-        // Initialize offsets for all topic-partitions
-        // This is a simplified implementation - in reality, we'd need
-        // to discover partitions and coordinate with consumer group
         for topic in &self.subscribed_topics {
             let topic_partition = TopicPartition {
                 topic: topic.clone(),
@@ -551,7 +460,7 @@ where
         for (topic_partition, current_offset) in &mut self.partition_offsets {
             match self
                 .core
-                .fetch_records(topic_partition, *current_offset, 1024 * 1024) // 1MB max
+                .fetch_records(topic_partition, *current_offset, 1024 * 1024)
                 .await
             {
                 Ok(fetched_records) => {
@@ -559,18 +468,15 @@ where
                         records.push(ConsumeRecord {
                             topic_partition: topic_partition.clone(),
                             offset: *current_offset + i as u64,
-                            key: record.key,         // Zero-copy: Bytes directly
-                            value: record.value,     // Zero-copy: Bytes directly
-                            headers: record.headers, // SmallVec directly
+                            key: record.key,
+                            value: record.value,
+                            headers: record.headers,
                             timestamp: record.timestamp,
                         });
                     }
                     *current_offset += records.len() as u64;
                 }
-                Err(RustMqError::OffsetOutOfRange(_)) => {
-                    // No more records available
-                    continue;
-                }
+                Err(RustMqError::OffsetOutOfRange(_)) => continue,
                 Err(e) => return Err(e),
             }
         }
@@ -582,7 +488,6 @@ where
         for (topic_partition, offset) in offsets {
             self.partition_offsets.insert(topic_partition, offset);
         }
-        // In a real implementation, we'd persist these offsets
         Ok(())
     }
 
@@ -592,19 +497,14 @@ where
     }
 }
 
-impl<W, O, C, R, N> Clone for MessageBrokerCore<W, O, C, R, N>
+impl<R, N> Clone for MessageBrokerCore<R, N>
 where
-    W: WriteAheadLog + Send + Sync + 'static,
-    O: ObjectStorage + Send + Sync + ?Sized,
-    C: Cache + Send + Sync + ?Sized,
     R: ReplicationManager + Send + Sync + ?Sized,
     N: NetworkHandler + Send + Sync + ?Sized,
 {
     fn clone(&self) -> Self {
         Self {
-            wal: Arc::clone(&self.wal),
-            object_storage: Arc::clone(&self.object_storage),
-            cache: Arc::clone(&self.cache),
+            store: Arc::clone(&self.store),
             replication_manager: Arc::clone(&self.replication_manager),
             network_handler: Arc::clone(&self.network_handler),
             partitions: Arc::clone(&self.partitions),
@@ -618,139 +518,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WalConfig;
+    use crate::storage::cache::LruCache;
+    use crate::storage::traits::{Cache, UploadManager, WalSegment};
+    use crate::storage::wal::{SegmentedLog, SegmentedWal};
+    use tempfile::TempDir;
 
-    // Mock implementations for testing
-    struct MockWal {
-        records: Arc<RwLock<Vec<WalRecord>>>,
-    }
-
-    struct MockObjectStorage;
-    struct MockCache;
     struct MockReplicationManager;
     struct MockNetworkHandler;
 
+    // Not exercised by these tests (no tiering).
+    struct UnusedUploadManager;
     #[async_trait]
-    impl WriteAheadLog for MockWal {
-        async fn append(&self, record: &WalRecord) -> Result<u64> {
-            let mut stored_records = self.records.write().await;
-            let offset = stored_records.len() as u64;
-            stored_records.push(record.clone());
-            Ok(offset)
+    impl UploadManager for UnusedUploadManager {
+        async fn upload_segment(&self, _segment: WalSegment) -> Result<String> {
+            panic!("upload not expected");
         }
-
-        async fn read(&self, offset: u64, max_bytes: usize) -> Result<Vec<WalRecord>> {
-            let stored_records = self.records.read().await;
-            let matching_records: Vec<WalRecord> = stored_records
-                .iter()
-                .skip(offset as usize)
-                .take(max_bytes / 1024)
-                .cloned()
-                .collect();
-            Ok(matching_records)
+        async fn download_segment(&self, _object_key: &str) -> Result<WalSegment> {
+            panic!("download not expected");
         }
-
-        async fn read_range(&self, start_offset: u64, end_offset: u64) -> Result<Vec<WalRecord>> {
-            let stored_records = self.records.read().await;
-            let matching_records: Vec<WalRecord> = stored_records
-                .iter()
-                .skip(start_offset as usize)
-                .take((end_offset - start_offset) as usize)
-                .cloned()
-                .collect();
-            Ok(matching_records)
-        }
-
-        async fn sync(&self) -> Result<()> {
-            Ok(())
-        }
-
-        async fn truncate(&self, offset: u64) -> Result<()> {
-            let mut stored_records = self.records.write().await;
-            stored_records.truncate(offset as usize);
-            Ok(())
-        }
-
-        async fn get_end_offset(&self) -> Result<u64> {
-            let stored_records = self.records.read().await;
-            Ok(stored_records.len() as u64)
-        }
-
-        fn register_upload_callback(&self, _callback: Box<dyn Fn(u64, u64) + Send + Sync>) {
-            // No-op for mock
-        }
-    }
-
-    #[async_trait]
-    impl ObjectStorage for MockObjectStorage {
-        async fn put(&self, _key: &str, _data: bytes::Bytes) -> Result<()> {
-            Ok(())
-        }
-
-        async fn get(&self, _key: &str) -> Result<bytes::Bytes> {
-            Err(RustMqError::NotFound(
-                "MockObjectStorage object not found".to_string(),
-            ))
-        }
-
-        async fn get_range(
-            &self,
-            _key: &str,
-            _range: std::ops::Range<u64>,
-        ) -> Result<bytes::Bytes> {
-            Ok(bytes::Bytes::new())
-        }
-
-        async fn delete(&self, _key: &str) -> Result<()> {
-            Ok(())
-        }
-
-        async fn list(&self, _prefix: &str) -> Result<Vec<String>> {
-            Ok(vec![])
-        }
-
-        async fn exists(&self, _key: &str) -> Result<bool> {
-            Ok(false)
-        }
-
-        async fn open_read_stream(
-            &self,
-            _key: &str,
-        ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
-            Err(RustMqError::NotFound("mock".to_string()))
-        }
-
-        async fn open_write_stream(
-            &self,
-            _key: &str,
-        ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
-            Err(RustMqError::NotFound("mock".to_string()))
-        }
-    }
-
-    #[async_trait]
-    impl Cache for MockCache {
-        async fn get(&self, _key: &str) -> Result<Option<bytes::Bytes>> {
-            Ok(None)
-        }
-
-        async fn put(&self, _key: &str, _value: bytes::Bytes) -> Result<()> {
-            Ok(())
-        }
-
-        async fn remove(&self, _key: &str) -> Result<()> {
-            Ok(())
-        }
-
-        async fn clear(&self) -> Result<()> {
-            Ok(())
-        }
-
-        async fn size(&self) -> Result<usize> {
-            Ok(0)
-        }
-
-        fn as_any(&self) -> Option<&dyn std::any::Any> {
-            Some(self)
+        async fn verify_upload(&self, _object_key: &str, _expected: &[u8]) -> Result<bool> {
+            Ok(true)
         }
     }
 
@@ -762,23 +550,18 @@ mod tests {
                 durability: DurabilityLevel::Durable,
             })
         }
-
         async fn add_follower(&self, _broker_id: BrokerId) -> Result<()> {
             Ok(())
         }
-
         async fn remove_follower(&self, _broker_id: BrokerId) -> Result<()> {
             Ok(())
         }
-
         async fn get_follower_states(&self) -> Result<Vec<FollowerState>> {
             Ok(vec![])
         }
-
         async fn update_high_watermark(&self, _offset: Offset) -> Result<()> {
             Ok(())
         }
-
         async fn get_high_watermark(&self) -> Result<Offset> {
             Ok(0)
         }
@@ -789,49 +572,58 @@ mod tests {
         async fn send_request(&self, _broker_id: &BrokerId, _request: Vec<u8>) -> Result<Vec<u8>> {
             Ok(vec![])
         }
-
         async fn broadcast(&self, _brokers: &[BrokerId], _request: Vec<u8>) -> Result<()> {
             Ok(())
         }
     }
 
+    async fn make_core(
+        dir: &std::path::Path,
+    ) -> Arc<MessageBrokerCore<MockReplicationManager, MockNetworkHandler>> {
+        let config = WalConfig {
+            path: dir.to_path_buf(),
+            capacity_bytes: 1024 * 1024,
+            fsync_on_write: false,
+            segment_size_bytes: 64 * 1024,
+            buffer_size: 4096,
+            upload_interval_ms: 60_000,
+            flush_interval_ms: 1000,
+        };
+        let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(config).await.unwrap());
+        let upload: Arc<dyn UploadManager> = Arc::new(UnusedUploadManager);
+        let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
+        let store = PartitionStore::new(wal, upload, cache, 0).await.unwrap();
+        Arc::new(MessageBrokerCore::new(
+            store,
+            Arc::new(MockReplicationManager),
+            Arc::new(MockNetworkHandler),
+            "broker-1".to_string(),
+        ))
+    }
+
     #[tokio::test]
     async fn test_producer_send() {
-        let wal = Arc::new(MockWal {
-            records: Arc::new(RwLock::new(Vec::new())),
-        });
-        let object_storage = Arc::new(MockObjectStorage);
-        let cache = Arc::new(MockCache);
-        let replication_manager = Arc::new(MockReplicationManager);
-        let network_handler = Arc::new(MockNetworkHandler);
+        let dir = TempDir::new().unwrap();
+        let core = make_core(dir.path()).await;
 
-        let core = Arc::new(MessageBrokerCore::new(
-            wal,
-            object_storage,
-            cache,
-            replication_manager,
-            network_handler,
-            "broker-1".to_string(),
-        ));
-
-        // Add a partition
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
             partition: 0,
         };
-        let metadata = PartitionMetadata {
-            leader_epoch: 1,
-            high_watermark: 0,
-            is_leader: true,
-            replicas: vec!["broker-1".to_string()],
-            in_sync_replicas: vec!["broker-1".to_string()],
-        };
-        core.add_partition(topic_partition.clone(), metadata)
-            .await
-            .unwrap();
+        core.add_partition(
+            topic_partition.clone(),
+            PartitionMetadata {
+                leader_epoch: 1,
+                high_watermark: 0,
+                is_leader: true,
+                replicas: vec!["broker-1".to_string()],
+                in_sync_replicas: vec!["broker-1".to_string()],
+            },
+        )
+        .await
+        .unwrap();
 
         let producer = core.create_producer();
-
         let record = ProduceRecord {
             topic: "test-topic".to_string(),
             partition: Some(0),
@@ -845,34 +637,25 @@ mod tests {
         let result = producer.send(record).await.unwrap();
         assert_eq!(result.topic_partition, topic_partition);
         assert_eq!(result.offset, 0);
+
+        // Round-trip: the produced record reads back from its own partition.
+        let fetched = core
+            .fetch_records(&topic_partition, 0, 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].value.as_ref(), b"Hello, World!");
     }
 
     #[tokio::test]
-    async fn test_consumer_poll() {
-        let wal = Arc::new(MockWal {
-            records: Arc::new(RwLock::new(Vec::new())),
-        });
-        let object_storage = Arc::new(MockObjectStorage);
-        let cache = Arc::new(MockCache);
-        let replication_manager = Arc::new(MockReplicationManager);
-        let network_handler = Arc::new(MockNetworkHandler);
-
-        let core = Arc::new(MessageBrokerCore::new(
-            wal,
-            object_storage,
-            cache,
-            replication_manager,
-            network_handler,
-            "broker-1".to_string(),
-        ));
-
+    async fn test_consumer_poll_empty() {
+        let dir = TempDir::new().unwrap();
+        let core = make_core(dir.path()).await;
         let mut consumer = core.create_consumer("test-group".to_string());
         consumer
             .subscribe(vec!["test-topic".to_string()])
             .await
             .unwrap();
-
-        // Poll should return empty when no records
         let records = consumer.poll(1000).await.unwrap();
         assert!(records.is_empty());
     }

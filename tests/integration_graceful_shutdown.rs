@@ -8,8 +8,7 @@ use rustmq::config::{
     BrokerConfig, CacheConfig, NetworkConfig, ObjectStorageConfig, ReplicationConfig, StorageType,
     WalConfig,
 };
-use rustmq::storage::traits::WriteAheadLog;
-use rustmq::storage::{AlignedBufferPool, DirectIOWal};
+use rustmq::storage::{SegmentedLog, SegmentedWal};
 use rustmq::types::TopicPartition;
 use rustmq::{Config, broker::Broker};
 use rustmq_client::*;
@@ -216,9 +215,8 @@ async fn test_graceful_shutdown_preserves_all_messages() {
         rustmq::broker::broker::BrokerState::Stopped
     );
 
-    // Verify WAL contains all messages by reopening and reading
+    // Verify WAL persisted messages by reopening and recovering records from disk.
     println!("📊 Verifying WAL contents...");
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
     let wal_config = rustmq::config::WalConfig {
         path: wal_path.clone(),
         capacity_bytes: 10 * 1024 * 1024,
@@ -229,16 +227,17 @@ async fn test_graceful_shutdown_preserves_all_messages() {
         flush_interval_ms: 1000,
     };
 
-    let wal = DirectIOWal::new(wal_config, buffer_pool)
+    let wal = SegmentedWal::new(wal_config)
         .await
         .expect("Failed to reopen WAL");
 
-    let end_offset = wal
-        .get_end_offset()
+    // Records persisted by the previous run live in its (now non-active) segments.
+    let recovered = SegmentedLog::recover(&wal)
         .await
-        .expect("Failed to get WAL end offset");
+        .expect("Failed to recover WAL");
+    let end_offset = recovered.len() as u64;
 
-    println!("✅ WAL end offset: {}", end_offset);
+    println!("✅ WAL recovered records: {}", end_offset);
     println!("✅ Expected messages: {}", successful_sends);
 
     // Note: WAL offset might be slightly different from message count due to internal record structure

@@ -1,10 +1,10 @@
 use crate::error::Result;
-use crate::storage::traits::WriteAheadLog;
+use crate::storage::traits::RecordLog;
 use crate::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
@@ -40,7 +40,7 @@ pub struct ConsumerGroupState {
 pub struct GroupCoordinatorManager {
     groups: Arc<RwLock<HashMap<String, ConsumerGroupState>>>,
     owned_partitions: Arc<RwLock<HashSet<u32>>>,
-    wal: Arc<dyn WriteAheadLog>,
+    record_log: Arc<dyn RecordLog>,
     offsets_partition_count: u32,
     topic_partitions: Arc<RwLock<HashMap<String, u32>>>,
     rebalance_count: Arc<AtomicU64>,
@@ -48,11 +48,11 @@ pub struct GroupCoordinatorManager {
 }
 
 impl GroupCoordinatorManager {
-    pub fn new(wal: Arc<dyn WriteAheadLog>, offsets_partition_count: u32) -> Self {
+    pub fn new(record_log: Arc<dyn RecordLog>, offsets_partition_count: u32) -> Self {
         Self {
             groups: Arc::new(RwLock::new(HashMap::new())),
             owned_partitions: Arc::new(RwLock::new(HashSet::new())),
-            wal,
+            record_log,
             offsets_partition_count,
             topic_partitions: Arc::new(RwLock::new(HashMap::new())),
             rebalance_count: Arc::new(AtomicU64::new(0)),
@@ -68,7 +68,11 @@ impl GroupCoordinatorManager {
                 Ok(Some((_offset, state))) => {
                     let mut groups = self.groups.write().await;
                     for (group_id, group_state) in state {
-                        tracing::info!("Recovered consumer group '{}' from snapshot (partition {})", group_id, partition);
+                        tracing::info!(
+                            "Recovered consumer group '{}' from snapshot (partition {})",
+                            group_id,
+                            partition
+                        );
                         groups.insert(group_id, group_state);
                         recovered += 1;
                     }
@@ -130,7 +134,11 @@ impl GroupCoordinatorManager {
                             .save_snapshot(partition, current_commits, &partition_groups)
                             .await
                         {
-                            tracing::error!("Failed to save snapshot for partition {}: {}", partition, e);
+                            tracing::error!(
+                                "Failed to save snapshot for partition {}: {}",
+                                partition,
+                                e
+                            );
                         }
                     }
                 }
@@ -138,7 +146,10 @@ impl GroupCoordinatorManager {
 
                 snapshot_mgr.cleanup_old_snapshots(partition_count, 3).await;
                 last_snapshot_commit = current_commits;
-                tracing::info!("Consumer group snapshot saved at commit count {}", current_commits);
+                tracing::info!(
+                    "Consumer group snapshot saved at commit count {}",
+                    current_commits
+                );
             }
         });
     }
@@ -160,14 +171,20 @@ impl GroupCoordinatorManager {
                         .iter()
                         .filter(|(_, m)| {
                             m.last_heartbeat
-                                .map(|hb| hb.elapsed() > Duration::from_millis(m.session_timeout_ms))
+                                .map(|hb| {
+                                    hb.elapsed() > Duration::from_millis(m.session_timeout_ms)
+                                })
                                 .unwrap_or(true)
                         })
                         .map(|(id, _)| id.clone())
                         .collect();
 
                     for member_id in &expired {
-                        tracing::warn!("Evicting stale member {} from group {}", member_id, state.group_id);
+                        tracing::warn!(
+                            "Evicting stale member {} from group {}",
+                            member_id,
+                            state.group_id
+                        );
                         state.members.remove(member_id);
                     }
 
@@ -235,7 +252,10 @@ impl GroupCoordinatorManager {
         for topic in &all_topics {
             let count = topic_partitions.get(topic).copied().unwrap_or(1);
             for p in 0..count {
-                all_partitions.push(TopicPartition { topic: topic.clone(), partition: p });
+                all_partitions.push(TopicPartition {
+                    topic: topic.clone(),
+                    partition: p,
+                });
             }
         }
         drop(topic_partitions);
@@ -244,7 +264,10 @@ impl GroupCoordinatorManager {
         let mut assignments: HashMap<String, Vec<TopicPartition>> = HashMap::new();
         for (i, tp) in all_partitions.iter().enumerate() {
             let member = &member_ids[i % member_ids.len()];
-            assignments.entry(member.clone()).or_default().push(tp.clone());
+            assignments
+                .entry(member.clone())
+                .or_default()
+                .push(tp.clone());
         }
 
         state.assignment = assignments.clone();
@@ -259,7 +282,10 @@ impl GroupCoordinatorManager {
         })
     }
 
-    pub async fn handle_heartbeat(&self, request: ConsumerHeartbeatRequest) -> Result<ConsumerHeartbeatResponse> {
+    pub async fn handle_heartbeat(
+        &self,
+        request: ConsumerHeartbeatRequest,
+    ) -> Result<ConsumerHeartbeatResponse> {
         let mut groups = self.groups.write().await;
 
         if let Some(state) = groups.get_mut(&request.group_id) {
@@ -279,7 +305,10 @@ impl GroupCoordinatorManager {
         Ok(ConsumerHeartbeatResponse { error_code: 16 })
     }
 
-    pub async fn handle_leave_group(&self, request: LeaveGroupRequest) -> Result<LeaveGroupResponse> {
+    pub async fn handle_leave_group(
+        &self,
+        request: LeaveGroupRequest,
+    ) -> Result<LeaveGroupResponse> {
         let mut groups = self.groups.write().await;
 
         if let Some(state) = groups.get_mut(&request.group_id) {
@@ -298,7 +327,10 @@ impl GroupCoordinatorManager {
         Ok(LeaveGroupResponse { error_code: 16 })
     }
 
-    pub async fn handle_commit_offset(&self, request: CommitOffsetRequest) -> Result<CommitOffsetResponse> {
+    pub async fn handle_commit_offset(
+        &self,
+        request: CommitOffsetRequest,
+    ) -> Result<CommitOffsetResponse> {
         let mut groups = self.groups.write().await;
 
         if let Some(state) = groups.get_mut(&request.group_id) {
@@ -325,20 +357,24 @@ impl GroupCoordinatorManager {
                     },
                     crc32: crc,
                 };
-                if let Err(e) = self.wal.append(&record).await {
+                if let Err(e) = self.record_log.append(&record).await {
                     tracing::error!("Failed to persist offset to WAL: {}", e);
                     return Ok(CommitOffsetResponse { error_code: 1 });
                 }
                 state.committed_offsets.insert(tp.clone(), *offset);
             }
-            self.commit_count.fetch_add(request.offsets.len() as u64, Ordering::Relaxed);
+            self.commit_count
+                .fetch_add(request.offsets.len() as u64, Ordering::Relaxed);
             return Ok(CommitOffsetResponse { error_code: 0 });
         }
 
         Ok(CommitOffsetResponse { error_code: 16 })
     }
 
-    pub async fn handle_fetch_offset(&self, request: FetchOffsetRequest) -> Result<FetchOffsetResponse> {
+    pub async fn handle_fetch_offset(
+        &self,
+        request: FetchOffsetRequest,
+    ) -> Result<FetchOffsetResponse> {
         let groups = self.groups.read().await;
 
         if let Some(state) = groups.get(&request.group_id) {
@@ -348,13 +384,25 @@ impl GroupCoordinatorManager {
                     result.insert(tp, offset);
                 }
             }
-            return Ok(FetchOffsetResponse { offsets: result, error_code: 0 });
+            return Ok(FetchOffsetResponse {
+                offsets: result,
+                error_code: 0,
+            });
         }
 
-        Ok(FetchOffsetResponse { offsets: HashMap::new(), error_code: 16 })
+        Ok(FetchOffsetResponse {
+            offsets: HashMap::new(),
+            error_code: 16,
+        })
     }
 
-    pub async fn get_metrics(&self) -> (Vec<(String, TopicPartition, u64)>, Vec<(String, usize)>, Vec<(String, u64)>) {
+    pub async fn get_metrics(
+        &self,
+    ) -> (
+        Vec<(String, TopicPartition, u64)>,
+        Vec<(String, usize)>,
+        Vec<(String, u64)>,
+    ) {
         let groups = self.groups.read().await;
         let mut committed_offsets = Vec::new();
         let mut group_members = Vec::new();
@@ -388,33 +436,36 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
 
-    struct MockWal {
+    struct MockRecordLog {
         records: tokio::sync::Mutex<Vec<WalRecord>>,
     }
 
-    impl MockWal {
-        fn new() -> Self { Self { records: tokio::sync::Mutex::new(Vec::new()) } }
+    impl MockRecordLog {
+        fn new() -> Self {
+            Self {
+                records: tokio::sync::Mutex::new(Vec::new()),
+            }
+        }
     }
 
     #[async_trait]
-    impl WriteAheadLog for MockWal {
-        async fn append(&self, record: &WalRecord) -> crate::error::Result<u64> {
-            let mut records = self.records.lock().await;
-            records.push(record.clone());
-            Ok(records.len() as u64)
+    impl RecordLog for MockRecordLog {
+        async fn append(&self, record: &WalRecord) -> crate::error::Result<()> {
+            self.records.lock().await.push(record.clone());
+            Ok(())
         }
-        async fn read(&self, _offset: u64, _max_bytes: usize) -> crate::error::Result<Vec<WalRecord>> { Ok(vec![]) }
-        async fn read_range(&self, _start: u64, _end: u64) -> crate::error::Result<Vec<WalRecord>> { Ok(vec![]) }
-        async fn sync(&self) -> crate::error::Result<()> { Ok(()) }
-        async fn truncate(&self, _offset: u64) -> crate::error::Result<()> { Ok(()) }
-        async fn get_end_offset(&self) -> crate::error::Result<u64> { Ok(0) }
-        fn register_upload_callback(&self, _cb: Box<dyn Fn(u64, u64) + Send + Sync>) {}
+        async fn sync(&self) -> crate::error::Result<()> {
+            Ok(())
+        }
+        fn next_offset(&self, _tp: &TopicPartition) -> Offset {
+            0
+        }
     }
 
-    fn make_coordinator() -> (GroupCoordinatorManager, Arc<MockWal>) {
-        let wal = Arc::new(MockWal::new());
-        let coord = GroupCoordinatorManager::new(wal.clone(), 50);
-        (coord, wal)
+    fn make_coordinator() -> (GroupCoordinatorManager, Arc<MockRecordLog>) {
+        let record_log = Arc::new(MockRecordLog::new());
+        let coord = GroupCoordinatorManager::new(record_log.clone(), 50);
+        (coord, record_log)
     }
 
     #[tokio::test]
@@ -422,10 +473,15 @@ mod tests {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 3).await;
 
-        let resp = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        let resp = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
         assert_eq!(resp.error_code, 0);
         assert_eq!(resp.generation_id, 1);
@@ -439,18 +495,36 @@ mod tests {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 4).await;
 
-        coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m1".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m1".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        let r2 = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m2".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        let r2 = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m2".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        let m1 = r2.assigned_partitions.get("m1").map(|v| v.len()).unwrap_or(0);
-        let m2 = r2.assigned_partitions.get("m2").map(|v| v.len()).unwrap_or(0);
+        let m1 = r2
+            .assigned_partitions
+            .get("m1")
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let m2 = r2
+            .assigned_partitions
+            .get("m2")
+            .map(|v| v.len())
+            .unwrap_or(0);
         assert_eq!(m1 + m2, 4);
     }
 
@@ -459,15 +533,26 @@ mod tests {
         let (coord, _wal) = make_coordinator();
         {
             let mut groups = coord.groups.write().await;
-            groups.insert("g".into(), ConsumerGroupState {
-                group_id: "g".into(), generation_id: 1,
-                members: HashMap::new(), state: GroupState::PreparingRebalance,
-                assignment: HashMap::new(), committed_offsets: HashMap::new(),
-            });
+            groups.insert(
+                "g".into(),
+                ConsumerGroupState {
+                    group_id: "g".into(),
+                    generation_id: 1,
+                    members: HashMap::new(),
+                    state: GroupState::PreparingRebalance,
+                    assignment: HashMap::new(),
+                    committed_offsets: HashMap::new(),
+                },
+            );
         }
-        let resp = coord.handle_heartbeat(ConsumerHeartbeatRequest {
-            group_id: "g".into(), member_id: "m".into(), generation_id: 1,
-        }).await.unwrap();
+        let resp = coord
+            .handle_heartbeat(ConsumerHeartbeatRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                generation_id: 1,
+            })
+            .await
+            .unwrap();
         assert_eq!(resp.error_code, 27);
     }
 
@@ -475,14 +560,24 @@ mod tests {
     async fn test_heartbeat_illegal_generation() {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
-        let resp = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        let resp = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        let hb = coord.handle_heartbeat(ConsumerHeartbeatRequest {
-            group_id: "g".into(), member_id: "m".into(), generation_id: resp.generation_id + 99,
-        }).await.unwrap();
+        let hb = coord
+            .handle_heartbeat(ConsumerHeartbeatRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                generation_id: resp.generation_id + 99,
+            })
+            .await
+            .unwrap();
         assert_eq!(hb.error_code, 22);
     }
 
@@ -490,23 +585,38 @@ mod tests {
     async fn test_heartbeat_unknown_member() {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
-        coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m1".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m1".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        let hb = coord.handle_heartbeat(ConsumerHeartbeatRequest {
-            group_id: "g".into(), member_id: "nonexistent".into(), generation_id: 1,
-        }).await.unwrap();
+        let hb = coord
+            .handle_heartbeat(ConsumerHeartbeatRequest {
+                group_id: "g".into(),
+                member_id: "nonexistent".into(),
+                generation_id: 1,
+            })
+            .await
+            .unwrap();
         assert_eq!(hb.error_code, 25);
     }
 
     #[tokio::test]
     async fn test_heartbeat_unknown_group() {
         let (coord, _wal) = make_coordinator();
-        let hb = coord.handle_heartbeat(ConsumerHeartbeatRequest {
-            group_id: "nonexistent".into(), member_id: "m".into(), generation_id: 1,
-        }).await.unwrap();
+        let hb = coord
+            .handle_heartbeat(ConsumerHeartbeatRequest {
+                group_id: "nonexistent".into(),
+                member_id: "m".into(),
+                generation_id: 1,
+            })
+            .await
+            .unwrap();
         assert_eq!(hb.error_code, 16);
     }
 
@@ -514,18 +624,32 @@ mod tests {
     async fn test_leave_triggers_rebalance() {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 2).await;
-        coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m1".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
-        let r2 = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m2".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m1".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
+        let r2 = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m2".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        coord.handle_leave_group(LeaveGroupRequest {
-            group_id: "g".into(), member_id: "m1".into(),
-        }).await.unwrap();
+        coord
+            .handle_leave_group(LeaveGroupRequest {
+                group_id: "g".into(),
+                member_id: "m1".into(),
+            })
+            .await
+            .unwrap();
 
         let groups = coord.groups.read().await;
         let state = groups.get("g").unwrap();
@@ -537,13 +661,22 @@ mod tests {
     async fn test_leave_last_member_empties() {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
-        coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
-        coord.handle_leave_group(LeaveGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-        }).await.unwrap();
+        coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
+        coord
+            .handle_leave_group(LeaveGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+            })
+            .await
+            .unwrap();
 
         let groups = coord.groups.read().await;
         assert_eq!(groups.get("g").unwrap().state, GroupState::Empty);
@@ -553,24 +686,41 @@ mod tests {
     async fn test_commit_and_fetch_offset() {
         let (coord, wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
-        let resp = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        let resp = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
-        let tp = TopicPartition { topic: "t".into(), partition: 0 };
+        let tp = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
         let mut offsets = HashMap::new();
         offsets.insert(tp.clone(), 42);
 
-        let c = coord.handle_commit_offset(CommitOffsetRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            generation_id: resp.generation_id, offsets,
-        }).await.unwrap();
+        let c = coord
+            .handle_commit_offset(CommitOffsetRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                generation_id: resp.generation_id,
+                offsets,
+            })
+            .await
+            .unwrap();
         assert_eq!(c.error_code, 0);
 
-        let f = coord.handle_fetch_offset(FetchOffsetRequest {
-            group_id: "g".into(), topic_partitions: vec![tp.clone()],
-        }).await.unwrap();
+        let f = coord
+            .handle_fetch_offset(FetchOffsetRequest {
+                group_id: "g".into(),
+                topic_partitions: vec![tp.clone()],
+            })
+            .await
+            .unwrap();
         assert_eq!(*f.offsets.get(&tp).unwrap(), 42);
 
         let records = wal.records.lock().await;
@@ -592,10 +742,15 @@ mod tests {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
         assert_eq!(coord.get_rebalance_count(), 0);
-        coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
         assert_eq!(coord.get_rebalance_count(), 1);
     }
 
@@ -607,44 +762,89 @@ mod tests {
         let snapshot_mgr = crate::consumer_group::snapshot::SnapshotManager::new(snapshot_dir);
         let mut state = HashMap::new();
         let mut committed = HashMap::new();
-        committed.insert(TopicPartition { topic: "t".into(), partition: 0 }, 100u64);
-        state.insert("recovered-group".to_string(), ConsumerGroupState {
-            group_id: "recovered-group".into(),
-            generation_id: 5,
-            members: HashMap::new(),
-            state: GroupState::Stable,
-            assignment: HashMap::new(),
-            committed_offsets: committed,
-        });
+        committed.insert(
+            TopicPartition {
+                topic: "t".into(),
+                partition: 0,
+            },
+            100u64,
+        );
+        state.insert(
+            "recovered-group".to_string(),
+            ConsumerGroupState {
+                group_id: "recovered-group".into(),
+                generation_id: 5,
+                members: HashMap::new(),
+                state: GroupState::Stable,
+                assignment: HashMap::new(),
+                committed_offsets: committed,
+            },
+        );
         snapshot_mgr.save_snapshot(0, 999, &state).await.unwrap();
 
         let (coord, _wal) = make_coordinator();
         coord.recover_from_snapshots(snapshot_dir).await;
 
-        let f = coord.handle_fetch_offset(FetchOffsetRequest {
-            group_id: "recovered-group".into(),
-            topic_partitions: vec![TopicPartition { topic: "t".into(), partition: 0 }],
-        }).await.unwrap();
-        assert_eq!(*f.offsets.get(&TopicPartition { topic: "t".into(), partition: 0 }).unwrap(), 100);
+        let f = coord
+            .handle_fetch_offset(FetchOffsetRequest {
+                group_id: "recovered-group".into(),
+                topic_partitions: vec![TopicPartition {
+                    topic: "t".into(),
+                    partition: 0,
+                }],
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            *f.offsets
+                .get(&TopicPartition {
+                    topic: "t".into(),
+                    partition: 0
+                })
+                .unwrap(),
+            100
+        );
     }
 
     #[tokio::test]
     async fn test_commit_increments_commit_count() {
         let (coord, _wal) = make_coordinator();
         coord.update_topic_partitions("t", 1).await;
-        let resp = coord.handle_join_group(JoinGroupRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            session_timeout_ms: 30000, topics: vec!["t".into()],
-        }).await.unwrap();
+        let resp = coord
+            .handle_join_group(JoinGroupRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                session_timeout_ms: 30000,
+                topics: vec!["t".into()],
+            })
+            .await
+            .unwrap();
 
         let mut offsets = HashMap::new();
-        offsets.insert(TopicPartition { topic: "t".into(), partition: 0 }, 10);
-        offsets.insert(TopicPartition { topic: "t".into(), partition: 1 }, 20);
+        offsets.insert(
+            TopicPartition {
+                topic: "t".into(),
+                partition: 0,
+            },
+            10,
+        );
+        offsets.insert(
+            TopicPartition {
+                topic: "t".into(),
+                partition: 1,
+            },
+            20,
+        );
 
-        coord.handle_commit_offset(CommitOffsetRequest {
-            group_id: "g".into(), member_id: "m".into(),
-            generation_id: resp.generation_id, offsets,
-        }).await.unwrap();
+        coord
+            .handle_commit_offset(CommitOffsetRequest {
+                group_id: "g".into(),
+                member_id: "m".into(),
+                generation_id: resp.generation_id,
+                offsets,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(coord.commit_count.load(Ordering::Relaxed), 2);
     }

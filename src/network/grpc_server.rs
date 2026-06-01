@@ -1337,31 +1337,52 @@ impl crate::network::NetworkHandler for GrpcNetworkHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WalConfig;
     use crate::network::NetworkHandler;
-    use crate::storage::{AlignedBufferPool, DirectIOWal};
+    use crate::storage::RecordLog;
     use crate::types::TopicPartition;
-    use tempfile::TempDir;
+
+    /// In-memory RecordLog used to back follower replication handlers in these tests
+    /// after the storage refactor.
+    struct MockRecordLog {
+        records: parking_lot::Mutex<Vec<crate::types::WalRecord>>,
+    }
+
+    impl MockRecordLog {
+        fn new() -> Self {
+            Self {
+                records: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RecordLog for MockRecordLog {
+        async fn append(&self, record: &crate::types::WalRecord) -> crate::error::Result<()> {
+            self.records.lock().push(record.clone());
+            Ok(())
+        }
+
+        async fn sync(&self) -> crate::error::Result<()> {
+            Ok(())
+        }
+
+        fn next_offset(&self, tp: &TopicPartition) -> crate::types::Offset {
+            self.records
+                .lock()
+                .iter()
+                .filter(|r| &r.topic_partition == tp)
+                .map(|r| r.offset + 1)
+                .max()
+                .unwrap_or(0)
+        }
+    }
 
     #[tokio::test]
     async fn test_replication_service_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
 
         // Create a test follower handler
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1406,20 +1427,7 @@ mod tests {
     async fn test_heartbeat_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
 
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1453,20 +1461,7 @@ mod tests {
     async fn test_leadership_transfer_epoch_validation() {
         let service = BrokerReplicationServiceImpl::new("test-broker".to_string());
 
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "test-topic".to_string(),
@@ -1555,20 +1550,7 @@ mod tests {
 
         let service = BrokerReplicationServiceImpl::new("follower-broker".to_string());
 
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn crate::storage::WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
         let topic_partition = TopicPartition {
             topic: "critical-topic".to_string(),

@@ -425,17 +425,20 @@ impl Connection {
 
     /// Get the next available connection (round-robin)
     #[instrument(skip(self))]
-    
+
     /// Get the connection for a specific broker ID if known
-    pub async fn get_connection_for_broker(&self, broker_addr: &SocketAddr) -> Result<QuicConnection> {
+    pub async fn get_connection_for_broker(
+        &self,
+        broker_addr: &SocketAddr,
+    ) -> Result<QuicConnection> {
         let connections = self.connections.read().await;
-        
+
         if let Some(entry) = connections.get(broker_addr) {
             let mut last_used = entry.last_used.write().await;
             *last_used = Instant::now();
             return Ok(entry.connection.clone());
         }
-        
+
         Err(ClientError::Connection(format!(
             "No connection found for broker {}",
             broker_addr

@@ -93,11 +93,10 @@ tokio = { version = "1.0", features = ["full"] }
 
 ```toml
 [dependencies]
-rustmq-client = { path = "sdk/rust", features = ["io-uring", "compression"] }
+rustmq-client = { path = "sdk/rust", features = ["compression"] }
 ```
 
 Available features:
-- `io-uring` - High-performance async I/O on Linux
 - `wasm` - WebAssembly ETL processing support (default)
 - `compression` - Enable message compression
 - `encryption` - Enable message encryption
@@ -183,7 +182,7 @@ cargo test --lib
 cargo bench
 
 # Build with features
-cargo build --features "io-uring,compression"
+cargo build --features "compression"
 
 # Check for errors
 cargo check

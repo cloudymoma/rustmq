@@ -3,7 +3,7 @@ use crate::{
     controller::service::ControllerService,
     error::RustMqError,
     replication::manager::ReplicationManager,
-    storage::{Cache, ObjectStorage, WriteAheadLog},
+    storage::{Cache, ObjectStorage, RecordLog},
     types::*,
 };
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ pub struct HealthCheckService {
     /// Broker start time for uptime calculation
     start_time: Instant,
     /// WAL reference for health checks
-    wal: Option<Arc<dyn WriteAheadLog>>,
+    wal: Option<Arc<dyn RecordLog>>,
     /// Cache reference for health checks  
     cache: Option<Arc<dyn Cache>>,
     /// Object storage reference for health checks
@@ -110,7 +110,7 @@ impl HealthCheckService {
     }
 
     /// Register WAL for health checks
-    pub fn register_wal(&mut self, wal: Arc<dyn WriteAheadLog>) {
+    pub fn register_wal(&mut self, wal: Arc<dyn RecordLog>) {
         self.wal = Some(wal);
     }
 
@@ -236,49 +236,31 @@ impl HealthCheckService {
         let mut details = HashMap::new();
 
         if let Some(wal) = &self.wal {
-            match wal.get_end_offset().await {
-                Ok(end_offset) => {
-                    let latency = start.elapsed().as_millis() as u32;
-                    details.insert("end_offset".to_string(), end_offset.to_string());
-                    details.insert("check_type".to_string(), "end_offset_read".to_string());
+            // RecordLog exposes no global offset; a sync() is the liveness/write probe.
+            match wal.sync().await {
+                Ok(_) => {
+                    let total_latency = start.elapsed().as_millis() as u32;
+                    details.insert("check_type".to_string(), "sync".to_string());
+                    details.insert("total_latency_ms".to_string(), total_latency.to_string());
+                    details.insert("sync_successful".to_string(), "true".to_string());
 
-                    // Perform a sync operation to verify WAL write capability
-                    match wal.sync().await {
-                        Ok(_) => {
-                            let total_latency = start.elapsed().as_millis() as u32;
-                            details
-                                .insert("total_latency_ms".to_string(), total_latency.to_string());
-                            details.insert("sync_successful".to_string(), "true".to_string());
-
-                            if total_latency > self.thresholds.wal_max_latency_ms {
-                                ComponentHealth {
-                                    status: HealthStatus::Degraded,
-                                    last_check: chrono::Utc::now(),
-                                    latency_ms: Some(total_latency),
-                                    error_count: 0,
-                                    last_error: None,
-                                    details,
-                                }
-                            } else {
-                                ComponentHealth {
-                                    status: HealthStatus::Healthy,
-                                    last_check: chrono::Utc::now(),
-                                    latency_ms: Some(total_latency),
-                                    error_count: 0,
-                                    last_error: None,
-                                    details,
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("WAL sync failed during health check: {}", e);
-                            ComponentHealth::unhealthy(format!("WAL sync failed: {}", e))
-                        }
+                    let status = if total_latency > self.thresholds.wal_max_latency_ms {
+                        HealthStatus::Degraded
+                    } else {
+                        HealthStatus::Healthy
+                    };
+                    ComponentHealth {
+                        status,
+                        last_check: chrono::Utc::now(),
+                        latency_ms: Some(total_latency),
+                        error_count: 0,
+                        last_error: None,
+                        details,
                     }
                 }
                 Err(e) => {
-                    error!("WAL end offset read failed during health check: {}", e);
-                    ComponentHealth::unhealthy(format!("WAL end offset read failed: {}", e))
+                    error!("WAL sync failed during health check: {}", e);
+                    ComponentHealth::unhealthy(format!("WAL sync failed: {}", e))
                 }
             }
         } else {
@@ -1125,9 +1107,24 @@ impl HealthCheckService {
 mod tests {
     use super::*;
     use crate::config::WalConfig;
-    use crate::storage::{AlignedBufferPool, DirectIOWal, LocalObjectStorage, LruCache};
+    use crate::storage::{LocalObjectStorage, LruCache};
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    /// Minimal in-memory RecordLog for exercising the WAL health probe.
+    struct MockRecordLog;
+    #[async_trait::async_trait]
+    impl RecordLog for MockRecordLog {
+        async fn append(&self, _record: &WalRecord) -> Result<()> {
+            Ok(())
+        }
+        async fn sync(&self) -> Result<()> {
+            Ok(())
+        }
+        fn next_offset(&self, _tp: &TopicPartition) -> Offset {
+            0
+        }
+    }
 
     #[tokio::test]
     async fn test_health_check_service_creation() {
@@ -1163,19 +1160,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check_with_wal() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
+        let wal: Arc<dyn RecordLog> = Arc::new(MockRecordLog);
 
         // Use generous thresholds for test environments where I/O latency may be higher
         let thresholds = HealthThresholds {

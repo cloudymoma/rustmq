@@ -138,12 +138,18 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = SnapshotManager::new(temp_dir.path());
         let mut state = HashMap::new();
-        state.insert("g".into(), ConsumerGroupState {
-            group_id: "g".into(), generation_id: 1,
-            members: HashMap::new(), state: crate::consumer_group::coordinator::GroupState::Stable,
-            assignment: HashMap::new(), committed_offsets: HashMap::new(),
-        });
-        
+        state.insert(
+            "g".into(),
+            ConsumerGroupState {
+                group_id: "g".into(),
+                generation_id: 1,
+                members: HashMap::new(),
+                state: crate::consumer_group::coordinator::GroupState::Stable,
+                assignment: HashMap::new(),
+                committed_offsets: HashMap::new(),
+            },
+        );
+
         manager.save_snapshot(0, 42, &state).await.unwrap();
         let (offset, loaded) = manager.load_latest_snapshot(0).await.unwrap().unwrap();
         assert_eq!(offset, 42);
@@ -158,7 +164,7 @@ mod tests {
         manager.save_snapshot(0, 10, &state).await.unwrap();
         manager.save_snapshot(0, 42, &state).await.unwrap();
         manager.save_snapshot(0, 5, &state).await.unwrap(); // Out of order still works
-        
+
         let (offset, _) = manager.load_latest_snapshot(0).await.unwrap().unwrap();
         assert_eq!(offset, 42);
     }

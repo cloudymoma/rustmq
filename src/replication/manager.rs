@@ -1,6 +1,6 @@
 use crate::{
     Result, config::ReplicationConfig,
-    replication::traits::ReplicationManager as ReplicationManagerTrait, storage::WriteAheadLog,
+    replication::traits::ReplicationManager as ReplicationManagerTrait, storage::RecordLog,
     types::*,
 };
 use async_trait::async_trait;
@@ -28,7 +28,7 @@ pub struct ReplicationManager {
     max_replication_lag: u64,
     heartbeat_timeout: Duration,
 
-    wal: Arc<dyn WriteAheadLog>,
+    record_log: Arc<dyn RecordLog>,
     rpc_client: Arc<dyn ReplicationRpcClient>,
 }
 
@@ -124,7 +124,7 @@ impl ReplicationManager {
         leader_epoch: u64,
         replica_set: Vec<BrokerId>,
         config: ReplicationConfig,
-        wal: Arc<dyn WriteAheadLog>,
+        record_log: Arc<dyn RecordLog>,
         rpc_client: Arc<dyn ReplicationRpcClient>,
     ) -> Self {
         Self {
@@ -140,13 +140,14 @@ impl ReplicationManager {
             ack_timeout: Duration::from_millis(config.ack_timeout_ms),
             max_replication_lag: config.max_replication_lag,
             heartbeat_timeout: Duration::from_millis(config.heartbeat_timeout_ms),
-            wal,
+            record_log,
             rpc_client,
         }
     }
 
     async fn append_to_local_wal(&self, record: WalRecord) -> Result<Offset> {
-        let offset = self.wal.append(&record).await?;
+        let offset = record.offset;
+        self.record_log.append(&record).await?;
         self.log_end_offset.store(offset + 1, Ordering::SeqCst);
         Ok(offset)
     }
@@ -701,26 +702,46 @@ impl ReplicationManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WalConfig;
-    use crate::storage::{AlignedBufferPool, DirectIOWal};
-    use tempfile::TempDir;
+    use crate::storage::RecordLog;
+
+    /// In-memory RecordLog used to back replication tests after the storage refactor.
+    struct MockRecordLog {
+        records: parking_lot::Mutex<Vec<WalRecord>>,
+    }
+
+    impl MockRecordLog {
+        fn new() -> Self {
+            Self {
+                records: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RecordLog for MockRecordLog {
+        async fn append(&self, record: &WalRecord) -> crate::error::Result<()> {
+            self.records.lock().push(record.clone());
+            Ok(())
+        }
+
+        async fn sync(&self) -> crate::error::Result<()> {
+            Ok(())
+        }
+
+        fn next_offset(&self, tp: &TopicPartition) -> Offset {
+            self.records
+                .lock()
+                .iter()
+                .filter(|r| &r.topic_partition == tp)
+                .map(|r| r.offset + 1)
+                .max()
+                .unwrap_or(0)
+        }
+    }
 
     #[tokio::test]
     async fn test_replication_manager() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -804,20 +825,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_replication_durability() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -869,20 +877,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_high_watermark_advancement() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -961,20 +956,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_isr_heartbeat_tracking() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -1033,20 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_heartbeat_timeout_error_handling() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -1116,20 +1085,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_optimized_high_watermark_calculation() {
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         let config = ReplicationConfig {
@@ -1449,20 +1405,7 @@ mod tests {
     #[tokio::test]
     async fn test_high_watermark_calculation_correctness() {
         // End-to-end test using actual ReplicationManager
-        let temp_dir = TempDir::new().unwrap();
-        let wal_config = WalConfig {
-            path: temp_dir.path().to_path_buf(),
-            capacity_bytes: 1024 * 1024,
-            fsync_on_write: false,
-            segment_size_bytes: 64 * 1024,
-            buffer_size: 4096,
-            upload_interval_ms: 60_000,
-            flush_interval_ms: 1000,
-        };
-
-        let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-        let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap())
-            as Arc<dyn WriteAheadLog>;
+        let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
         let rpc_client = Arc::new(MockReplicationRpcClient) as Arc<dyn ReplicationRpcClient>;
 
         // Test various replication factor configurations

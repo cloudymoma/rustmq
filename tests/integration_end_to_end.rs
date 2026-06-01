@@ -1,34 +1,54 @@
 use bytes::Bytes;
-use rustmq::config::{EtlConfig, ReplicationConfig, ScalingConfig, WalConfig};
+use rustmq::config::{EtlConfig, ReplicationConfig, ScalingConfig};
 use rustmq::controller::service::{ControllerService, CreateTopicRequest, TopicConfig};
 use rustmq::etl::processor::{DataFormat, EtlPipeline, MockEtlProcessor, ModuleConfig};
 use rustmq::network::grpc_server::{BrokerReplicationRpc, BrokerReplicationServiceImpl};
 use rustmq::replication::ReplicationManager;
 use rustmq::replication::manager::MockReplicationRpcClient;
 use rustmq::replication::traits::ReplicationManager as ReplicationManagerTrait;
-use rustmq::storage::{AlignedBufferPool, DirectIOWal};
+use rustmq::storage::RecordLog;
 use rustmq::types::*;
 use std::sync::Arc;
-use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
+
+/// In-memory RecordLog backing end-to-end replication tests after the storage refactor.
+struct MockRecordLog {
+    records: parking_lot::Mutex<Vec<WalRecord>>,
+}
+
+impl MockRecordLog {
+    fn new() -> Self {
+        Self {
+            records: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RecordLog for MockRecordLog {
+    async fn append(&self, record: &WalRecord) -> rustmq::Result<()> {
+        self.records.lock().push(record.clone());
+        Ok(())
+    }
+
+    async fn sync(&self) -> rustmq::Result<()> {
+        Ok(())
+    }
+
+    fn next_offset(&self, tp: &TopicPartition) -> Offset {
+        self.records
+            .lock()
+            .iter()
+            .filter(|r| &r.topic_partition == tp)
+            .map(|r| r.offset + 1)
+            .max()
+            .unwrap_or(0)
+    }
+}
 
 #[tokio::test]
 async fn test_full_system_integration() {
-    // Setup temporary directory for WAL
-    let temp_dir = TempDir::new().unwrap();
-    let wal_config = WalConfig {
-        path: temp_dir.path().to_path_buf(),
-        capacity_bytes: 1024 * 1024,
-        fsync_on_write: false,
-        segment_size_bytes: 64 * 1024,
-        buffer_size: 4096,
-        upload_interval_ms: 60_000,
-        flush_interval_ms: 1000,
-    };
-
-    // Setup storage layer
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
+    let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
     // Setup controller service
     let scaling_config = ScalingConfig {
@@ -234,20 +254,7 @@ async fn test_full_system_integration() {
 
 #[tokio::test]
 async fn test_failure_recovery_scenarios() {
-    // Setup basic components
-    let temp_dir = TempDir::new().unwrap();
-    let wal_config = WalConfig {
-        path: temp_dir.path().to_path_buf(),
-        capacity_bytes: 1024 * 1024,
-        fsync_on_write: false,
-        segment_size_bytes: 64 * 1024,
-        buffer_size: 4096,
-        upload_interval_ms: 60_000,
-        flush_interval_ms: 1000,
-    };
-
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
+    let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
     let scaling_config = ScalingConfig {
         max_concurrent_additions: 3,
@@ -351,19 +358,7 @@ async fn test_failure_recovery_scenarios() {
 
 #[tokio::test]
 async fn test_concurrent_system_operations() {
-    let temp_dir = TempDir::new().unwrap();
-    let wal_config = WalConfig {
-        path: temp_dir.path().to_path_buf(),
-        capacity_bytes: 1024 * 1024,
-        fsync_on_write: false,
-        segment_size_bytes: 64 * 1024,
-        buffer_size: 4096,
-        upload_interval_ms: 60_000,
-        flush_interval_ms: 1000,
-    };
-
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
+    let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
     let scaling_config = ScalingConfig {
         max_concurrent_additions: 3,
@@ -571,19 +566,7 @@ async fn test_system_configuration_updates() {
 
 #[tokio::test]
 async fn test_data_consistency_across_components() {
-    let temp_dir = TempDir::new().unwrap();
-    let wal_config = WalConfig {
-        path: temp_dir.path().to_path_buf(),
-        capacity_bytes: 1024 * 1024,
-        fsync_on_write: false,
-        segment_size_bytes: 64 * 1024,
-        buffer_size: 4096,
-        upload_interval_ms: 60_000,
-        flush_interval_ms: 1000,
-    };
-
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
+    let wal = Arc::new(MockRecordLog::new()) as Arc<dyn RecordLog>;
 
     let scaling_config = ScalingConfig {
         max_concurrent_additions: 3,

@@ -1100,32 +1100,44 @@ impl SecureQuicServer {
             RequestType::FindCoordinator => {
                 if let Ok(request) = bincode::deserialize::<FindCoordinatorRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
             RequestType::JoinGroup => {
                 if let Ok(request) = bincode::deserialize::<JoinGroupRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
             RequestType::ConsumerHeartbeat => {
                 if let Ok(request) = bincode::deserialize::<ConsumerHeartbeatRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
             RequestType::CommitOffset => {
                 if let Ok(request) = bincode::deserialize::<CommitOffsetRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
             RequestType::FetchOffset => {
                 if let Ok(request) = bincode::deserialize::<FetchOffsetRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
             RequestType::LeaveGroup => {
                 if let Ok(request) = bincode::deserialize::<LeaveGroupRequest>(data) {
                     format!("consumer_group:{}", request.group_id)
-                } else { "cluster:consumer_group".to_string() }
+                } else {
+                    "cluster:consumer_group".to_string()
+                }
             }
         }
     }
@@ -1139,9 +1151,9 @@ impl SecureQuicServer {
             RequestType::FindCoordinator
             | RequestType::ConsumerHeartbeat
             | RequestType::FetchOffset => crate::security::Permission::Read,
-            RequestType::CommitOffset
-            | RequestType::JoinGroup
-            | RequestType::LeaveGroup => crate::security::Permission::Write,
+            RequestType::CommitOffset | RequestType::JoinGroup | RequestType::LeaveGroup => {
+                crate::security::Permission::Write
+            }
         }
     }
 

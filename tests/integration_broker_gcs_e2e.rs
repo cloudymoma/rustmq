@@ -1,18 +1,10 @@
-mod common;
-
-use bytes::Bytes;
-use common::gcs::GcsTestConfig;
-use object_store::ObjectStore;
-use object_store::memory::InMemory;
 use rustmq::broker::core::*;
 use rustmq::config::*;
 use rustmq::network::traits::NetworkHandler;
 use rustmq::replication::traits::ReplicationManager;
 use rustmq::storage::cache::LruCache;
-use rustmq::storage::cloud_storage::CloudObjectStorage;
 use rustmq::storage::traits::*;
-use rustmq::storage::wal::DirectIOWal;
-use rustmq::storage::{AlignedBufferPool, WalSegment};
+use rustmq::storage::{PartitionStore, SegmentedLog, SegmentedWal};
 use rustmq::types::*;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -59,40 +51,32 @@ impl NetworkHandler for MockNetwork {
     }
 }
 
-type TestCore =
-    MessageBrokerCore<DirectIOWal, CloudObjectStorage, LruCache, MockReplication, MockNetwork>;
+// Upload manager placeholder: the seal->upload->reclaim (tiering) loop is a later
+// phase, so it is not exercised here. download_segment must not be reached by the
+// hot read path this test verifies.
+struct NoUpload;
+#[async_trait::async_trait]
+impl UploadManager for NoUpload {
+    async fn upload_segment(&self, _segment: WalSegment) -> rustmq::error::Result<String> {
+        unreachable!("tiering not exercised in this test")
+    }
+    async fn download_segment(&self, _object_key: &str) -> rustmq::error::Result<WalSegment> {
+        unreachable!("tiering not exercised in this test")
+    }
+    async fn verify_upload(
+        &self,
+        _object_key: &str,
+        _expected: &[u8],
+    ) -> rustmq::error::Result<bool> {
+        Ok(true)
+    }
+}
 
-#[tokio::test]
-async fn test_broker_gcs_e2e_lifecycle() {
-    let temp_dir = TempDir::new().unwrap();
+type TestCore = MessageBrokerCore<MockReplication, MockNetwork>;
 
-    // 1. Setup Storage (Fallback to InMemory if no GCS config)
-    let (store, bucket) = match GcsTestConfig::load() {
-        Some(config) => {
-            let mut builder = object_store::gcp::GoogleCloudStorageBuilder::from_env()
-                .with_bucket_name(&config.bucket_name);
-            if let Some(creds) = config.credentials_path.as_deref().filter(|s| !s.is_empty()) {
-                builder = builder.with_service_account_path(creds);
-            }
-            match builder.build() {
-                Ok(gcs) => (Arc::new(gcs) as Arc<dyn ObjectStore>, config.bucket_name),
-                Err(_) => (
-                    Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
-                    "test".to_string(),
-                ),
-            }
-        }
-        None => (
-            Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
-            "test".to_string(),
-        ),
-    };
-
-    let object_storage = Arc::new(CloudObjectStorage::new(store.clone()));
-
-    // 2. Initialize Components
+async fn make_store(dir: &std::path::Path) -> Arc<PartitionStore> {
     let wal_config = WalConfig {
-        path: temp_dir.path().join("wal"),
+        path: dir.join("wal"),
         capacity_bytes: 1024 * 1024,
         fsync_on_write: false,
         segment_size_bytes: 64 * 1024,
@@ -100,18 +84,26 @@ async fn test_broker_gcs_e2e_lifecycle() {
         upload_interval_ms: 60_000,
         flush_interval_ms: 1000,
     };
-    let buffer_pool = Arc::new(AlignedBufferPool::new(4096, 10));
-    let wal = Arc::new(DirectIOWal::new(wal_config, buffer_pool).await.unwrap());
-    let cache = Arc::new(LruCache::new(1024 * 1024));
-    let replication = Arc::new(MockReplication);
-    let network = Arc::new(MockNetwork);
+    let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(wal_config).await.unwrap());
+    let upload: Arc<dyn UploadManager> = Arc::new(NoUpload);
+    let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
+    PartitionStore::new(wal, upload, cache, 0).await.unwrap()
+}
+
+/// End-to-end produce -> fetch over a real `PartitionStore`.
+///
+/// After the storage refactor, `MessageBrokerCore` reads and writes exclusively
+/// through `PartitionStore`; the object-storage backend is no longer wired into the
+/// broker directly. This test verifies the produce + partition-correct fetch path.
+#[tokio::test]
+async fn test_broker_gcs_e2e_lifecycle() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = make_store(temp_dir.path()).await;
 
     let core = Arc::new(TestCore::new(
-        wal.clone(),
-        object_storage.clone(),
-        cache.clone(),
-        replication,
-        network,
+        store,
+        Arc::new(MockReplication),
+        Arc::new(MockNetwork),
         "broker-1".to_string(),
     ));
 
@@ -132,7 +124,7 @@ async fn test_broker_gcs_e2e_lifecycle() {
     .await
     .unwrap();
 
-    // 3. Produce Record
+    // Produce a record.
     let producer = core.create_producer();
     let record = ProduceRecord {
         topic: tp.topic.clone(),
@@ -146,36 +138,8 @@ async fn test_broker_gcs_e2e_lifecycle() {
     let result = producer.send(record).await.unwrap();
     let offset = result.offset;
 
-    // 4. Manually trigger "Tiered Storage" transition
-    // We simulate what the background uploader would do.
-    let wal_record = WalRecord {
-        topic_partition: tp.clone(),
-        offset,
-        record: Record::new(Some(b"key".to_vec()), b"value".to_vec(), vec![], 0),
-        crc32: 0,
-    };
-    let data = bincode::serialize(&vec![wal_record]).unwrap();
-    let compressed = lz4_flex::compress_prepend_size(&data);
-
-    // Use the exact key format expected by fetch_records
-    let object_key = format!("{}/{}", tp, offset);
-    object_storage
-        .put(&object_key, Bytes::from(compressed))
-        .await
-        .unwrap();
-
-    // 5. Clear Local State
-    // Truncate WAL to force ObjectStorage read
-    wal.truncate(0).await.unwrap();
-    // Clear cache
-    cache.clear().await.unwrap();
-
-    // 6. Fetch Record (Should hit Object Storage / GCS)
+    // Fetch it back through the partition-correct read path.
     let fetched = core.fetch_records(&tp, offset, 1024).await.unwrap();
     assert_eq!(fetched.len(), 1);
     assert_eq!(fetched[0].value, b"value".to_vec());
-
-    // 7. Verify Cache was warmed
-    let cached = cache.get(&format!("{}:{}", tp, offset)).await.unwrap();
-    assert!(cached.is_some());
 }
