@@ -14,8 +14,8 @@ use crate::replication::grpc_client::{
 };
 use crate::replication::manager::ReplicationManager;
 use crate::storage::{
-    Cache, LocalObjectStorage, LruCache, PartitionStore, RecordLog, SegmentedLog, SegmentedWal,
-    UploadManager, UploadManagerImpl,
+    Cache, ColdIndexManifest, LocalObjectStorage, LruCache, PartitionStore, RecordLog,
+    SegmentedLog, SegmentedWal, UploadManager, UploadManagerImpl,
 };
 use crate::types::*;
 use async_trait::async_trait;
@@ -153,6 +153,13 @@ impl Broker {
             config.object_storage.clone(),
         ));
 
+        // Durable, broker-local record of tiered segments, kept in the WAL directory.
+        // Lets cold (object-storage) data be served again after a restart/failover, when
+        // the WAL only recovers un-tiered records. (The WAL dir was created by
+        // `SegmentedWal::new` above.)
+        let cold_index =
+            Arc::new(ColdIndexManifest::open(config.wal.path.join("cold_index.manifest")).await?);
+
         // Single partition-aware storage engine over the shared WAL. The hot in-memory
         // serving tier is bounded by write_cache_size_bytes; appends apply backpressure
         // (force-seal + tier) when it is full, keeping memory bounded.
@@ -161,6 +168,7 @@ impl Broker {
             upload_manager,
             cache,
             config.cache.write_cache_size_bytes,
+            cold_index,
         )
         .await?;
 

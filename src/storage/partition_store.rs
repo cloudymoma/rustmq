@@ -13,6 +13,7 @@
 //! read-your-writes requirement), bounded by `hot_cache_max_bytes` via append
 //! backpressure.
 
+use crate::storage::cold_index::ColdIndexManifest;
 use crate::storage::partition_index::{PartitionIndex, ReadPlan};
 use crate::storage::traits::{Cache, PhysicalLocation, RecordLog, UploadManager, WalSegment};
 use crate::storage::wal::SegmentedLog;
@@ -45,6 +46,10 @@ pub struct PartitionStore {
     /// Max bytes the in-memory hot tier may hold before appends apply backpressure.
     /// `0` disables the budget (unbounded — used in tests that never tier).
     hot_cache_max_bytes: u64,
+    /// Durable, broker-local record of tiered segments. Written before a tiered range
+    /// is evicted from the hot tier, and replayed on recovery so cold data stays
+    /// readable after restart/failover (the WAL only recovers un-tiered records).
+    cold_index: Arc<ColdIndexManifest>,
     /// append → tiering task: run a (possibly forced) cycle now.
     tiering_wakeup: Arc<Notify>,
     /// tiering task → blocked appends: memory was freed, re-check the budget.
@@ -52,29 +57,51 @@ pub struct PartitionStore {
 }
 
 impl PartitionStore {
-    /// Construct the store and rebuild the in-memory hot tier from any un-reclaimed WAL
-    /// segments left on disk (recovery). Tiered (object-storage) cold-index recovery is
-    /// a later phase. With a budget set, recovery may transiently exceed it until the
-    /// tiering task drains the backlog.
+    /// Construct the store and rebuild the index from both durable sources:
+    /// - the **cold** ranges from the manifest (`cold_index`) — tiered data whose WAL
+    ///   segments were reclaimed, so they exist only in object storage;
+    /// - the **hot** records from any un-reclaimed WAL segments left on disk.
+    ///
+    /// Together these restore the full per-partition offset space (and thus
+    /// `next_offset`/high-watermark) after a restart, so cold data is readable again.
+    /// The two sources are disjoint (cold = tiered/older, hot = un-tiered/newer); if a
+    /// crash left a range in both (registered but its WAL segment not yet reclaimed),
+    /// reads prefer hot and the next tiering cycle reconciles it idempotently. With a
+    /// budget set, recovery may transiently exceed it until tiering drains the backlog.
     pub async fn new(
         wal: Arc<dyn SegmentedLog>,
         upload_manager: Arc<dyn UploadManager>,
         cache: Arc<dyn Cache>,
         hot_cache_max_bytes: u64,
+        cold_index: Arc<ColdIndexManifest>,
     ) -> Result<Arc<Self>> {
         let index = Arc::new(PartitionIndex::new());
+
+        // Cold first: restore tiered ranges from the durable manifest.
+        for seg in cold_index.load().await? {
+            index.insert_cold(
+                &seg.topic_partition,
+                seg.start_offset,
+                seg.end_offset,
+                seg.object_key,
+            );
+        }
+
+        // Hot: re-index un-tiered records still in the WAL.
         for (record, _loc) in wal.recover().await? {
             let size = mem_size(&record);
             let tp = record.topic_partition.clone();
             let offset = record.offset;
             index.insert_hot(&tp, offset, Arc::new(record), size);
         }
+
         Ok(Arc::new(Self {
             wal,
             index,
             upload_manager,
             cache,
             hot_cache_max_bytes,
+            cold_index,
             tiering_wakeup: Arc::new(Notify::new()),
             memory_available: Arc::new(Notify::new()),
         }))
@@ -251,9 +278,9 @@ impl PartitionStore {
     /// `(partition, offset-range)`, flip the index to cold (which evicts those records
     /// from the hot tier), then reclaim the segment.
     ///
-    /// Idempotent: re-uploading the same key and re-flipping the same range are no-ops,
-    /// so a crash before `delete_segment` is safely retried after recovery re-indexes
-    /// the segment as hot.
+    /// Idempotent: re-uploading the same key, re-registering the same range in the
+    /// manifest, and re-flipping the same range are all no-ops, so a crash anywhere in
+    /// this sequence is safely retried after recovery re-indexes the segment as hot.
     async fn tier_segment(&self, seq: u64) -> Result<()> {
         let records = self.wal.read_segment_records(seq).await?;
         if records.is_empty() {
@@ -284,6 +311,11 @@ impl PartitionStore {
                 topic_partition: tp.clone(),
             };
             let object_key = self.upload_manager.upload_segment(segment).await?;
+            // Durably record the tiered range BEFORE evicting its in-memory copy, so a
+            // crash can never leave cold data without an offset→object mapping.
+            self.cold_index
+                .register(&tp, start_offset, end_offset, &object_key)
+                .await?;
             self.index
                 .flip_to_cold(&tp, start_offset, end_offset, object_key);
         }
@@ -407,13 +439,23 @@ mod tests {
         }
     }
 
+    async fn manifest(dir: &std::path::Path) -> Arc<ColdIndexManifest> {
+        Arc::new(
+            ColdIndexManifest::open(dir.join("cold.manifest"))
+                .await
+                .unwrap(),
+        )
+    }
+
     async fn make_store(dir: &std::path::Path) -> Arc<PartitionStore> {
         let wal: Arc<dyn SegmentedLog> =
             Arc::new(SegmentedWal::new(wal_config(dir)).await.unwrap());
         let upload: Arc<dyn UploadManager> = Arc::new(UnusedUploadManager);
         let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
         // Unbounded hot tier (0): hot-path tests never tier.
-        PartitionStore::new(wal, upload, cache, 0).await.unwrap()
+        PartitionStore::new(wal, upload, cache, 0, manifest(dir).await)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -463,7 +505,9 @@ mod tests {
         let wal: Arc<dyn SegmentedLog> = Arc::new(PanicOnReadAtWal(inner));
         let upload: Arc<dyn UploadManager> = Arc::new(UnusedUploadManager);
         let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
-        let store = PartitionStore::new(wal, upload, cache, 0).await.unwrap();
+        let store = PartitionStore::new(wal, upload, cache, 0, manifest(dir.path()).await)
+            .await
+            .unwrap();
 
         let a = TopicPartition {
             topic: "topic".into(),
@@ -573,9 +617,15 @@ mod tests {
         let upload: Arc<dyn UploadManager> =
             Arc::new(UploadManagerImpl::new(object_storage, obj_config(obj_dir)));
         let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
-        PartitionStore::new(wal, upload, cache, hot_cache_max_bytes)
-            .await
-            .unwrap()
+        PartitionStore::new(
+            wal,
+            upload,
+            cache,
+            hot_cache_max_bytes,
+            manifest(wal_dir).await,
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
@@ -675,6 +725,113 @@ mod tests {
         let records = store2.read(&a, 0, 1_000_000).await.unwrap();
         assert_eq!(records.len(), 4);
         assert_eq!(records[2].record.value.as_ref(), b"A2");
+    }
+
+    #[tokio::test]
+    async fn cold_index_survives_restart() {
+        // Phase 5 headline: after data is fully tiered (WAL segment uploaded AND
+        // reclaimed), a restart must still serve it. The cold offset→object mapping
+        // comes only from the durable manifest — the WAL no longer has these records.
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+        {
+            let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 256, 0).await;
+            for i in 0..6u64 {
+                store
+                    .append(&rec("t", 0, i, format!("A{i}").as_bytes()))
+                    .await
+                    .unwrap();
+            }
+            store.run_tiering_cycle().await.unwrap();
+            assert_eq!(
+                store.index().hot_bytes(),
+                0,
+                "all data must be tiered (cold) before restart"
+            );
+            store.sync().await.unwrap();
+        }
+
+        // Restart: a fresh store over the same WAL dir (manifest lives here) + objects.
+        let store2 = make_tiered_store(wal_dir.path(), obj_dir.path(), 256, 0).await;
+
+        // High-watermark restored from the manifest alone (WAL has no hot records).
+        assert_eq!(store2.next_offset(&a), 6);
+        assert_eq!(store2.index().hot_bytes(), 0);
+        // Reads resolve cold (object storage), not the WAL.
+        assert!(matches!(
+            store2.index().read_plan(&a, 0, 1_000_000),
+            ReadPlan::Cold { .. }
+        ));
+
+        let records = store2.read(&a, 0, 1_000_000).await.unwrap();
+        assert_eq!(records.len(), 6, "cold data must survive restart");
+        for (i, r) in records.iter().enumerate() {
+            assert_eq!(r.offset, i as u64);
+            assert_eq!(r.record.value.as_ref(), format!("A{i}").as_bytes());
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_cold_and_hot_after_restart() {
+        // A restart must stitch together cold ranges (manifest) and un-tiered hot
+        // records (WAL) into one continuous offset space.
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+        {
+            let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 256, 0).await;
+            for i in 0..6u64 {
+                store
+                    .append(&rec("t", 0, i, format!("A{i}").as_bytes()))
+                    .await
+                    .unwrap();
+            }
+            store.run_tiering_cycle().await.unwrap(); // 0..6 -> cold
+            assert_eq!(store.index().hot_bytes(), 0);
+            // More records that stay hot (sealed + synced, but not tiered).
+            for i in 6..10u64 {
+                store
+                    .append(&rec("t", 0, i, format!("A{i}").as_bytes()))
+                    .await
+                    .unwrap();
+            }
+            store.wal().maybe_seal().await.unwrap();
+            store.sync().await.unwrap();
+        }
+
+        let store2 = make_tiered_store(wal_dir.path(), obj_dir.path(), 256, 0).await;
+        assert_eq!(store2.next_offset(&a), 10);
+        // 0..6 cold (from manifest), 6..10 hot (from WAL).
+        assert!(matches!(
+            store2.index().read_plan(&a, 0, 1_000_000),
+            ReadPlan::Cold { .. }
+        ));
+        assert!(matches!(
+            store2.index().read_plan(&a, 6, 1_000_000),
+            ReadPlan::Hot(_)
+        ));
+
+        // Read the whole partition back, hopping batches across the cold→hot boundary.
+        let mut all = Vec::new();
+        let mut off = 0u64;
+        while off < 10 {
+            let batch = store2.read(&a, off, 1_000_000).await.unwrap();
+            assert!(!batch.is_empty(), "no records at offset {off}");
+            off = batch.last().unwrap().offset + 1;
+            all.extend(batch);
+        }
+        assert_eq!(all.len(), 10);
+        for (i, r) in all.iter().enumerate() {
+            assert_eq!(r.offset, i as u64);
+            assert_eq!(r.record.value.as_ref(), format!("A{i}").as_bytes());
+        }
     }
 
     #[tokio::test]

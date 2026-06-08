@@ -87,7 +87,14 @@ async fn make_store(dir: &std::path::Path) -> Arc<PartitionStore> {
     let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(wal_config).await.unwrap());
     let upload: Arc<dyn UploadManager> = Arc::new(NoUpload);
     let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
-    PartitionStore::new(wal, upload, cache, 0).await.unwrap()
+    let cold_index = Arc::new(
+        rustmq::storage::ColdIndexManifest::open(dir.join("cold.manifest"))
+            .await
+            .unwrap(),
+    );
+    PartitionStore::new(wal, upload, cache, 0, cold_index)
+        .await
+        .unwrap()
 }
 
 /// End-to-end produce -> fetch over a real `PartitionStore`.

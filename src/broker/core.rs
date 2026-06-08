@@ -592,7 +592,14 @@ mod tests {
         let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(config).await.unwrap());
         let upload: Arc<dyn UploadManager> = Arc::new(UnusedUploadManager);
         let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
-        let store = PartitionStore::new(wal, upload, cache, 0).await.unwrap();
+        let cold_index = Arc::new(
+            crate::storage::ColdIndexManifest::open(dir.join("cold.manifest"))
+                .await
+                .unwrap(),
+        );
+        let store = PartitionStore::new(wal, upload, cache, 0, cold_index)
+            .await
+            .unwrap();
         Arc::new(MessageBrokerCore::new(
             store,
             Arc::new(MockReplicationManager),

@@ -150,6 +150,32 @@ impl PartitionIndex {
         entries.next_offset = entries.next_offset.max(end_offset);
     }
 
+    /// Insert a cold range learned during recovery from the durable manifest, without
+    /// evicting any hot entries (there are none for an already-tiered range). Bumps
+    /// `next_offset` so a partition whose recent data is entirely cold still reports the
+    /// correct high-watermark. Idempotent: re-inserting the same range overwrites it.
+    ///
+    /// Distinct from [`flip_to_cold`](Self::flip_to_cold), which is the *live* tiering
+    /// path and additionally evicts the now-tiered hot records.
+    pub fn insert_cold(
+        &self,
+        tp: &TopicPartition,
+        start_offset: Offset,
+        end_offset: Offset,
+        object_key: String,
+    ) {
+        let mut guard = self.inner.write();
+        let entries = guard.entry(tp.clone()).or_default();
+        entries.cold.insert(
+            start_offset,
+            ObjectRange {
+                end_offset,
+                object_key,
+            },
+        );
+        entries.next_offset = entries.next_offset.max(end_offset);
+    }
+
     /// Total bytes currently held in the in-memory hot tier (across all partitions).
     pub fn hot_bytes(&self) -> u64 {
         self.hot_bytes.load(Ordering::Relaxed)
@@ -368,6 +394,39 @@ mod tests {
         assert_eq!(idx.hot_bytes(), 0); // no double-subtraction
         match idx.read_plan(&a, 0, 1000) {
             ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "k"),
+            other => panic!("expected Cold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn insert_cold_recovers_range_without_hot() {
+        // Recovery path: a fully-tiered partition (no hot records, WAL segment gone) is
+        // restored from the manifest. The range resolves cold and next_offset is set.
+        let idx = PartitionIndex::new();
+        let a = tp("a", 0);
+        idx.insert_cold(&a, 0, 5, "topics/a/0/0_5".to_string());
+        idx.insert_cold(&a, 5, 9, "topics/a/0/5_9".to_string());
+
+        assert_eq!(idx.hot_bytes(), 0);
+        assert_eq!(
+            idx.next_offset(&a),
+            9,
+            "next_offset (HW source) restored from cold"
+        );
+        match idx.read_plan(&a, 2, 1000) {
+            ReadPlan::Cold {
+                object_key,
+                start_offset,
+                end_offset,
+            } => {
+                assert_eq!(object_key, "topics/a/0/0_5");
+                assert_eq!(start_offset, 0);
+                assert_eq!(end_offset, 5);
+            }
+            other => panic!("expected Cold, got {other:?}"),
+        }
+        match idx.read_plan(&a, 6, 1000) {
+            ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "topics/a/0/5_9"),
             other => panic!("expected Cold, got {other:?}"),
         }
     }

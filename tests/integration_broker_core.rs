@@ -42,7 +42,12 @@ async fn make_store(dir: &std::path::Path) -> Arc<rustmq::storage::PartitionStor
         Arc::new(rustmq::storage::SegmentedWal::new(cfg).await.unwrap());
     let upload: Arc<dyn UploadManager> = Arc::new(NoUpload);
     let cache: Arc<dyn Cache> = Arc::new(rustmq::storage::LruCache::new(1 << 20));
-    rustmq::storage::PartitionStore::new(wal, upload, cache, 0)
+    let cold_index = Arc::new(
+        rustmq::storage::ColdIndexManifest::open(dir.join("cold.manifest"))
+            .await
+            .unwrap(),
+    );
+    rustmq::storage::PartitionStore::new(wal, upload, cache, 0, cold_index)
         .await
         .unwrap()
 }
