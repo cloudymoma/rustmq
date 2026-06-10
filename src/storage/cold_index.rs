@@ -16,19 +16,26 @@
 //!
 //! ## Format & crash-safety
 //! Append-only log of length-prefixed, CRC-checked frames:
-//! `[u32 LE body_len][bincode(ColdSegment) body][u32 LE crc32(body)]`.
-//! [`register`](ColdIndexManifest::register) appends one frame and `fsync`s before
-//! returning, so the caller can safely evict the in-memory hot copy afterwards.
+//! `[u32 LE body_len][bincode(ManifestRecord) body][u32 LE crc32(body)]`. Each frame is
+//! one [`ManifestRecord`]: a [`Register`](ManifestRecord::Register) of a freshly tiered
+//! range, or a [`Compact`](ManifestRecord::Compact) recording that several adjacent ranges
+//! were merged into one object.
+//! [`register`](ColdIndexManifest::register) and
+//! [`record_compaction`](ColdIndexManifest::record_compaction) each append one frame and
+//! `fsync` before returning, so the caller can safely mutate/evict the in-memory copy
+//! afterwards.
 //! [`load`](ColdIndexManifest::load) replays frames up to the first torn or corrupt one
-//! (a partially-written tail from a crash) and **truncates that tail off** so later
-//! appends are not stranded behind it. A `register` that did not fully persist means its
-//! WAL segment was never reclaimed, so recovery re-indexes it hot and the next tiering
-//! cycle re-uploads + re-registers it idempotently — no data or index loss. Duplicate
-//! frames are harmless: replay is idempotent.
+//! (a partially-written tail from a crash), **truncates that tail off** so later appends
+//! are not stranded behind it, and **folds** the log into the final live set (applying
+//! each `Compact` by replacing the merged range's source entries) plus the set of orphaned
+//! source-object keys to garbage-collect. A `register`/`record_compaction` that did not
+//! fully persist leaves its source state intact, so the next cycle re-runs idempotently —
+//! no data or index loss. Replay is idempotent; duplicate frames are harmless.
 
 use crate::Result;
 use crate::types::{Offset, TopicPartition};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -36,13 +43,40 @@ use tokio::sync::Mutex;
 
 /// A tiered, contiguous offset range `[start_offset, end_offset)` of one partition,
 /// stored as a single object. Mirrors the in-memory cold entry, plus the partition
-/// (the manifest is flat across all of this broker's partitions).
+/// (the manifest is flat across all of this broker's partitions). `size_bytes` is the
+/// uploaded object's size, used by compaction to cheaply identify small objects without
+/// downloading them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColdSegment {
     pub topic_partition: TopicPartition,
     pub start_offset: Offset,
     pub end_offset: Offset,
     pub object_key: String,
+    pub size_bytes: u64,
+}
+
+/// One durable entry in the manifest log. Tagged so the append-only log can express both
+/// new tiered ranges and compactions (N ranges → 1 object) without rewriting history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ManifestRecord {
+    /// A freshly tiered offset range and its object.
+    Register(ColdSegment),
+    /// Several adjacent ranges were merged into `merged`'s single object; `sources` are
+    /// the now-superseded object keys to garbage-collect. Replaying this replaces every
+    /// live entry within `[merged.start_offset, merged.end_offset)` with `merged`.
+    Compact {
+        merged: ColdSegment,
+        sources: Vec<String>,
+    },
+}
+
+/// The folded result of replaying the manifest: the live cold segments (one per current
+/// object), and the object keys that compaction superseded and that should be deleted from
+/// object storage (idempotently) during recovery.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LoadResult {
+    pub live: Vec<ColdSegment>,
+    pub orphan_object_keys: Vec<String>,
 }
 
 /// Append-only, fsync-durable manifest of this broker's tiered segments.
@@ -78,18 +112,37 @@ impl ColdIndexManifest {
         start_offset: Offset,
         end_offset: Offset,
         object_key: &str,
+        size_bytes: u64,
     ) -> Result<()> {
         let seg = ColdSegment {
             topic_partition: tp.clone(),
             start_offset,
             end_offset,
             object_key: object_key.to_string(),
+            size_bytes,
         };
-        let body = bincode::serialize(&seg)?;
+        self.append_record(&ManifestRecord::Register(seg)).await
+    }
+
+    /// Durably record that `sources` were merged into `merged`'s single object. Returns
+    /// only after the frame is `fsync`ed, so the caller may then flip the in-memory index
+    /// to the merged object and delete the source objects.
+    pub async fn record_compaction(
+        &self,
+        merged: ColdSegment,
+        sources: Vec<String>,
+    ) -> Result<()> {
+        self.append_record(&ManifestRecord::Compact { merged, sources })
+            .await
+    }
+
+    /// Append one length-prefixed, CRC-checked frame and `fsync`. The frame is assembled
+    /// into a single buffer so one `write_all` emits it whole (no partial-frame
+    /// interleaving with a concurrent writer holding the same lock).
+    async fn append_record(&self, record: &ManifestRecord) -> Result<()> {
+        let body = bincode::serialize(record)?;
         let crc = crc32fast::hash(&body);
 
-        // Frame: [len][body][crc]. Assembled into one buffer so a single write_all
-        // emits the whole frame (no partial-frame interleaving with other writers).
         let mut frame = Vec::with_capacity(8 + body.len());
         frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
         frame.extend_from_slice(&body);
@@ -101,27 +154,34 @@ impl ColdIndexManifest {
         Ok(())
     }
 
-    /// Replay all durably-written segments, in append order, returning everything up to
-    /// the first torn or CRC-mismatched frame, then **truncate that torn tail off the
-    /// file**.
+    /// Replay all durably-written frames in append order and **fold** them into the final
+    /// state: the live cold segments and the orphaned source-object keys to garbage-collect
+    /// (see [`LoadResult`]). Stops at the first torn or CRC-mismatched frame (a
+    /// partially-written tail from a crash) and **truncates that torn tail off the file**.
     ///
     /// Truncation is essential, not cosmetic: recovery after a crash re-tiers the
-    /// orphaned WAL segment and `register`s the result, which appends *after* whatever
-    /// was at the tail. If a torn frame were merely skipped (not removed), the new entry
-    /// would sit behind it and the next `load` would stop at the torn frame and lose the
-    /// new entry — making cold data tiered after the crash unreadable. Removing the torn
-    /// tail here (before any `register`) guarantees later appends land in a clean file.
+    /// orphaned WAL segment and appends a new frame *after* whatever was at the tail. If a
+    /// torn frame were merely skipped (not removed), the new entry would sit behind it and
+    /// the next `load` would stop at the torn frame and lose it — making cold data written
+    /// after the crash unreadable. Removing the torn tail here (before any append)
+    /// guarantees later appends land in a clean file.
     ///
-    /// Must be called once at startup, before any `register` — it mutates the file and
-    /// assumes no concurrent appends.
-    pub async fn load(&self) -> Result<Vec<ColdSegment>> {
+    /// Folding: a `Register` inserts/overwrites its range; a `Compact` replaces every live
+    /// entry within `[merged.start, merged.end)` with `merged` and adds its `sources` to
+    /// the orphan set. Applying in append order is deterministic and idempotent (a
+    /// re-applied `Compact` is a no-op once its sources are gone). The live set is returned
+    /// sorted by `(topic, partition, start_offset)`.
+    ///
+    /// Must be called once at startup, before any append — it mutates the file and assumes
+    /// no concurrent writers.
+    pub async fn load(&self) -> Result<LoadResult> {
         let bytes = match tokio::fs::read(&self.path).await {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LoadResult::default()),
             Err(e) => return Err(e.into()),
         };
 
-        let mut out = Vec::new();
+        let mut records = Vec::new();
         let mut pos = 0usize;
         while pos + 4 <= bytes.len() {
             let len = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
@@ -142,8 +202,8 @@ impl ColdIndexManifest {
             if crc32fast::hash(body) != stored_crc {
                 break; // corrupt/torn frame
             }
-            match bincode::deserialize::<ColdSegment>(body) {
-                Ok(seg) => out.push(seg),
+            match bincode::deserialize::<ManifestRecord>(body) {
+                Ok(rec) => records.push(rec),
                 Err(_) => break, // unparseable frame
             }
             pos = frame_end;
@@ -163,7 +223,60 @@ impl ColdIndexManifest {
             );
         }
 
-        Ok(out)
+        Ok(Self::fold(records))
+    }
+
+    /// Fold an in-append-order list of records into the final live set + orphan keys.
+    /// Pure (no I/O) so it is trivially unit-testable.
+    fn fold(records: Vec<ManifestRecord>) -> LoadResult {
+        // Per partition, live segments keyed by start offset (disjoint, contiguous).
+        let mut live: HashMap<TopicPartition, BTreeMap<Offset, ColdSegment>> = HashMap::new();
+        let mut orphan_object_keys = Vec::new();
+
+        for record in records {
+            match record {
+                ManifestRecord::Register(seg) => {
+                    live.entry(seg.topic_partition.clone())
+                        .or_default()
+                        .insert(seg.start_offset, seg);
+                }
+                ManifestRecord::Compact { merged, sources } => {
+                    let entries = live.entry(merged.topic_partition.clone()).or_default();
+                    // Replace every entry the merge subsumed.
+                    let subsumed: Vec<Offset> = entries
+                        .range(merged.start_offset..merged.end_offset)
+                        .map(|(&k, _)| k)
+                        .collect();
+                    for k in subsumed {
+                        entries.remove(&k);
+                    }
+                    entries.insert(merged.start_offset, merged);
+                    orphan_object_keys.extend(sources);
+                }
+            }
+        }
+
+        let mut out: Vec<ColdSegment> = live
+            .into_values()
+            .flat_map(|m| m.into_values())
+            .collect();
+        out.sort_by(|a, b| {
+            (
+                &a.topic_partition.topic,
+                a.topic_partition.partition,
+                a.start_offset,
+            )
+                .cmp(&(
+                    &b.topic_partition.topic,
+                    b.topic_partition.partition,
+                    b.start_offset,
+                ))
+        });
+
+        LoadResult {
+            live: out,
+            orphan_object_keys,
+        }
     }
 }
 
@@ -185,22 +298,25 @@ mod tests {
         let m = ColdIndexManifest::open(dir.path().join("cold.manifest"))
             .await
             .unwrap();
-        m.register(&tp("t", 0), 0, 5, "topics/t/0/0_5")
+        m.register(&tp("t", 0), 0, 5, "topics/t/0/0_5", 100)
             .await
             .unwrap();
-        m.register(&tp("t", 1), 0, 3, "topics/t/1/0_3")
+        m.register(&tp("t", 1), 0, 3, "topics/t/1/0_3", 60)
             .await
             .unwrap();
-        m.register(&tp("t", 0), 5, 9, "topics/t/0/5_9")
+        m.register(&tp("t", 0), 5, 9, "topics/t/0/5_9", 80)
             .await
             .unwrap();
 
-        let segs = m.load().await.unwrap();
+        // load() returns the live set sorted by (topic, partition, start_offset).
+        let segs = m.load().await.unwrap().live;
         assert_eq!(segs.len(), 3);
         assert_eq!(segs[0].object_key, "topics/t/0/0_5");
-        assert_eq!(segs[1].topic_partition, tp("t", 1));
-        assert_eq!(segs[2].start_offset, 5);
-        assert_eq!(segs[2].end_offset, 9);
+        assert_eq!(segs[0].size_bytes, 100);
+        assert_eq!(segs[1].object_key, "topics/t/0/5_9");
+        assert_eq!(segs[1].start_offset, 5);
+        assert_eq!(segs[1].end_offset, 9);
+        assert_eq!(segs[2].topic_partition, tp("t", 1));
     }
 
     #[tokio::test]
@@ -210,11 +326,11 @@ mod tests {
         let path = dir.path().join("cold.manifest");
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            m.register(&tp("t", 0), 0, 5, "k0").await.unwrap();
-            m.register(&tp("t", 0), 5, 8, "k1").await.unwrap();
+            m.register(&tp("t", 0), 0, 5, "k0", 50).await.unwrap();
+            m.register(&tp("t", 0), 5, 8, "k1", 50).await.unwrap();
         }
         let m2 = ColdIndexManifest::open(&path).await.unwrap();
-        let segs = m2.load().await.unwrap();
+        let segs = m2.load().await.unwrap().live;
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[1].object_key, "k1");
     }
@@ -227,7 +343,9 @@ mod tests {
             .unwrap();
         // open() creates the file; remove it to simulate a never-written manifest.
         std::fs::remove_file(dir.path().join("absent.manifest")).unwrap();
-        assert!(m.load().await.unwrap().is_empty());
+        let result = m.load().await.unwrap();
+        assert!(result.live.is_empty());
+        assert!(result.orphan_object_keys.is_empty());
     }
 
     #[tokio::test]
@@ -238,8 +356,8 @@ mod tests {
         let path = dir.path().join("cold.manifest");
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            m.register(&tp("t", 0), 0, 5, "good0").await.unwrap();
-            m.register(&tp("t", 0), 5, 9, "good1").await.unwrap();
+            m.register(&tp("t", 0), 0, 5, "good0", 50).await.unwrap();
+            m.register(&tp("t", 0), 5, 9, "good1", 50).await.unwrap();
         }
         // Append a bogus partial frame: a length header promising 100 bytes, then only 3.
         {
@@ -253,12 +371,8 @@ mod tests {
             f.sync_all().unwrap();
         }
         let m = ColdIndexManifest::open(&path).await.unwrap();
-        let segs = m.load().await.unwrap();
-        assert_eq!(
-            segs.len(),
-            2,
-            "torn tail must be dropped, valid prefix kept"
-        );
+        let segs = m.load().await.unwrap().live;
+        assert_eq!(segs.len(), 2, "torn tail must be dropped, valid prefix kept");
         assert_eq!(segs[1].object_key, "good1");
     }
 
@@ -274,8 +388,8 @@ mod tests {
         // Crash state: two good frames followed by a torn partial frame.
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            m.register(&tp("t", 0), 0, 5, "k0").await.unwrap();
-            m.register(&tp("t", 0), 5, 9, "k1").await.unwrap();
+            m.register(&tp("t", 0), 0, 5, "k0", 50).await.unwrap();
+            m.register(&tp("t", 0), 5, 9, "k1", 50).await.unwrap();
         }
         {
             use std::io::Write;
@@ -289,15 +403,15 @@ mod tests {
         // re-tiering registers a new segment (which must land in a clean file).
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            assert_eq!(m.load().await.unwrap().len(), 2);
-            m.register(&tp("t", 0), 9, 13, "k2").await.unwrap();
+            assert_eq!(m.load().await.unwrap().live.len(), 2);
+            m.register(&tp("t", 0), 9, 13, "k2", 50).await.unwrap();
         }
 
         // Restart #2: the post-recovery entry must survive. (Without truncation, load()
         // would still stop at the torn frame and return only 2.)
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            let segs = m.load().await.unwrap();
+            let segs = m.load().await.unwrap().live;
             assert_eq!(
                 segs.len(),
                 3,
@@ -317,8 +431,8 @@ mod tests {
         let path = dir.path().join("cold.manifest");
         {
             let m = ColdIndexManifest::open(&path).await.unwrap();
-            m.register(&tp("t", 0), 0, 5, "k0").await.unwrap();
-            m.register(&tp("t", 0), 5, 9, "k1").await.unwrap();
+            m.register(&tp("t", 0), 0, 5, "k0", 50).await.unwrap();
+            m.register(&tp("t", 0), 5, 9, "k1", 50).await.unwrap();
         }
         // Flip a byte inside the first frame's body (offset 4 = first body byte).
         let mut raw = std::fs::read(&path).unwrap();
@@ -326,10 +440,130 @@ mod tests {
         std::fs::write(&path, &raw).unwrap();
 
         let m = ColdIndexManifest::open(&path).await.unwrap();
-        let segs = m.load().await.unwrap();
+        let segs = m.load().await.unwrap().live;
         assert!(
             segs.is_empty(),
             "corruption in the first frame stops replay there"
+        );
+    }
+
+    fn seg(topic: &str, partition: u32, start: Offset, end: Offset, key: &str) -> ColdSegment {
+        ColdSegment {
+            topic_partition: tp(topic, partition),
+            start_offset: start,
+            end_offset: end,
+            object_key: key.to_string(),
+            size_bytes: (end - start) * 10,
+        }
+    }
+
+    #[test]
+    fn fold_collapses_compacted_sources_into_merged_range() {
+        // Three registered ranges, then a Compact merging the first two into one object.
+        // The fold must drop the two sources and expose the merged range plus the
+        // untouched third range; the sources become orphan keys to GC.
+        let records = vec![
+            ManifestRecord::Register(seg("t", 0, 0, 5, "k0_5")),
+            ManifestRecord::Register(seg("t", 0, 5, 9, "k5_9")),
+            ManifestRecord::Register(seg("t", 0, 9, 12, "k9_12")),
+            ManifestRecord::Compact {
+                merged: seg("t", 0, 0, 9, "k0_9"),
+                sources: vec!["k0_5".into(), "k5_9".into()],
+            },
+        ];
+        let result = ColdIndexManifest::fold(records);
+        let keys: Vec<&str> = result.live.iter().map(|s| s.object_key.as_str()).collect();
+        assert_eq!(keys, vec!["k0_9", "k9_12"], "sources replaced by merged");
+        assert_eq!(result.live[0].start_offset, 0);
+        assert_eq!(result.live[0].end_offset, 9);
+        assert_eq!(
+            result.orphan_object_keys,
+            vec!["k0_5".to_string(), "k5_9".to_string()],
+            "compacted sources are reported for GC"
+        );
+    }
+
+    #[test]
+    fn fold_is_idempotent_under_replayed_compaction() {
+        // Replaying the same Compact twice (a duplicate frame after a crash-retry) yields
+        // the same live set and does not resurrect the sources.
+        let base = vec![
+            ManifestRecord::Register(seg("t", 0, 0, 5, "k0_5")),
+            ManifestRecord::Register(seg("t", 0, 5, 9, "k5_9")),
+            ManifestRecord::Compact {
+                merged: seg("t", 0, 0, 9, "k0_9"),
+                sources: vec!["k0_5".into(), "k5_9".into()],
+            },
+        ];
+        let mut twice = base.clone();
+        twice.push(ManifestRecord::Compact {
+            merged: seg("t", 0, 0, 9, "k0_9"),
+            sources: vec!["k0_5".into(), "k5_9".into()],
+        });
+
+        let once = ColdIndexManifest::fold(base);
+        let again = ColdIndexManifest::fold(twice);
+        assert_eq!(once.live, again.live, "duplicate Compact is a no-op on live set");
+        assert_eq!(once.live.len(), 1);
+        assert_eq!(once.live[0].object_key, "k0_9");
+    }
+
+    #[test]
+    fn fold_chained_compactions_track_all_orphans() {
+        // A merged object can itself become a source of a later, larger merge. Every
+        // superseded key (including the intermediate merged one) must be reported.
+        let records = vec![
+            ManifestRecord::Register(seg("t", 0, 0, 5, "k0_5")),
+            ManifestRecord::Register(seg("t", 0, 5, 9, "k5_9")),
+            ManifestRecord::Compact {
+                merged: seg("t", 0, 0, 9, "k0_9"),
+                sources: vec!["k0_5".into(), "k5_9".into()],
+            },
+            ManifestRecord::Register(seg("t", 0, 9, 14, "k9_14")),
+            ManifestRecord::Compact {
+                merged: seg("t", 0, 0, 14, "k0_14"),
+                sources: vec!["k0_9".into(), "k9_14".into()],
+            },
+        ];
+        let result = ColdIndexManifest::fold(records);
+        assert_eq!(result.live.len(), 1);
+        assert_eq!(result.live[0].object_key, "k0_14");
+        assert_eq!(
+            result.orphan_object_keys,
+            vec![
+                "k0_5".to_string(),
+                "k5_9".to_string(),
+                "k0_9".to_string(),
+                "k9_14".to_string()
+            ]
+        );
+        // No live key is ever an orphan (a deleted source can never resurface live).
+        for live in &result.live {
+            assert!(!result.orphan_object_keys.contains(&live.object_key));
+        }
+    }
+
+    #[tokio::test]
+    async fn record_compaction_survives_reopen_and_folds() {
+        // End-to-end durability: register two ranges, record a compaction, reopen, and the
+        // folded load reflects the merge with the sources reported as orphans.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cold.manifest");
+        {
+            let m = ColdIndexManifest::open(&path).await.unwrap();
+            m.register(&tp("t", 0), 0, 5, "k0_5", 50).await.unwrap();
+            m.register(&tp("t", 0), 5, 9, "k5_9", 40).await.unwrap();
+            m.record_compaction(seg("t", 0, 0, 9, "k0_9"), vec!["k0_5".into(), "k5_9".into()])
+                .await
+                .unwrap();
+        }
+        let m2 = ColdIndexManifest::open(&path).await.unwrap();
+        let result = m2.load().await.unwrap();
+        assert_eq!(result.live.len(), 1);
+        assert_eq!(result.live[0].object_key, "k0_9");
+        assert_eq!(
+            result.orphan_object_keys,
+            vec!["k0_5".to_string(), "k5_9".to_string()]
         );
     }
 }

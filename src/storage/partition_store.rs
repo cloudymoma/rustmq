@@ -77,8 +77,8 @@ impl PartitionStore {
     ) -> Result<Arc<Self>> {
         let index = Arc::new(PartitionIndex::new());
 
-        // Cold first: restore tiered ranges from the durable manifest.
-        for seg in cold_index.load().await? {
+        // Cold first: restore tiered ranges from the durable (folded) manifest.
+        for seg in cold_index.load().await?.live {
             index.insert_cold(
                 &seg.topic_partition,
                 seg.start_offset,
@@ -303,10 +303,11 @@ impl PartitionStore {
             let start_offset = recs.first().unwrap().offset;
             let end_offset = recs.last().unwrap().offset + 1;
             let data = bincode::serialize(&recs)?;
+            let size_bytes = data.len() as u64;
             let segment = WalSegment {
                 start_offset,
                 end_offset,
-                size_bytes: data.len() as u64,
+                size_bytes,
                 data: Bytes::from(data),
                 topic_partition: tp.clone(),
             };
@@ -314,7 +315,7 @@ impl PartitionStore {
             // Durably record the tiered range BEFORE evicting its in-memory copy, so a
             // crash can never leave cold data without an offset→object mapping.
             self.cold_index
-                .register(&tp, start_offset, end_offset, &object_key)
+                .register(&tp, start_offset, end_offset, &object_key, size_bytes)
                 .await?;
             self.index
                 .flip_to_cold(&tp, start_offset, end_offset, object_key);
