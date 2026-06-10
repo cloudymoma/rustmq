@@ -127,11 +127,7 @@ impl ColdIndexManifest {
     /// Durably record that `sources` were merged into `merged`'s single object. Returns
     /// only after the frame is `fsync`ed, so the caller may then flip the in-memory index
     /// to the merged object and delete the source objects.
-    pub async fn record_compaction(
-        &self,
-        merged: ColdSegment,
-        sources: Vec<String>,
-    ) -> Result<()> {
+    pub async fn record_compaction(&self, merged: ColdSegment, sources: Vec<String>) -> Result<()> {
         self.append_record(&ManifestRecord::Compact { merged, sources })
             .await
     }
@@ -256,10 +252,7 @@ impl ColdIndexManifest {
             }
         }
 
-        let mut out: Vec<ColdSegment> = live
-            .into_values()
-            .flat_map(|m| m.into_values())
-            .collect();
+        let mut out: Vec<ColdSegment> = live.into_values().flat_map(|m| m.into_values()).collect();
         out.sort_by(|a, b| {
             (
                 &a.topic_partition.topic,
@@ -372,7 +365,11 @@ mod tests {
         }
         let m = ColdIndexManifest::open(&path).await.unwrap();
         let segs = m.load().await.unwrap().live;
-        assert_eq!(segs.len(), 2, "torn tail must be dropped, valid prefix kept");
+        assert_eq!(
+            segs.len(),
+            2,
+            "torn tail must be dropped, valid prefix kept"
+        );
         assert_eq!(segs[1].object_key, "good1");
     }
 
@@ -393,7 +390,10 @@ mod tests {
         }
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(&100u32.to_le_bytes()).unwrap(); // header promises 100 bytes
             f.write_all(b"xy").unwrap(); // only 2 delivered
             f.sync_all().unwrap();
@@ -503,7 +503,10 @@ mod tests {
 
         let once = ColdIndexManifest::fold(base);
         let again = ColdIndexManifest::fold(twice);
-        assert_eq!(once.live, again.live, "duplicate Compact is a no-op on live set");
+        assert_eq!(
+            once.live, again.live,
+            "duplicate Compact is a no-op on live set"
+        );
         assert_eq!(once.live.len(), 1);
         assert_eq!(once.live[0].object_key, "k0_9");
     }
@@ -553,9 +556,12 @@ mod tests {
             let m = ColdIndexManifest::open(&path).await.unwrap();
             m.register(&tp("t", 0), 0, 5, "k0_5", 50).await.unwrap();
             m.register(&tp("t", 0), 5, 9, "k5_9", 40).await.unwrap();
-            m.record_compaction(seg("t", 0, 0, 9, "k0_9"), vec!["k0_5".into(), "k5_9".into()])
-                .await
-                .unwrap();
+            m.record_compaction(
+                seg("t", 0, 0, 9, "k0_9"),
+                vec!["k0_5".into(), "k5_9".into()],
+            )
+            .await
+            .unwrap();
         }
         let m2 = ColdIndexManifest::open(&path).await.unwrap();
         let result = m2.load().await.unwrap();

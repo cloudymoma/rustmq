@@ -1,5 +1,5 @@
 //! Generated protobuf modules for RustMQ
-//! 
+//!
 //! This module contains all generated protobuf types and services.
 //! Generated automatically by build.rs - do not edit manually.
 
@@ -19,7 +19,7 @@ pub mod controller;
 pub use common::*;
 
 // Service re-exports
-pub use broker::broker_replication_service_server::BrokerReplicationServiceServer;
 pub use broker::broker_replication_service_client::BrokerReplicationServiceClient;
-pub use controller::controller_raft_service_server::ControllerRaftServiceServer;
+pub use broker::broker_replication_service_server::BrokerReplicationServiceServer;
 pub use controller::controller_raft_service_client::ControllerRaftServiceClient;
+pub use controller::controller_raft_service_server::ControllerRaftServiceServer;
