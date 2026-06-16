@@ -78,13 +78,26 @@ impl PartitionStore {
         let index = Arc::new(PartitionIndex::new());
 
         // Cold first: restore tiered ranges from the durable (folded) manifest.
-        for seg in cold_index.load().await?.live {
+        let load_result = cold_index.load().await?;
+        for seg in load_result.live {
             index.insert_cold(
                 &seg.topic_partition,
                 seg.start_offset,
                 seg.end_offset,
                 seg.object_key,
+                seg.size_bytes,
             );
+        }
+
+        // Recovery GC: delete orphan objects (D5)
+        for key in load_result.orphan_object_keys {
+            if let Err(e) = upload_manager.delete_object(&key).await {
+                tracing::warn!(
+                    "Recovery GC: failed to delete orphan object {}: {:?}",
+                    key,
+                    e
+                );
+            }
         }
 
         // Hot: re-index un-tiered records still in the WAL.
@@ -194,41 +207,60 @@ impl PartitionStore {
         offset: Offset,
         max_bytes: usize,
     ) -> Result<Vec<WalRecord>> {
-        match self.index.read_plan(tp, offset, max_bytes) {
-            ReadPlan::Hot(records) => {
-                // Served from RAM; clone out of the Arcs (payloads are ref-counted Bytes).
-                Ok(records.iter().map(|r| (**r).clone()).collect())
-            }
-            ReadPlan::Cold { object_key, .. } => {
-                let cache_key = format!("{tp}:{offset}");
-                if let Some(bytes) = self.cache.get(&cache_key).await? {
-                    if let Ok(records) = bincode::deserialize::<Vec<WalRecord>>(&bytes) {
-                        return Ok(records);
+        let mut allow_retry = true;
+        loop {
+            match self.index.read_plan(tp, offset, max_bytes) {
+                ReadPlan::Hot(records) => {
+                    // Served from RAM; clone out of the Arcs (payloads are ref-counted Bytes).
+                    return Ok(records.iter().map(|r| (**r).clone()).collect());
+                }
+                ReadPlan::Cold { object_key, .. } => {
+                    let cache_key = format!("{tp}:{offset}");
+                    if let Some(bytes) = self.cache.get(&cache_key).await? {
+                        if let Ok(records) = bincode::deserialize::<Vec<WalRecord>>(&bytes) {
+                            return Ok(records);
+                        }
+                    }
+
+                    match self.upload_manager.download_segment(&object_key).await {
+                        Ok(segment) => {
+                            let all: Vec<WalRecord> =
+                                bincode::deserialize(&segment.data).map_err(|e| {
+                                    RustMqError::Storage(format!(
+                                        "failed to decode cold segment {object_key}: {e}"
+                                    ))
+                                })?;
+
+                            let mut out = Vec::new();
+                            let mut bytes_acc = 0usize;
+                            for record in all.into_iter().filter(|r| r.offset >= offset) {
+                                let sz = mem_size(&record) as usize;
+                                if !out.is_empty() && bytes_acc + sz > max_bytes {
+                                    break;
+                                }
+                                bytes_acc += sz;
+                                out.push(record);
+                            }
+
+                            if let Ok(serialized) = bincode::serialize(&out) {
+                                let _ = self.cache.put(&cache_key, Bytes::from(serialized)).await;
+                            }
+                            return Ok(out);
+                        }
+                        Err(RustMqError::NotFound(_)) if allow_retry => {
+                            // Object was likely compacted. Re-resolve read plan and retry once.
+                            tracing::info!(
+                                "Cold object {} not found, retrying read plan",
+                                object_key
+                            );
+                            let _ = self.cache.remove(&cache_key).await;
+                            allow_retry = false;
+                        }
+                        Err(e) => return Err(e),
                     }
                 }
-
-                let segment = self.upload_manager.download_segment(&object_key).await?;
-                let all: Vec<WalRecord> = bincode::deserialize(&segment.data).map_err(|e| {
-                    RustMqError::Storage(format!("failed to decode cold segment {object_key}: {e}"))
-                })?;
-
-                let mut out = Vec::new();
-                let mut bytes_acc = 0usize;
-                for record in all.into_iter().filter(|r| r.offset >= offset) {
-                    let sz = mem_size(&record) as usize;
-                    if !out.is_empty() && bytes_acc + sz > max_bytes {
-                        break;
-                    }
-                    bytes_acc += sz;
-                    out.push(record);
-                }
-
-                if let Ok(serialized) = bincode::serialize(&out) {
-                    let _ = self.cache.put(&cache_key, Bytes::from(serialized)).await;
-                }
-                Ok(out)
+                ReadPlan::Empty => return Ok(Vec::new()),
             }
-            ReadPlan::Empty => Ok(Vec::new()),
         }
     }
 
@@ -248,6 +280,36 @@ impl PartitionStore {
                 let force = store.index.hot_bytes() >= store.soft_limit();
                 if let Err(e) = store.tier_once(force).await {
                     tracing::error!("tiering cycle failed: {e}");
+                }
+            }
+        })
+    }
+
+    pub fn spawn_compaction_task(
+        self: &Arc<Self>,
+        config: crate::config::CompactionConfig,
+    ) -> tokio::task::JoinHandle<()> {
+        let store = Arc::clone(self);
+        tokio::spawn(async move {
+            if !config.enabled {
+                return;
+            }
+
+            let compactor = crate::storage::compaction::Compactor::new(
+                store.index.clone(),
+                store.upload_manager.clone(),
+                store.cold_index.clone(),
+                config.clone(),
+            );
+
+            let mut interval = tokio::time::interval(Duration::from_millis(config.interval_ms));
+            // Don't burst immediately on startup
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+                if let Err(e) = compactor.run_compaction_cycle().await {
+                    tracing::error!("Error during compaction cycle: {:?}", e);
                 }
             }
         })
@@ -318,7 +380,7 @@ impl PartitionStore {
                 .register(&tp, start_offset, end_offset, &object_key, size_bytes)
                 .await?;
             self.index
-                .flip_to_cold(&tp, start_offset, end_offset, object_key);
+                .flip_to_cold(&tp, start_offset, end_offset, object_key, size_bytes);
         }
 
         // All partitions uploaded+indexed; reclaim the WAL segment.
@@ -332,6 +394,12 @@ impl PartitionStore {
     }
     pub fn wal(&self) -> &Arc<dyn SegmentedLog> {
         &self.wal
+    }
+    pub fn upload_manager(&self) -> &Arc<dyn UploadManager> {
+        &self.upload_manager
+    }
+    pub fn cold_index(&self) -> &Arc<ColdIndexManifest> {
+        &self.cold_index
     }
 }
 
@@ -358,6 +426,7 @@ mod tests {
     use super::*;
     use crate::config::WalConfig;
     use crate::storage::cache::LruCache;
+    use crate::storage::cold_index::ColdSegment;
     use crate::storage::traits::WalSegment;
     use crate::storage::wal::SegmentedWal;
     use crate::types::{Record, TopicPartition};
@@ -376,6 +445,9 @@ mod tests {
         }
         async fn verify_upload(&self, _object_key: &str, _expected: &[u8]) -> Result<bool> {
             Ok(true)
+        }
+        async fn delete_object(&self, _object_key: &str) -> Result<()> {
+            panic!("delete_object must not be called on the hot path");
         }
     }
 
@@ -881,5 +953,518 @@ mod tests {
         for (i, r) in all.iter().enumerate() {
             assert_eq!(r.offset, i as u64);
         }
+    }
+
+    #[tokio::test]
+    async fn test_compaction_basic() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+        let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 1024, 0).await;
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        // Append 3 records, forcing seal and tiering after each to get 3 separate cold objects
+        for i in 0..3 {
+            store
+                .append(&rec("t", 0, i, &format!("data-{}", i).into_bytes()))
+                .await
+                .unwrap();
+            store.wal().force_seal().await.unwrap();
+            store.run_tiering_cycle().await.unwrap();
+        }
+
+        // Verify we have 3 cold segments in the index
+        let segments = store.index().get_cold_segments(&a);
+        assert_eq!(segments.len(), 3);
+
+        let source_keys: Vec<String> = segments.iter().map(|s| s.object_key.clone()).collect();
+
+        // Verify they exist in object storage
+        let storage_path = obj_dir.path().to_path_buf();
+        for key in &source_keys {
+            assert!(
+                storage_path.join(key).exists(),
+                "source object {} must exist",
+                key
+            );
+        }
+
+        // Run compaction planner
+        let config = crate::config::CompactionConfig {
+            enabled: true,
+            interval_ms: 1000,
+            small_threshold_bytes: 1000, // all are small
+            target_bytes: 5000,
+            max_sources: 5,
+        };
+
+        let compactor = crate::storage::compaction::Compactor::new(
+            store.index().clone(),
+            store.upload_manager().clone(),
+            store.cold_index().clone(),
+            config,
+        );
+
+        compactor.run_compaction_cycle().await.unwrap();
+
+        // Verify we now have 1 cold segment in the index covering the whole range [0, 3)
+        let segments_after = store.index().get_cold_segments(&a);
+        assert_eq!(segments_after.len(), 1);
+        let merged = &segments_after[0];
+        assert_eq!(merged.start_offset, 0);
+        assert_eq!(merged.end_offset, 3);
+
+        // Verify the merged object exists in object storage
+        assert!(
+            storage_path.join(&merged.object_key).exists(),
+            "merged object must exist"
+        );
+
+        // Verify source objects are deleted from storage
+        for key in &source_keys {
+            assert!(
+                !storage_path.join(key).exists(),
+                "source object {} must be deleted",
+                key
+            );
+        }
+
+        // Verify we can read the data back correctly
+        let records = store.read(&a, 0, 10000).await.unwrap();
+        assert_eq!(records.len(), 3);
+        for i in 0..3 {
+            assert_eq!(records[i].offset, i as u64);
+            assert_eq!(
+                records[i].record.value.as_ref(),
+                format!("data-{}", i).as_bytes()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compaction_non_contiguous() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        // Write to manifest directly to simulate non-contiguous cold segments
+        let m = manifest(wal_dir.path()).await;
+        m.register(&a, 0, 5, "obj-0-5", 100).await.unwrap();
+        m.register(&a, 10, 15, "obj-10-15", 100).await.unwrap();
+        drop(m);
+
+        // Reopen store to load these segments
+        let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 1024, 0).await;
+
+        let segments = store.index().get_cold_segments(&a);
+        assert_eq!(segments.len(), 2);
+
+        // Run compaction
+        let config = crate::config::CompactionConfig {
+            enabled: true,
+            interval_ms: 1000,
+            small_threshold_bytes: 1000,
+            target_bytes: 5000,
+            max_sources: 5,
+        };
+
+        let compactor = crate::storage::compaction::Compactor::new(
+            store.index().clone(),
+            store.upload_manager().clone(),
+            store.cold_index().clone(),
+            config,
+        );
+
+        compactor.run_compaction_cycle().await.unwrap();
+
+        // Verify they are NOT merged (still 2 segments)
+        let segments_after = store.index().get_cold_segments(&a);
+        assert_eq!(segments_after.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_large_segments() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+        let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 1024, 0).await;
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        // Append 3 records, forcing tiering.
+        // Record 1 will be large.
+        store.append(&rec("t", 0, 0, &[b's'; 10])).await.unwrap();
+        store.wal().force_seal().await.unwrap();
+        store.run_tiering_cycle().await.unwrap();
+
+        store.append(&rec("t", 0, 1, &[b'l'; 1200])).await.unwrap();
+        store.wal().force_seal().await.unwrap();
+        store.run_tiering_cycle().await.unwrap();
+
+        store.append(&rec("t", 0, 2, &[b's'; 10])).await.unwrap();
+        store.wal().force_seal().await.unwrap();
+        store.run_tiering_cycle().await.unwrap();
+
+        // Verify we have 3 cold segments
+        let segments = store.index().get_cold_segments(&a);
+        assert_eq!(segments.len(), 3);
+
+        assert!(segments[0].size_bytes < 1000);
+        assert!(segments[1].size_bytes > 1200);
+        assert!(segments[2].size_bytes < 1000);
+
+        // Run compaction with small_threshold = 1000
+        let config = crate::config::CompactionConfig {
+            enabled: true,
+            interval_ms: 1000,
+            small_threshold_bytes: 1000,
+            target_bytes: 5000,
+            max_sources: 5,
+        };
+
+        let compactor = crate::storage::compaction::Compactor::new(
+            store.index().clone(),
+            store.upload_manager().clone(),
+            store.cold_index().clone(),
+            config,
+        );
+
+        compactor.run_compaction_cycle().await.unwrap();
+
+        // Verify they are NOT merged (still 3 segments)
+        let segments_after = store.index().get_cold_segments(&a);
+        assert_eq!(segments_after.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_max_sources() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+        let store = make_tiered_store(wal_dir.path(), obj_dir.path(), 1024, 0).await;
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        // Append 5 records, ensuring they are separate cold objects
+        for i in 0..5 {
+            store
+                .append(&rec("t", 0, i, &format!("data-{}", i).into_bytes()))
+                .await
+                .unwrap();
+            store.wal().force_seal().await.unwrap();
+            store.run_tiering_cycle().await.unwrap();
+        }
+
+        // Verify 5 cold segments
+        assert_eq!(store.index().get_cold_segments(&a).len(), 5);
+
+        // Run compaction with max_sources = 3
+        let config = crate::config::CompactionConfig {
+            enabled: true,
+            interval_ms: 1000,
+            small_threshold_bytes: 1000,
+            target_bytes: 5000,
+            max_sources: 3,
+        };
+
+        let compactor = crate::storage::compaction::Compactor::new(
+            store.index().clone(),
+            store.upload_manager().clone(),
+            store.cold_index().clone(),
+            config,
+        );
+
+        compactor.run_compaction_cycle().await.unwrap();
+
+        // Should merge [0, 3) and [3, 5)
+        let segments_after = store.index().get_cold_segments(&a);
+        assert_eq!(segments_after.len(), 2);
+
+        assert_eq!(segments_after[0].start_offset, 0);
+        assert_eq!(segments_after[0].end_offset, 3);
+        assert_eq!(segments_after[1].start_offset, 3);
+        assert_eq!(segments_after[1].end_offset, 5);
+    }
+
+    struct RetryMockUploadManager {
+        inner: Arc<dyn UploadManager>,
+        index: Arc<parking_lot::Mutex<Option<Arc<PartitionIndex>>>>,
+        tp: TopicPartition,
+        merged_key: String,
+        merged_size: u64,
+        called: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl UploadManager for RetryMockUploadManager {
+        async fn upload_segment(&self, segment: WalSegment) -> Result<String> {
+            self.inner.upload_segment(segment).await
+        }
+
+        async fn download_segment(&self, object_key: &str) -> Result<WalSegment> {
+            if object_key.starts_with("topics/t/0/0_") && !object_key.contains("0_2") {
+                let was_called = self.called.swap(true, std::sync::atomic::Ordering::SeqCst);
+                if !was_called {
+                    let index_guard = self.index.lock();
+                    if let Some(ref index) = *index_guard {
+                        index.replace_cold(
+                            &self.tp,
+                            0,
+                            2,
+                            self.merged_key.clone(),
+                            self.merged_size,
+                        );
+                    }
+                }
+                return Err(RustMqError::NotFound(format!(
+                    "Simulated miss for {}",
+                    object_key
+                )));
+            }
+            self.inner.download_segment(object_key).await
+        }
+
+        async fn verify_upload(&self, object_key: &str, expected: &[u8]) -> Result<bool> {
+            self.inner.verify_upload(object_key, expected).await
+        }
+
+        async fn delete_object(&self, object_key: &str) -> Result<()> {
+            self.inner.delete_object(object_key).await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compaction_retry_on_miss() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        let mut cfg = wal_config(wal_dir.path());
+        cfg.segment_size_bytes = 1024;
+        let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(cfg).await.unwrap());
+        let object_storage: Arc<dyn ObjectStorage> =
+            Arc::new(LocalObjectStorage::new(obj_dir.path().to_path_buf()).unwrap());
+        let inner_upload = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            obj_config(obj_dir.path()),
+        ));
+        let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
+        let m = manifest(wal_dir.path()).await;
+
+        // 1. Upload two segments to simulate source files
+        let recs0 = vec![rec("t", 0, 0, b"data-0")];
+        let data0 = bincode::serialize(&recs0).unwrap();
+        let key0 = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 0,
+                end_offset: 1,
+                size_bytes: data0.len() as u64,
+                data: Bytes::from(data0.clone()),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        let recs1 = vec![rec("t", 0, 1, b"data-1")];
+        let data1 = bincode::serialize(&recs1).unwrap();
+        let key1 = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 1,
+                end_offset: 2,
+                size_bytes: data1.len() as u64,
+                data: Bytes::from(data1.clone()),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        // 2. Upload merged segment
+        let recs_merged = vec![rec("t", 0, 0, b"data-0"), rec("t", 0, 1, b"data-1")];
+        let data_merged = bincode::serialize(&recs_merged).unwrap();
+        let merged_size = data_merged.len() as u64;
+        let merged_key = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 0,
+                end_offset: 2,
+                size_bytes: merged_size,
+                data: Bytes::from(data_merged),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        // 3. Register sources in manifest (but NOT merged yet)
+        m.register(&a, 0, 1, &key0, data0.len() as u64)
+            .await
+            .unwrap();
+        m.register(&a, 1, 2, &key1, data1.len() as u64)
+            .await
+            .unwrap();
+
+        // 4. Setup mock upload manager
+        let mock_index = Arc::new(parking_lot::Mutex::new(None));
+        let mock_upload = Arc::new(RetryMockUploadManager {
+            inner: inner_upload,
+            index: mock_index.clone(),
+            tp: a.clone(),
+            merged_key: merged_key.clone(),
+            merged_size,
+            called: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+
+        // 5. Create store
+        let store = PartitionStore::new(wal, mock_upload.clone(), cache, 0, m)
+            .await
+            .unwrap();
+
+        *mock_index.lock() = Some(store.index().clone());
+
+        // 6. Read at offset 0.
+        let records = store.read(&a, 0, 10000).await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].offset, 0);
+        assert_eq!(records[0].record.value.as_ref(), b"data-0");
+        assert_eq!(records[1].offset, 1);
+        assert_eq!(records[1].record.value.as_ref(), b"data-1");
+
+        assert!(
+            mock_upload.called.load(std::sync::atomic::Ordering::SeqCst),
+            "mock must have been called"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compaction_recovery_gc() {
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+
+        let a = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        let object_storage: Arc<dyn ObjectStorage> =
+            Arc::new(LocalObjectStorage::new(obj_dir.path().to_path_buf()).unwrap());
+        let inner_upload = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            obj_config(obj_dir.path()),
+        ));
+
+        // 1. Upload source segments
+        let recs0 = vec![rec("t", 0, 0, b"data-0")];
+        let data0 = bincode::serialize(&recs0).unwrap();
+        let key0 = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 0,
+                end_offset: 1,
+                size_bytes: data0.len() as u64,
+                data: Bytes::from(data0.clone()),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        let recs1 = vec![rec("t", 0, 1, b"data-1")];
+        let data1 = bincode::serialize(&recs1).unwrap();
+        let key1 = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 1,
+                end_offset: 2,
+                size_bytes: data1.len() as u64,
+                data: Bytes::from(data1.clone()),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        // 2. Upload merged segment
+        let recs_merged = vec![rec("t", 0, 0, b"data-0"), rec("t", 0, 1, b"data-1")];
+        let data_merged = bincode::serialize(&recs_merged).unwrap();
+        let merged_size = data_merged.len() as u64;
+        let merged_key = inner_upload
+            .upload_segment(WalSegment {
+                start_offset: 0,
+                end_offset: 2,
+                size_bytes: merged_size,
+                data: Bytes::from(data_merged),
+                topic_partition: a.clone(),
+            })
+            .await
+            .unwrap();
+
+        // 3. Register sources in manifest, then register compaction
+        let m = manifest(wal_dir.path()).await;
+        m.register(&a, 0, 1, &key0, data0.len() as u64)
+            .await
+            .unwrap();
+        m.register(&a, 1, 2, &key1, data1.len() as u64)
+            .await
+            .unwrap();
+
+        let merged_seg = ColdSegment {
+            topic_partition: a.clone(),
+            start_offset: 0,
+            end_offset: 2,
+            object_key: merged_key.clone(),
+            size_bytes: merged_size,
+        };
+        m.record_compaction(merged_seg, vec![key0.clone(), key1.clone()])
+            .await
+            .unwrap();
+        drop(m); // close manifest
+
+        // Verify they all exist before restart
+        let storage_path = obj_dir.path().to_path_buf();
+        assert!(storage_path.join(&key0).exists());
+        assert!(storage_path.join(&key1).exists());
+        assert!(storage_path.join(&merged_key).exists());
+
+        // 4. Restart: Open the store. This should trigger Recovery GC.
+        let mut cfg = wal_config(wal_dir.path());
+        cfg.segment_size_bytes = 1024;
+        let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(cfg).await.unwrap());
+        let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
+        let manifest_reopen = manifest(wal_dir.path()).await;
+
+        let store = PartitionStore::new(wal, inner_upload, cache, 0, manifest_reopen)
+            .await
+            .unwrap();
+
+        // 5. Verify recovery GC deleted the orphan sources but kept the merged object
+        assert!(
+            !storage_path.join(&key0).exists(),
+            "source key0 must be deleted by GC"
+        );
+        assert!(
+            !storage_path.join(&key1).exists(),
+            "source key1 must be deleted by GC"
+        );
+        assert!(
+            storage_path.join(&merged_key).exists(),
+            "merged key must remain"
+        );
+
+        // 6. Verify we can read data (which should come from merged_key)
+        let records = store.read(&a, 0, 10000).await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].offset, 0);
+        assert_eq!(records[0].record.value.as_ref(), b"data-0");
+        assert_eq!(records[1].offset, 1);
+        assert_eq!(records[1].record.value.as_ref(), b"data-1");
     }
 }

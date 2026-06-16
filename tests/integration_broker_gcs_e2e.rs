@@ -70,6 +70,9 @@ impl UploadManager for NoUpload {
     ) -> rustmq::error::Result<bool> {
         Ok(true)
     }
+    async fn delete_object(&self, _object_key: &str) -> rustmq::error::Result<()> {
+        unreachable!("tiering not exercised in this test")
+    }
 }
 
 type TestCore = MessageBrokerCore<MockReplication, MockNetwork>;

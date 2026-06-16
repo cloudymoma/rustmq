@@ -15,6 +15,7 @@
 //! read-your-writes correctness requirement, bounded by a memory budget enforced
 //! in [`crate::storage::partition_store`].
 
+use crate::storage::cold_index::ColdSegment;
 use crate::types::{Offset, TopicPartition, WalRecord};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashMap};
@@ -23,10 +24,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A contiguous range of a partition's offsets that has been uploaded to object
 /// storage as a single segment object. Covers `[start_offset, end_offset)`.
+/// `size_bytes` is the object's uploaded size, used by compaction to identify small
+/// objects without downloading them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectRange {
     pub end_offset: Offset,
     pub object_key: String,
+    pub size_bytes: u64,
 }
 
 /// An un-tiered record held in memory for serving. `size` is the record's encoded
@@ -122,6 +126,7 @@ impl PartitionIndex {
         start_offset: Offset,
         end_offset: Offset,
         object_key: String,
+        size_bytes: u64,
     ) {
         let mut guard = self.inner.write();
         let entries = guard.entry(tp.clone()).or_default();
@@ -145,6 +150,7 @@ impl PartitionIndex {
             ObjectRange {
                 end_offset,
                 object_key,
+                size_bytes,
             },
         );
         entries.next_offset = entries.next_offset.max(end_offset);
@@ -163,6 +169,7 @@ impl PartitionIndex {
         start_offset: Offset,
         end_offset: Offset,
         object_key: String,
+        size_bytes: u64,
     ) {
         let mut guard = self.inner.write();
         let entries = guard.entry(tp.clone()).or_default();
@@ -171,6 +178,45 @@ impl PartitionIndex {
             ObjectRange {
                 end_offset,
                 object_key,
+                size_bytes,
+            },
+        );
+        entries.next_offset = entries.next_offset.max(end_offset);
+    }
+
+    /// Replace the cold ranges within `[start_offset, end_offset)` with a single merged
+    /// range pointing at the compacted object. This is the in-memory half of compaction:
+    /// it removes the subsumed source ranges and inserts the merged one. The hot tier is
+    /// untouched (a compacted range is below the cold frontier, so it has no hot copy).
+    ///
+    /// Range-based and idempotent: re-running with the same `[start, end)` removes the
+    /// just-inserted merged entry and re-inserts it (a no-op), so a crash-retried
+    /// compaction converges. Mirrors the manifest's fold so the in-memory and durable
+    /// views stay identical.
+    pub fn replace_cold(
+        &self,
+        tp: &TopicPartition,
+        start_offset: Offset,
+        end_offset: Offset,
+        object_key: String,
+        size_bytes: u64,
+    ) {
+        let mut guard = self.inner.write();
+        let entries = guard.entry(tp.clone()).or_default();
+        let subsumed: Vec<Offset> = entries
+            .cold
+            .range(start_offset..end_offset)
+            .map(|(&k, _)| k)
+            .collect();
+        for k in subsumed {
+            entries.cold.remove(&k);
+        }
+        entries.cold.insert(
+            start_offset,
+            ObjectRange {
+                end_offset,
+                object_key,
+                size_bytes,
             },
         );
         entries.next_offset = entries.next_offset.max(end_offset);
@@ -234,6 +280,30 @@ impl PartitionIndex {
         }
 
         ReadPlan::Empty
+    }
+
+    pub fn get_partitions(&self) -> Vec<TopicPartition> {
+        let guard = self.inner.read();
+        guard.keys().cloned().collect()
+    }
+
+    pub fn get_cold_segments(&self, tp: &TopicPartition) -> Vec<ColdSegment> {
+        let guard = self.inner.read();
+        if let Some(entries) = guard.get(tp) {
+            entries
+                .cold
+                .iter()
+                .map(|(&start, range)| ColdSegment {
+                    topic_partition: tp.clone(),
+                    start_offset: start,
+                    end_offset: range.end_offset,
+                    object_key: range.object_key.clone(),
+                    size_bytes: range.size_bytes,
+                })
+                .collect()
+        } else {
+            vec![]
+        }
     }
 }
 
@@ -346,7 +416,7 @@ mod tests {
         }
         assert_eq!(idx.hot_bytes(), 500);
         // Flipping 0..5 to cold evicts those 5 records, freeing their bytes.
-        idx.flip_to_cold(&a, 0, 5, "k".to_string());
+        idx.flip_to_cold(&a, 0, 5, "k".to_string(), 100);
         assert_eq!(idx.hot_bytes(), 250);
     }
 
@@ -358,7 +428,7 @@ mod tests {
             let (r, s) = hot(&a, i, b"x", 50);
             idx.insert_hot(&a, i, r, s);
         }
-        idx.flip_to_cold(&a, 0, 5, "topics/a/0/seg-0-5".to_string());
+        idx.flip_to_cold(&a, 0, 5, "topics/a/0/seg-0-5".to_string(), 250);
 
         // Offsets 0..5 now resolve cold.
         match idx.read_plan(&a, 2, 1000) {
@@ -389,8 +459,8 @@ mod tests {
             let (r, s) = hot(&a, i, b"x", 50);
             idx.insert_hot(&a, i, r, s);
         }
-        idx.flip_to_cold(&a, 0, 5, "k".to_string());
-        idx.flip_to_cold(&a, 0, 5, "k".to_string()); // second call: no panic, same result
+        idx.flip_to_cold(&a, 0, 5, "k".to_string(), 100);
+        idx.flip_to_cold(&a, 0, 5, "k".to_string(), 100); // second call: no panic, same result
         assert_eq!(idx.hot_bytes(), 0); // no double-subtraction
         match idx.read_plan(&a, 0, 1000) {
             ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "k"),
@@ -404,8 +474,8 @@ mod tests {
         // restored from the manifest. The range resolves cold and next_offset is set.
         let idx = PartitionIndex::new();
         let a = tp("a", 0);
-        idx.insert_cold(&a, 0, 5, "topics/a/0/0_5".to_string());
-        idx.insert_cold(&a, 5, 9, "topics/a/0/5_9".to_string());
+        idx.insert_cold(&a, 0, 5, "topics/a/0/0_5".to_string(), 50);
+        idx.insert_cold(&a, 5, 9, "topics/a/0/5_9".to_string(), 40);
 
         assert_eq!(idx.hot_bytes(), 0);
         assert_eq!(
@@ -427,6 +497,92 @@ mod tests {
         }
         match idx.read_plan(&a, 6, 1000) {
             ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "topics/a/0/5_9"),
+            other => panic!("expected Cold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_cold_collapses_run_to_single_range() {
+        // Compaction's in-memory half: two adjacent cold ranges merge into one object;
+        // the untouched neighbor still resolves on its own.
+        let idx = PartitionIndex::new();
+        let a = tp("a", 0);
+        idx.insert_cold(&a, 0, 5, "k0_5".to_string(), 50);
+        idx.insert_cold(&a, 5, 9, "k5_9".to_string(), 40);
+        idx.insert_cold(&a, 9, 12, "k9_12".to_string(), 30);
+
+        idx.replace_cold(&a, 0, 9, "k0_9".to_string(), 90);
+
+        match idx.read_plan(&a, 2, 1000) {
+            ReadPlan::Cold {
+                object_key,
+                start_offset,
+                end_offset,
+            } => {
+                assert_eq!(object_key, "k0_9");
+                assert_eq!(start_offset, 0);
+                assert_eq!(end_offset, 9);
+            }
+            other => panic!("expected Cold, got {other:?}"),
+        }
+        match idx.read_plan(&a, 10, 1000) {
+            ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "k9_12"),
+            other => panic!("expected Cold, got {other:?}"),
+        }
+        assert_eq!(idx.next_offset(&a), 12);
+    }
+
+    #[test]
+    fn replace_cold_is_idempotent() {
+        // A crash-retried compaction may apply the same replace twice; the second is a
+        // no-op (remove the just-inserted merged entry, re-insert it).
+        let idx = PartitionIndex::new();
+        let a = tp("a", 0);
+        idx.insert_cold(&a, 0, 5, "k0_5".to_string(), 50);
+        idx.insert_cold(&a, 5, 9, "k5_9".to_string(), 40);
+        idx.replace_cold(&a, 0, 9, "k0_9".to_string(), 90);
+        idx.replace_cold(&a, 0, 9, "k0_9".to_string(), 90);
+        match idx.read_plan(&a, 0, 1000) {
+            ReadPlan::Cold {
+                object_key,
+                start_offset,
+                end_offset,
+            } => {
+                assert_eq!(object_key, "k0_9");
+                assert_eq!(start_offset, 0);
+                assert_eq!(end_offset, 9);
+            }
+            other => panic!("expected Cold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_cold_leaves_hot_untouched() {
+        // Compaction only touches cold ranges; un-tiered hot records above the cold
+        // frontier must remain served from memory with their bytes still accounted.
+        let idx = PartitionIndex::new();
+        let a = tp("a", 0);
+        idx.insert_cold(&a, 0, 5, "k0_5".to_string(), 50);
+        idx.insert_cold(&a, 5, 9, "k5_9".to_string(), 40);
+        for i in 9..12u64 {
+            let (r, s) = hot(&a, i, b"x", 10);
+            idx.insert_hot(&a, i, r, s);
+        }
+        let hot_before = idx.hot_bytes();
+
+        idx.replace_cold(&a, 0, 9, "k0_9".to_string(), 90);
+
+        assert_eq!(
+            idx.hot_bytes(),
+            hot_before,
+            "replace_cold must not touch the hot tier"
+        );
+        match idx.read_plan(&a, 9, 1000) {
+            ReadPlan::Hot(recs) => assert_eq!(recs.len(), 3),
+            other => panic!("expected Hot, got {other:?}"),
+        }
+        match idx.read_plan(&a, 0, 1000) {
+            ReadPlan::Cold { object_key, .. } => assert_eq!(object_key, "k0_9"),
             other => panic!("expected Cold, got {other:?}"),
         }
     }

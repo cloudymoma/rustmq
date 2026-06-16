@@ -118,3 +118,24 @@ impl std::fmt::Debug for ObjectStorageConfig {
             .finish()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionConfig {
+    pub enabled: bool,
+    pub interval_ms: u64,
+    pub small_threshold_bytes: u64,
+    pub target_bytes: u64,
+    pub max_sources: usize,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_ms: 30_000,                     // 30 seconds
+            small_threshold_bytes: 10 * 1024 * 1024, // 10MB
+            target_bytes: 64 * 1024 * 1024,          // 64MB
+            max_sources: 10,
+        }
+    }
+}

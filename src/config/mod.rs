@@ -25,6 +25,7 @@ pub struct Config {
     pub broker: BrokerConfig,
     pub network: NetworkConfig,
     pub wal: WalConfig,
+    pub compaction: CompactionConfig,
     pub cache: CacheConfig,
     pub object_storage: ObjectStorageConfig,
     pub controller: ControllerConfig,
@@ -59,6 +60,7 @@ impl Default for Config {
                 upload_interval_ms: 10 * 60 * 1000,    // 10 minutes
                 flush_interval_ms: 1000,               // 1 second
             },
+            compaction: CompactionConfig::default(),
             cache: CacheConfig {
                 write_cache_size_bytes: 1024 * 1024 * 1024,    // 1GB
                 read_cache_size_bytes: 2 * 1024 * 1024 * 1024, // 2GB
@@ -320,7 +322,7 @@ impl Config {
                 ))
             })?;
 
-        if quic_addr.port() == rpc_addr.port() {
+        if quic_addr.port() == rpc_addr.port() && quic_addr.port() != 0 {
             return Err(crate::error::RustMqError::InvalidConfig(
                 "network.quic_listen and network.rpc_listen cannot use the same port".to_string(),
             ));

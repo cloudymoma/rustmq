@@ -1,6 +1,7 @@
 pub mod buffer_pool;
 pub mod cache;
 pub mod cold_index;
+pub mod compaction;
 pub mod object_storage;
 pub mod partition_index;
 pub mod partition_store;
@@ -10,6 +11,7 @@ pub mod wal;
 pub use buffer_pool::*;
 pub use cache::*;
 pub use cold_index::{ColdIndexManifest, ColdSegment};
+pub use compaction::*;
 pub use object_storage::*;
 pub use partition_index::{ObjectRange, PartitionIndex, ReadPlan};
 pub use partition_store::PartitionStore;

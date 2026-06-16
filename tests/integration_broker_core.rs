@@ -25,6 +25,9 @@ impl UploadManager for NoUpload {
     async fn verify_upload(&self, _key: &str, _expected: &[u8]) -> Result<bool> {
         Ok(true)
     }
+    async fn delete_object(&self, _key: &str) -> Result<()> {
+        unreachable!("tiering not exercised in these tests")
+    }
 }
 
 /// Build a real [`PartitionStore`] backed by a segmented WAL in `dir`.

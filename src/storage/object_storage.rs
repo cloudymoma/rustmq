@@ -77,13 +77,27 @@ impl ObjectStorage for LocalObjectStorage {
 
     async fn get(&self, key: &str) -> Result<Bytes> {
         let path = self.key_to_path(key)?;
-        let data = fs::read(&path).await?;
-        Ok(Bytes::from(data))
+        match fs::read(&path).await {
+            Ok(data) => Ok(Bytes::from(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(
+                crate::error::RustMqError::NotFound(format!("File not found: {:?}", path)),
+            ),
+            Err(e) => Err(e.into()),
+        }
     }
 
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {
         let path = self.key_to_path(key)?;
-        let mut file = fs::File::open(&path).await?;
+        let mut file = match fs::File::open(&path).await {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(crate::error::RustMqError::NotFound(format!(
+                    "File not found: {:?}",
+                    path
+                )));
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         file.seek(tokio::io::SeekFrom::Start(range.start)).await?;
         let read_size = (range.end - range.start) as usize;
@@ -482,6 +496,10 @@ impl UploadManager for UploadManagerImpl {
     async fn verify_upload(&self, object_key: &str, expected_data: &[u8]) -> Result<bool> {
         let uploaded_data = self.storage.get(object_key).await?;
         Ok(uploaded_data.as_ref() == expected_data)
+    }
+
+    async fn delete_object(&self, object_key: &str) -> Result<()> {
+        self.storage.delete(object_key).await
     }
 }
 

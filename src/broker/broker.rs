@@ -397,6 +397,13 @@ impl Broker {
         let tiering_handle = self.broker_core.get_store().spawn_tiering_task();
         self.background_tasks.push(tiering_handle);
 
+        // Start the storage compaction loop.
+        let compaction_handle = self
+            .broker_core
+            .get_store()
+            .spawn_compaction_task(self.config.compaction.clone());
+        self.background_tasks.push(compaction_handle);
+
         // Transition to running state
         {
             let mut state = self.state.write().await;
@@ -769,14 +776,10 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
-    // Use atomic counter to generate unique ports for each test
-    static PORT_COUNTER: AtomicU16 = AtomicU16::new(10000);
-
     fn get_test_config() -> Config {
-        let port_base = PORT_COUNTER.fetch_add(10, Ordering::SeqCst);
         let mut config = Config::default();
-        config.network.quic_listen = format!("127.0.0.1:{}", port_base);
-        config.network.rpc_listen = format!("127.0.0.1:{}", port_base + 1);
+        config.network.quic_listen = "127.0.0.1:0".to_string();
+        config.network.rpc_listen = "127.0.0.1:0".to_string();
         config
     }
 

@@ -540,6 +540,9 @@ mod tests {
         async fn verify_upload(&self, _object_key: &str, _expected: &[u8]) -> Result<bool> {
             Ok(true)
         }
+        async fn delete_object(&self, _object_key: &str) -> Result<()> {
+            panic!("delete not expected");
+        }
     }
 
     #[async_trait]

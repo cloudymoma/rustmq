@@ -51,6 +51,7 @@ pub trait UploadManager: Send + Sync {
     async fn upload_segment(&self, segment: WalSegment) -> Result<String>;
     async fn download_segment(&self, object_key: &str) -> Result<WalSegment>;
     async fn verify_upload(&self, object_key: &str, expected_data: &[u8]) -> Result<bool>;
+    async fn delete_object(&self, object_key: &str) -> Result<()>;
 }
 
 /// Append-oriented view of the storage engine used by subsystems that write to the
