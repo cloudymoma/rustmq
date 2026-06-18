@@ -25,6 +25,7 @@ pub struct Config {
     pub broker: BrokerConfig,
     pub network: NetworkConfig,
     pub wal: WalConfig,
+    #[serde(default)]
     pub compaction: CompactionConfig,
     pub cache: CacheConfig,
     pub object_storage: ObjectStorageConfig,
@@ -828,6 +829,40 @@ mod tests {
         assert!(deserialized.validate().is_ok());
         assert!(deserialized.rate_limiting.enabled);
         assert_eq!(deserialized.rate_limiting.global.requests_per_second, 1000);
+    }
+
+    #[test]
+    fn test_compaction_toml_section_parses() {
+        // Guards the [compaction] block shipped in config/broker.toml: it must
+        // deserialize into CompactionConfig with the documented values.
+        let section = r#"
+            enabled = true
+            interval_ms = 30000
+            small_threshold_bytes = 10485760
+            target_bytes = 67108864
+            max_sources = 10
+        "#;
+        let cfg: CompactionConfig = toml::from_str(section).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.small_threshold_bytes, 10 * 1024 * 1024);
+        assert_eq!(cfg.target_bytes, 64 * 1024 * 1024);
+        assert_eq!(cfg.max_sources, 10);
+    }
+
+    #[test]
+    fn test_config_missing_compaction_section_uses_default() {
+        // A config without a [compaction] table must fall back to defaults, not error.
+        let mut value: toml::Value = toml::Value::try_from(Config::default()).unwrap();
+        value
+            .as_table_mut()
+            .unwrap()
+            .remove("compaction")
+            .expect("default config should serialize a compaction table");
+        let deserialized: Config = value.try_into().unwrap();
+        assert_eq!(
+            deserialized.compaction.target_bytes,
+            CompactionConfig::default().target_bytes
+        );
     }
 
     #[test]
