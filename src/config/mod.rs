@@ -850,6 +850,83 @@ mod tests {
     }
 
     #[test]
+    fn test_shipped_broker_toml_loads() {
+        // The broker binary loads config/broker.toml at startup via Config::from_file;
+        // it MUST deserialize and validate, or the broker cannot start.
+        let config =
+            Config::from_file("config/broker.toml").expect("config/broker.toml must deserialize");
+        config
+            .validate()
+            .expect("config/broker.toml must pass validation");
+    }
+
+    /// Extract a YAML block-scalar (`key: |`) body, stripping the common indent.
+    #[cfg(test)]
+    fn extract_yaml_block(yaml: &str, key: &str) -> String {
+        let lines: Vec<&str> = yaml.lines().collect();
+        let start = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with(key))
+            .unwrap_or_else(|| panic!("key `{key}` not found"));
+        let key_indent = lines[start].len() - lines[start].trim_start().len();
+        let mut block: Vec<&str> = Vec::new();
+        for &line in &lines[start + 1..] {
+            if line.trim().is_empty() {
+                block.push("");
+                continue;
+            }
+            let indent = line.len() - line.trim_start().len();
+            if indent <= key_indent {
+                break;
+            }
+            block.push(line);
+        }
+        let min_indent = block
+            .iter()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+        block
+            .iter()
+            .map(|l| if l.is_empty() { "" } else { &l[min_indent..] })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_shipped_controller_toml_loads() {
+        // The controller binary loads config/controller.toml via Config::from_file
+        // (same `Config` struct as the broker); it MUST deserialize and validate.
+        let config = Config::from_file("config/controller.toml")
+            .expect("config/controller.toml must deserialize");
+        config
+            .validate()
+            .expect("config/controller.toml must pass validation");
+    }
+
+    #[test]
+    fn test_gke_configmap_toml_matches_config() {
+        // The deployed broker/controller load their .toml from mounted ConfigMaps; the
+        // embedded TOML in each GKE manifest tree MUST deserialize into `Config` (schema
+        // match). We deliberately do NOT call validate() here: it has a filesystem
+        // side-effect (creates wal.path) tied to in-cluster deploy paths like
+        // /var/lib/rustmq/wal, denied in the test sandbox. Runtime validation is in-cluster.
+        let cases = [
+            ("gke/manifests/base/configmap.yaml", "broker.toml: |"),
+            ("gke/manifests/base/configmap.yaml", "controller.toml: |"),
+            ("gke/base/configmap-broker.yaml", "broker.toml: |"),
+            ("gke/base/configmap-controller.yaml", "controller.toml: |"),
+        ];
+        for (path, key) in cases {
+            let yaml = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let body = extract_yaml_block(&yaml, key);
+            let _config: Config = toml::from_str(&body)
+                .unwrap_or_else(|e| panic!("{path} [{key}]: must deserialize: {e}"));
+        }
+    }
+
+    #[test]
     fn test_config_missing_compaction_section_uses_default() {
         // A config without a [compaction] table must fall back to defaults, not error.
         let mut value: toml::Value = toml::Value::try_from(Config::default()).unwrap();

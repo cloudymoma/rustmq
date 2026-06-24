@@ -38,9 +38,11 @@ resources:
 - monitoring/servicemonitor.yaml
 - monitoring/prometheusrule.yaml
 
-commonLabels:
-  app.kubernetes.io/name: rustmq
-  app.kubernetes.io/managed-by: kustomize
+labels:
+- pairs:
+    app.kubernetes.io/name: rustmq
+    app.kubernetes.io/managed-by: kustomize
+  includeSelectors: true
 
 images:
 - name: us-docker.pkg.dev/PROJECT_ID/rustmq/rustmq-controller
