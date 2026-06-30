@@ -15,12 +15,14 @@
 
 use crate::storage::cold_index::ColdIndexManifest;
 use crate::storage::partition_index::{PartitionIndex, ReadPlan};
+use crate::storage::reservation::ReservationService;
 use crate::storage::traits::{Cache, PhysicalLocation, RecordLog, UploadManager, WalSegment};
 use crate::storage::wal::SegmentedLog;
 use crate::types::{Offset, TopicPartition, WalRecord};
 use crate::{Result, error::RustMqError};
 use async_trait::async_trait;
 use bytes::Bytes;
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +36,53 @@ fn mem_size(record: &WalRecord) -> u32 {
     let key = r.key.as_ref().map_or(0, |k| k.len());
     let headers: usize = r.headers.iter().map(|h| h.key.len() + h.value.len()).sum();
     (std::mem::size_of::<WalRecord>() + r.value.len() + key + headers) as u32
+}
+
+/// Supplies the current leader epoch for a partition so the tiering loop can fence its
+/// uploads against a stale-leader (split-brain) takeover. Implemented by
+/// `MessageBrokerCore` over its `PartitionMetadata`. `current_epoch` returns `None` when
+/// this node does not lead the partition; combined with a configured reservation, that
+/// blocks the upload (a non-leader must not tier).
+pub trait EpochSource: Send + Sync {
+    fn node_id(&self) -> &str;
+    fn current_epoch(&self, tp: &TopicPartition) -> Option<u64>;
+}
+
+/// Controller-driven leadership table: the canonical [`EpochSource`] for fencing. The
+/// gRPC leadership handlers (`assign_partition` / `transfer_leadership`) record the epoch
+/// at which this node leads each partition; the tiering loop reads it to fence uploads.
+/// Shared (`Arc`) between the broker's gRPC server and its `PartitionStore`, which avoids
+/// a construction cycle (the store is owned by `MessageBrokerCore`).
+pub struct LeadershipState {
+    node_id: String,
+    epochs: DashMap<TopicPartition, u64>,
+}
+
+impl LeadershipState {
+    pub fn new(node_id: String) -> Self {
+        Self {
+            node_id,
+            epochs: DashMap::new(),
+        }
+    }
+
+    /// Record (or, when `is_leader` is false, clear) this node's leadership of `tp`.
+    pub fn set(&self, tp: &TopicPartition, epoch: u64, is_leader: bool) {
+        if is_leader {
+            self.epochs.insert(tp.clone(), epoch);
+        } else {
+            self.epochs.remove(tp);
+        }
+    }
+}
+
+impl EpochSource for LeadershipState {
+    fn node_id(&self) -> &str {
+        &self.node_id
+    }
+    fn current_epoch(&self, tp: &TopicPartition) -> Option<u64> {
+        self.epochs.get(tp).map(|e| *e)
+    }
 }
 
 pub struct PartitionStore {
@@ -54,6 +103,12 @@ pub struct PartitionStore {
     tiering_wakeup: Arc<Notify>,
     /// tiering task → blocked appends: memory was freed, re-check the budget.
     memory_available: Arc<Notify>,
+    /// Object-level epoch fencing (split-brain safety). When both are set, `tier_segment`
+    /// verifies this node still holds the partition's reservation at its current leader
+    /// epoch before uploading; on mismatch it self-fences (skips the upload, keeps the
+    /// segment). Both `None` ⇒ fencing disabled (single-broker/dev and tests).
+    reservation: Option<Arc<ReservationService>>,
+    epoch_source: Option<Arc<dyn EpochSource>>,
 }
 
 impl PartitionStore {
@@ -74,6 +129,30 @@ impl PartitionStore {
         cache: Arc<dyn Cache>,
         hot_cache_max_bytes: u64,
         cold_index: Arc<ColdIndexManifest>,
+    ) -> Result<Arc<Self>> {
+        Self::new_with_fencing(
+            wal,
+            upload_manager,
+            cache,
+            hot_cache_max_bytes,
+            cold_index,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`new`](Self::new) but with object-level epoch fencing wired in. When
+    /// `reservation` and `epoch_source` are both `Some`, the tiering loop verifies this
+    /// node still leads a partition (at its current epoch) before uploading its segments.
+    pub async fn new_with_fencing(
+        wal: Arc<dyn SegmentedLog>,
+        upload_manager: Arc<dyn UploadManager>,
+        cache: Arc<dyn Cache>,
+        hot_cache_max_bytes: u64,
+        cold_index: Arc<ColdIndexManifest>,
+        reservation: Option<Arc<ReservationService>>,
+        epoch_source: Option<Arc<dyn EpochSource>>,
     ) -> Result<Arc<Self>> {
         let index = Arc::new(PartitionIndex::new());
 
@@ -117,6 +196,8 @@ impl PartitionStore {
             cold_index,
             tiering_wakeup: Arc::new(Notify::new()),
             memory_available: Arc::new(Notify::new()),
+            reservation,
+            epoch_source,
         }))
     }
 
@@ -360,7 +441,33 @@ impl PartitionStore {
                 .push(record);
         }
 
+        // Epoch fencing: only active when both a reservation service and an epoch source
+        // are configured (cloud/multi-broker). When active, a partition group is uploaded
+        // only if this node still leads it at its current epoch — preventing a stale
+        // leader from clobbering the real leader's cold object.
+        let fencing = self.reservation.as_ref().zip(self.epoch_source.as_ref());
+        let mut fenced_any = false;
+
         for (tp, recs) in groups {
+            if let Some((reservation, epoch_source)) = fencing {
+                let allowed = match epoch_source.current_epoch(&tp) {
+                    Some(epoch) => {
+                        reservation
+                            .verify(&tp, epoch_source.node_id(), epoch)
+                            .await?
+                    }
+                    // Not leader for this partition → must not tier its data.
+                    None => false,
+                };
+                if !allowed {
+                    tracing::warn!(
+                        "tiering fenced for {tp}: stale/invalid leadership; skipping upload"
+                    );
+                    fenced_any = true;
+                    continue;
+                }
+            }
+
             // A partition's records within a single segment are a contiguous offset run.
             let start_offset = recs.first().unwrap().offset;
             let end_offset = recs.last().unwrap().offset + 1;
@@ -381,6 +488,15 @@ impl PartitionStore {
                 .await?;
             self.index
                 .flip_to_cold(&tp, start_offset, end_offset, object_key, size_bytes);
+        }
+
+        if fenced_any {
+            // A fenced partition's records remain in this segment, so we must NOT reclaim
+            // it (that would lose un-tiered data). Already-uploaded groups flipped to cold
+            // idempotently; a later cycle re-uploads them as no-ops. Leaving the segment
+            // also signals (via WAL growth) that this node is tiering data it no longer
+            // leads and should be reassigned.
+            return Ok(());
         }
 
         // All partitions uploaded+indexed; reclaim the WAL segment.
@@ -699,6 +815,109 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    struct TestEpochSource {
+        node_id: String,
+        epochs: HashMap<TopicPartition, u64>,
+    }
+    impl EpochSource for TestEpochSource {
+        fn node_id(&self) -> &str {
+            &self.node_id
+        }
+        fn current_epoch(&self, tp: &TopicPartition) -> Option<u64> {
+            self.epochs.get(tp).copied()
+        }
+    }
+
+    #[tokio::test]
+    async fn tiering_self_fences_on_takeover() {
+        use crate::storage::reservation::AcquireOutcome;
+
+        let wal_dir = TempDir::new().unwrap();
+        let obj_dir = TempDir::new().unwrap();
+
+        // One object store shared by the uploader AND the reservation services, so a
+        // takeover by another node is visible to this store's tiering loop.
+        let object_storage: Arc<dyn ObjectStorage> =
+            Arc::new(LocalObjectStorage::new(obj_dir.path().to_path_buf()).unwrap());
+        let reservation = Arc::new(ReservationService::new(object_storage.clone()));
+
+        let tp = TopicPartition {
+            topic: "t".into(),
+            partition: 0,
+        };
+
+        // Node A leads tp at epoch 5 and holds the reservation.
+        let mut epochs = HashMap::new();
+        epochs.insert(tp.clone(), 5u64);
+        let epoch_source: Arc<dyn EpochSource> = Arc::new(TestEpochSource {
+            node_id: "A".into(),
+            epochs,
+        });
+        assert_eq!(
+            reservation.acquire(&tp, "A", 5).await.unwrap(),
+            AcquireOutcome::Owned
+        );
+
+        let mut cfg = wal_config(wal_dir.path());
+        cfg.segment_size_bytes = 256;
+        let wal: Arc<dyn SegmentedLog> = Arc::new(SegmentedWal::new(cfg).await.unwrap());
+        let upload: Arc<dyn UploadManager> = Arc::new(UploadManagerImpl::new(
+            object_storage.clone(),
+            obj_config(obj_dir.path()),
+        ));
+        let cache: Arc<dyn Cache> = Arc::new(LruCache::new(1024 * 1024));
+        let store = PartitionStore::new_with_fencing(
+            wal,
+            upload,
+            cache,
+            0,
+            manifest(wal_dir.path()).await,
+            Some(reservation.clone()),
+            Some(epoch_source),
+        )
+        .await
+        .unwrap();
+
+        // While A legitimately leads, tiering uploads and reclaims normally.
+        for i in 0..6u64 {
+            store.append(&rec("t", 0, i, &[b'x'; 64])).await.unwrap();
+        }
+        store.wal().force_seal().await.unwrap();
+        store.run_tiering_cycle().await.unwrap();
+        assert!(
+            store.wal().sealed_segments().await.unwrap().is_empty(),
+            "leader's segment should tier and reclaim"
+        );
+        assert_eq!(store.index().hot_bytes(), 0, "tiered records evicted");
+
+        // Takeover: node B claims tp at epoch 6 via the shared store.
+        let b_res = ReservationService::new(object_storage.clone());
+        assert_eq!(
+            b_res.acquire(&tp, "B", 6).await.unwrap(),
+            AcquireOutcome::Owned
+        );
+
+        // A's epoch source is now stale (still 5). Its next tiering attempt must fence.
+        for i in 6..12u64 {
+            store.append(&rec("t", 0, i, &[b'y'; 64])).await.unwrap();
+        }
+        store.wal().force_seal().await.unwrap();
+        store.run_tiering_cycle().await.unwrap();
+
+        // Self-fenced: the sealed segment is retained (not reclaimed) and the records
+        // stay in the hot tier (not flipped to cold) — i.e. no upload happened.
+        assert!(
+            !store.wal().sealed_segments().await.unwrap().is_empty(),
+            "fenced segment must be retained, not reclaimed"
+        );
+        assert!(
+            store.index().hot_bytes() > 0,
+            "fenced records must remain in the hot tier"
+        );
+        // No clobber: B still owns the reservation at epoch 6.
+        assert!(b_res.verify(&tp, "B", 6).await.unwrap());
     }
 
     #[tokio::test]

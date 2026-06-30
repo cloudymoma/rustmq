@@ -72,6 +72,40 @@ impl ObjectStorage for CloudObjectStorage {
         Ok(())
     }
 
+    async fn put_if(&self, key: &str, data: Bytes, expect: Precondition) -> Result<PutOutcome> {
+        validate_key(key)?;
+
+        let mode = match expect {
+            Precondition::Create => object_store::PutMode::Create,
+            Precondition::Match(v) => object_store::PutMode::Update(object_store::UpdateVersion {
+                e_tag: v.e_tag,
+                version: v.version,
+            }),
+        };
+        let opts = object_store::PutOptions {
+            mode,
+            ..Default::default()
+        };
+        let payload: PutPayload = data.into();
+
+        // No retry loop: a precondition failure is a definitive "someone else won", and
+        // retrying a conditional write blindly would defeat the fence.
+        match self.store.put_opts(&Path::from(key), payload, opts).await {
+            Ok(res) => Ok(PutOutcome::Written(ObjectVersion {
+                e_tag: res.e_tag,
+                version: res.version,
+            })),
+            Err(object_store::Error::Precondition { .. })
+            | Err(object_store::Error::AlreadyExists { .. })
+            // A `Match` (Update) against an object deleted between read and write is
+            // semantically a precondition failure: the object no longer matches the
+            // expected version. (Create never returns NotFound, so this only affects
+            // Update.) Lets the reservation CAS loop re-read and fall through to Create.
+            | Err(object_store::Error::NotFound { .. }) => Ok(PutOutcome::PreconditionFailed),
+            Err(e) => Err(crate::error::RustMqError::Storage(e.to_string())),
+        }
+    }
+
     async fn get(&self, key: &str) -> Result<Bytes> {
         validate_key(key)?;
 
@@ -109,6 +143,31 @@ impl ObjectStorage for CloudObjectStorage {
         })?;
 
         Ok(bytes)
+    }
+
+    async fn get_versioned(&self, key: &str) -> Result<(Bytes, ObjectVersion)> {
+        validate_key(key)?;
+        let result = self
+            .store
+            .get(&Path::from(key))
+            .await
+            .map_err(|e| match e {
+                object_store::Error::NotFound { path, .. } => {
+                    crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
+                }
+                e => crate::error::RustMqError::Storage(e.to_string()),
+            })?;
+        let version = ObjectVersion {
+            e_tag: result.meta.e_tag.clone(),
+            version: result.meta.version.clone(),
+        };
+        let bytes = result.bytes().await.map_err(|e| match e {
+            object_store::Error::NotFound { path, .. } => {
+                crate::error::RustMqError::NotFound(format!("Object not found: {}", path))
+            }
+            e => crate::error::RustMqError::Storage(e.to_string()),
+        })?;
+        Ok((bytes, version))
     }
 
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {
@@ -248,6 +307,82 @@ mod tests {
         storage.put("test/key", data.clone()).await.unwrap();
         let retrieved = storage.get("test/key").await.unwrap();
         assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_put_if_cas() {
+        let store = Arc::new(InMemory::new());
+        let storage = CloudObjectStorage::new(store);
+
+        // Create-only succeeds once, then fails.
+        let v = match storage
+            .put_if("res/_epoch", Bytes::from("a"), Precondition::Create)
+            .await
+            .unwrap()
+        {
+            PutOutcome::Written(v) => v,
+            other => panic!("expected Written, got {other:?}"),
+        };
+        assert_eq!(
+            storage
+                .put_if("res/_epoch", Bytes::from("b"), Precondition::Create)
+                .await
+                .unwrap(),
+            PutOutcome::PreconditionFailed
+        );
+
+        // CAS with the current version succeeds; with the stale one it is fenced.
+        let _v2 = match storage
+            .put_if(
+                "res/_epoch",
+                Bytes::from("c"),
+                Precondition::Match(v.clone()),
+            )
+            .await
+            .unwrap()
+        {
+            PutOutcome::Written(v2) => v2,
+            other => panic!("expected Written, got {other:?}"),
+        };
+        assert_eq!(
+            storage
+                .put_if("res/_epoch", Bytes::from("d"), Precondition::Match(v))
+                .await
+                .unwrap(),
+            PutOutcome::PreconditionFailed
+        );
+        assert_eq!(storage.get("res/_epoch").await.unwrap(), Bytes::from("c"));
+    }
+
+    #[tokio::test]
+    async fn test_put_if_match_on_deleted_object_is_precondition_failed() {
+        let store = Arc::new(InMemory::new());
+        let storage = CloudObjectStorage::new(store);
+
+        // Create the object and capture its version.
+        let v = match storage
+            .put_if("res/_epoch", Bytes::from("a"), Precondition::Create)
+            .await
+            .unwrap()
+        {
+            PutOutcome::Written(v) => v,
+            other => panic!("expected Written, got {other:?}"),
+        };
+
+        // Delete it out from under a would-be CAS writer.
+        storage.delete("res/_epoch").await.unwrap();
+
+        // A CAS update against the now-missing object is a precondition failure, not an
+        // I/O error — the object no longer matches the expected version. (InMemory maps
+        // this to `Precondition`; some real backends return `NotFound` — both now fold to
+        // `PreconditionFailed`.) This lets the reservation acquire loop re-read and create.
+        assert_eq!(
+            storage
+                .put_if("res/_epoch", Bytes::from("b"), Precondition::Match(v))
+                .await
+                .unwrap(),
+            PutOutcome::PreconditionFailed
+        );
     }
 
     #[tokio::test]

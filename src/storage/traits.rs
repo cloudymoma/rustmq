@@ -5,10 +5,43 @@ use std::any::Any;
 use std::ops::Range;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+/// Version token identifying a specific generation of an object (HTTP ETag and/or a
+/// backend version id). Returned by a successful conditional write and supplied back to
+/// guard the next one. An empty token (`Default`) means "no known version yet".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ObjectVersion {
+    pub e_tag: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Precondition for a conditional write (compare-and-swap on object storage).
+#[derive(Clone, Debug)]
+pub enum Precondition {
+    /// Write only if no object exists at the key (create-only).
+    Create,
+    /// Write only if the current object matches this version (CAS update).
+    Match(ObjectVersion),
+}
+
+/// Result of a conditional write. `PreconditionFailed` is the expected, non-error
+/// outcome when another writer won the race — callers treat it as "I was fenced",
+/// not as an I/O failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PutOutcome {
+    Written(ObjectVersion),
+    PreconditionFailed,
+}
+
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
     async fn put(&self, key: &str, data: Bytes) -> Result<()>;
+    /// Conditional write (compare-and-swap). Used by epoch fencing to ensure only the
+    /// current partition leader can mutate the per-partition reservation object.
+    async fn put_if(&self, key: &str, data: Bytes, expect: Precondition) -> Result<PutOutcome>;
     async fn get(&self, key: &str) -> Result<Bytes>;
+    /// Fetch an object together with its current version token, so a caller can
+    /// compare-and-swap against it (e.g. a new leader bumping the reservation epoch).
+    async fn get_versioned(&self, key: &str) -> Result<(Bytes, ObjectVersion)>;
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes>;
     async fn delete(&self, key: &str) -> Result<()>;
     async fn list(&self, prefix: &str) -> Result<Vec<String>>;

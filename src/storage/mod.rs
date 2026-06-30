@@ -5,6 +5,7 @@ pub mod compaction;
 pub mod object_storage;
 pub mod partition_index;
 pub mod partition_store;
+pub mod reservation;
 pub mod traits;
 pub mod wal;
 
@@ -14,7 +15,8 @@ pub use cold_index::{ColdIndexManifest, ColdSegment};
 pub use compaction::*;
 pub use object_storage::*;
 pub use partition_index::{ObjectRange, PartitionIndex, ReadPlan};
-pub use partition_store::PartitionStore;
+pub use partition_store::{EpochSource, LeadershipState, PartitionStore};
+pub use reservation::{AcquireOutcome, ReservationService};
 pub use traits::*;
 pub use wal::{SegmentedLog, SegmentedWal};
 pub mod backend;

@@ -16,6 +16,28 @@ pub struct LocalObjectStorage {
     buffer_pool: Arc<AlignedBufferPool>,
 }
 
+/// Content-derived version token for the local CAS emulation. The cloud backends use
+/// the storage's native ETag; locally we hash the bytes so a matching token proves the
+/// object is unchanged.
+fn local_etag(bytes: &[u8]) -> String {
+    format!("{:08x}", hash(bytes))
+}
+
+/// Per-path async lock guarding the read-modify-write of `put_if`, so two conditional
+/// writes in the same process can't both read the same prior state and clobber each
+/// other. Cross-process fencing relies on the cloud backend's atomic CAS; this only
+/// makes the single-process local emulation correct (tests/dev). The registry holds one
+/// lock per distinct object path (bounded by the small set of reservation keys).
+fn local_put_lock(path: &std::path::Path) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<dashmap::DashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>> =
+        std::sync::OnceLock::new();
+    LOCKS
+        .get_or_init(dashmap::DashMap::new)
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
 impl LocalObjectStorage {
     pub fn new(base_path: PathBuf) -> Result<Self> {
         // Initialize buffer pool for object storage I/O
@@ -75,10 +97,63 @@ impl ObjectStorage for LocalObjectStorage {
         Ok(())
     }
 
+    async fn put_if(&self, key: &str, data: Bytes, expect: Precondition) -> Result<PutOutcome> {
+        let path = self.key_to_path(key)?;
+
+        // Serialize the read-compare-write for this path within the process.
+        let lock = local_put_lock(&path);
+        let _guard = lock.lock().await;
+
+        let current = match fs::read(&path).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        let precondition_ok = match (&expect, &current) {
+            (Precondition::Create, None) => true,
+            (Precondition::Create, Some(_)) => false,
+            (Precondition::Match(_), None) => false,
+            (Precondition::Match(v), Some(bytes)) => v.e_tag.as_deref() == Some(&local_etag(bytes)),
+        };
+        if !precondition_ok {
+            return Ok(PutOutcome::PreconditionFailed);
+        }
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let mut file = fs::File::create(&path).await?;
+        file.write_all(&data).await?;
+        file.sync_all().await?;
+
+        Ok(PutOutcome::Written(ObjectVersion {
+            e_tag: Some(local_etag(&data)),
+            version: None,
+        }))
+    }
+
     async fn get(&self, key: &str) -> Result<Bytes> {
         let path = self.key_to_path(key)?;
         match fs::read(&path).await {
             Ok(data) => Ok(Bytes::from(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(
+                crate::error::RustMqError::NotFound(format!("File not found: {:?}", path)),
+            ),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn get_versioned(&self, key: &str) -> Result<(Bytes, ObjectVersion)> {
+        let path = self.key_to_path(key)?;
+        match fs::read(&path).await {
+            Ok(data) => {
+                let version = ObjectVersion {
+                    e_tag: Some(local_etag(&data)),
+                    version: None,
+                };
+                Ok((Bytes::from(data), version))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(
                 crate::error::RustMqError::NotFound(format!("File not found: {:?}", path)),
             ),
@@ -507,6 +582,53 @@ impl UploadManager for UploadManagerImpl {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_put_if_local_cas() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = LocalObjectStorage::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // Create succeeds exactly once.
+        let v = match storage
+            .put_if("res/_epoch", Bytes::from("a"), Precondition::Create)
+            .await
+            .unwrap()
+        {
+            PutOutcome::Written(v) => v,
+            other => panic!("expected Written, got {other:?}"),
+        };
+        assert_eq!(
+            storage
+                .put_if("res/_epoch", Bytes::from("b"), Precondition::Create)
+                .await
+                .unwrap(),
+            PutOutcome::PreconditionFailed
+        );
+
+        // Update with the current version succeeds.
+        let _v2 = match storage
+            .put_if(
+                "res/_epoch",
+                Bytes::from("c"),
+                Precondition::Match(v.clone()),
+            )
+            .await
+            .unwrap()
+        {
+            PutOutcome::Written(v2) => v2,
+            other => panic!("expected Written, got {other:?}"),
+        };
+
+        // Update with the now-stale version is rejected and does not overwrite.
+        assert_eq!(
+            storage
+                .put_if("res/_epoch", Bytes::from("d"), Precondition::Match(v))
+                .await
+                .unwrap(),
+            PutOutcome::PreconditionFailed
+        );
+        assert_eq!(storage.get("res/_epoch").await.unwrap(), Bytes::from("c"));
+    }
 
     #[tokio::test]
     async fn test_local_object_storage() {

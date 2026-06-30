@@ -20,10 +20,22 @@ impl ObjectStorage for StorageBackend {
             Self::Cloud(s) => s.put(key, data).await,
         }
     }
+    async fn put_if(&self, key: &str, data: Bytes, expect: Precondition) -> Result<PutOutcome> {
+        match self {
+            Self::Local(s) => s.put_if(key, data, expect).await,
+            Self::Cloud(s) => s.put_if(key, data, expect).await,
+        }
+    }
     async fn get(&self, key: &str) -> Result<Bytes> {
         match self {
             Self::Local(s) => s.get(key).await,
             Self::Cloud(s) => s.get(key).await,
+        }
+    }
+    async fn get_versioned(&self, key: &str) -> Result<(Bytes, ObjectVersion)> {
+        match self {
+            Self::Local(s) => s.get_versioned(key).await,
+            Self::Cloud(s) => s.get_versioned(key).await,
         }
     }
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {

@@ -1,3 +1,5 @@
+use crate::storage::partition_store::LeadershipState;
+use crate::storage::reservation::{AcquireOutcome, ReservationService};
 use crate::{
     Result, error::RustMqError, health::HealthCheckService, proto::broker, proto_convert,
     replication::FollowerReplicationHandler, types as internal,
@@ -15,6 +17,14 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::error;
 
+/// Outcome of the leadership reservation check in the leadership RPCs.
+enum FenceResult {
+    /// Fencing disabled, not this leader, or reservation acquired — accept the RPC.
+    Proceed,
+    /// A peer holds a newer reservation — refuse the RPC as a stale leader.
+    Fenced { current_epoch: u64 },
+}
+
 /// gRPC service implementation for broker-to-broker communication
 /// All RPCs enforce leader epoch validation to prevent stale leader attacks
 #[derive(Clone)]
@@ -26,6 +36,11 @@ pub struct BrokerReplicationServiceImpl {
     broker_id: internal::BrokerId,
     /// Health check service for comprehensive broker health monitoring
     health_service: Arc<HealthCheckService>,
+    /// Object-level epoch fencing (split-brain safety). When set, the leadership RPCs
+    /// reserve the partition epoch in object storage and publish it to `leadership` for
+    /// the tiering loop to fence against. `None` ⇒ fencing disabled (single-broker/tests).
+    reservation: Option<Arc<ReservationService>>,
+    leadership: Option<Arc<LeadershipState>>,
 }
 
 impl BrokerReplicationServiceImpl {
@@ -35,6 +50,8 @@ impl BrokerReplicationServiceImpl {
             follower_handlers: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
             health_service,
+            reservation: None,
+            leadership: None,
         }
     }
 
@@ -46,12 +63,52 @@ impl BrokerReplicationServiceImpl {
             follower_handlers: Arc::new(RwLock::new(HashMap::new())),
             broker_id,
             health_service,
+            reservation: None,
+            leadership: None,
         }
     }
 
     /// Get reference to the health check service for component registration
     pub fn health_service(&self) -> Arc<HealthCheckService> {
         self.health_service.clone()
+    }
+
+    /// Wire object-level epoch fencing into the leadership RPCs. `leadership` must be the
+    /// same `Arc<LeadershipState>` handed to this broker's `PartitionStore`, so an epoch
+    /// reserved here is visible to the tiering loop's fence check.
+    pub fn with_fencing(
+        mut self,
+        reservation: Arc<ReservationService>,
+        leadership: Arc<LeadershipState>,
+    ) -> Self {
+        self.reservation = Some(reservation);
+        self.leadership = Some(leadership);
+        self
+    }
+
+    /// Reserve the partition's leader epoch when this broker is the designated leader,
+    /// publishing it to `leadership` for the tiering fence. Returns `Proceed` when
+    /// fencing is disabled, when this broker is not the leader, or when the reservation
+    /// was acquired; returns `Fenced` when a peer already holds a newer epoch.
+    async fn reserve_leadership(
+        &self,
+        tp: &internal::TopicPartition,
+        leader_id: &str,
+        epoch: u64,
+    ) -> Result<FenceResult> {
+        if leader_id != self.broker_id {
+            return Ok(FenceResult::Proceed);
+        }
+        let (Some(reservation), Some(leadership)) = (&self.reservation, &self.leadership) else {
+            return Ok(FenceResult::Proceed);
+        };
+        match reservation.acquire(tp, &self.broker_id, epoch).await? {
+            AcquireOutcome::Owned => {
+                leadership.set(tp, epoch, true);
+                Ok(FenceResult::Proceed)
+            }
+            AcquireOutcome::Fenced { current_epoch } => Ok(FenceResult::Fenced { current_epoch }),
+        }
     }
 
     /// Register a follower handler for a specific topic partition
@@ -281,6 +338,36 @@ impl broker::broker_replication_service_server::BrokerReplicationService
         // For leadership transfer, we need to coordinate with the controller
         // This is a simplified implementation - in practice would involve Raft consensus
         let new_epoch = current_epoch + 1;
+
+        // Epoch fencing: if this broker is taking leadership, reserve the new epoch first.
+        // If a peer already holds a newer reservation, refuse the transfer rather than
+        // letting this node tier as a stale leader.
+        match self
+            .reserve_leadership(
+                &internal_request.topic_partition,
+                &internal_request.new_leader_id,
+                new_epoch,
+            )
+            .await
+        {
+            Ok(FenceResult::Proceed) => {}
+            Ok(FenceResult::Fenced { current_epoch }) => {
+                let internal_response = internal::TransferLeadershipResponse {
+                    success: false,
+                    error_code: 1001, // STALE_LEADER_EPOCH
+                    error_message: Some(format!(
+                        "Transfer fenced: epoch {new_epoch} is stale (reservation holds {current_epoch})"
+                    )),
+                    new_leader_epoch: None,
+                };
+                let proto_response: broker::TransferLeadershipResponse = internal_response
+                    .try_into()
+                    .map_err(|e| Status::new(tonic::Code::Internal, format!("conv: {e}")))?;
+                return Ok(Response::new(proto_response));
+            }
+            Err(e) => return Err(Self::error_to_status(e)),
+        }
+
         handler.update_leadership(new_epoch, internal_request.new_leader_id.clone());
 
         let internal_response = internal::TransferLeadershipResponse {
@@ -350,6 +437,33 @@ impl broker::broker_replication_service_server::BrokerReplicationService
 
                 return Ok(Response::new(proto_response));
             }
+        }
+
+        // Epoch fencing: reserve the leader epoch before accepting the assignment.
+        match self
+            .reserve_leadership(
+                &internal_request.topic_partition,
+                &internal_request.leader_id,
+                internal_request.leader_epoch,
+            )
+            .await
+        {
+            Ok(FenceResult::Proceed) => {}
+            Ok(FenceResult::Fenced { current_epoch }) => {
+                let internal_response = internal::AssignPartitionResponse {
+                    success: false,
+                    error_code: 1001, // STALE_LEADER_EPOCH
+                    error_message: Some(format!(
+                        "Assignment fenced: epoch {} is stale (reservation holds {})",
+                        internal_request.leader_epoch, current_epoch
+                    )),
+                };
+                let proto_response: broker::AssignPartitionResponse = internal_response
+                    .try_into()
+                    .map_err(|e| Status::new(tonic::Code::Internal, format!("conv: {e}")))?;
+                return Ok(Response::new(proto_response));
+            }
+            Err(e) => return Err(Self::error_to_status(e)),
         }
 
         // Create a new follower handler for this partition
@@ -1375,6 +1489,62 @@ mod tests {
                 .max()
                 .unwrap_or(0)
         }
+    }
+
+    #[tokio::test]
+    async fn test_assignment_fencing() {
+        use crate::storage::cloud_storage::CloudObjectStorage;
+        use crate::storage::traits::ObjectStorage;
+        use crate::storage::{AcquireOutcome, EpochSource, LeadershipState, ReservationService};
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStorage> =
+            Arc::new(CloudObjectStorage::new(Arc::new(InMemory::new())));
+        let reservation = Arc::new(ReservationService::new(store.clone()));
+        let leadership = Arc::new(LeadershipState::new("broker-A".to_string()));
+
+        let service = BrokerReplicationServiceImpl::new("broker-A".to_string())
+            .with_fencing(reservation.clone(), leadership.clone());
+
+        let tp = TopicPartition {
+            topic: "t".to_string(),
+            partition: 0,
+        };
+
+        // A is assigned leadership at epoch 5 → proceeds and publishes the epoch.
+        assert!(matches!(
+            service
+                .reserve_leadership(&tp, "broker-A", 5)
+                .await
+                .unwrap(),
+            FenceResult::Proceed
+        ));
+        assert_eq!(leadership.current_epoch(&tp), Some(5));
+
+        // A peer takes over at epoch 6 through the shared object store.
+        let b_res = ReservationService::new(store.clone());
+        assert_eq!(
+            b_res.acquire(&tp, "broker-B", 6).await.unwrap(),
+            AcquireOutcome::Owned
+        );
+
+        // A stale re-assignment to A at epoch 5 is now fenced (rejected).
+        assert!(matches!(
+            service
+                .reserve_leadership(&tp, "broker-A", 5)
+                .await
+                .unwrap(),
+            FenceResult::Fenced { current_epoch: 6 }
+        ));
+
+        // An assignment naming a different leader is a no-op for this broker.
+        assert!(matches!(
+            service
+                .reserve_leadership(&tp, "broker-other", 9)
+                .await
+                .unwrap(),
+            FenceResult::Proceed
+        ));
     }
 
     #[tokio::test]

@@ -14,8 +14,9 @@ use crate::replication::grpc_client::{
 };
 use crate::replication::manager::ReplicationManager;
 use crate::storage::{
-    Cache, ColdIndexManifest, LocalObjectStorage, LruCache, PartitionStore, RecordLog,
-    SegmentedLog, SegmentedWal, UploadManager, UploadManagerImpl,
+    Cache, ColdIndexManifest, EpochSource, LeadershipState, LocalObjectStorage, LruCache,
+    PartitionStore, RecordLog, ReservationService, SegmentedLog, SegmentedWal, UploadManager,
+    UploadManagerImpl,
 };
 use crate::types::*;
 use async_trait::async_trait;
@@ -37,6 +38,10 @@ pub struct Broker {
     quic_server: Option<QuicServer>,
     grpc_shutdown_tx: Option<oneshot::Sender<()>>,
     background_tasks: Vec<JoinHandle<()>>,
+    /// Object-level epoch fencing, wired only for cloud (multi-broker) storage. Held here
+    /// so `start` can pass them to the gRPC leadership service. `None` for local/dev.
+    reservation: Option<Arc<ReservationService>>,
+    leadership: Option<Arc<LeadershipState>>,
 }
 
 /// Broker lifecycle state
@@ -160,15 +165,32 @@ impl Broker {
         let cold_index =
             Arc::new(ColdIndexManifest::open(config.wal.path.join("cold_index.manifest")).await?);
 
+        // Object-level epoch fencing (split-brain safety) is wired only for cloud storage,
+        // where multiple brokers share one bucket and a stale leader could clobber cold
+        // data. Local single-broker/dev storage has no such peer, so fencing stays off
+        // (and tiering is never gated on an absent leadership signal).
+        let (reservation, leadership): (
+            Option<Arc<ReservationService>>,
+            Option<Arc<LeadershipState>>,
+        ) = match &config.object_storage.storage_type {
+            crate::config::StorageType::Gcs => (
+                Some(Arc::new(ReservationService::new(object_storage.clone()))),
+                Some(Arc::new(LeadershipState::new(config.broker.id.clone()))),
+            ),
+            _ => (None, None),
+        };
+
         // Single partition-aware storage engine over the shared WAL. The hot in-memory
         // serving tier is bounded by write_cache_size_bytes; appends apply backpressure
         // (force-seal + tier) when it is full, keeping memory bounded.
-        let store = PartitionStore::new(
+        let store = PartitionStore::new_with_fencing(
             wal,
             upload_manager,
             cache,
             config.cache.write_cache_size_bytes,
             cold_index,
+            reservation.clone(),
+            leadership.clone().map(|l| l as Arc<dyn EpochSource>),
         )
         .await?;
 
@@ -247,6 +269,8 @@ impl Broker {
             quic_server: Some(quic_server),
             grpc_shutdown_tx: None,
             background_tasks: Vec::new(),
+            reservation,
+            leadership,
         })
     }
 
@@ -290,9 +314,15 @@ impl Broker {
             "Starting gRPC replication service on {}",
             self.config.network.rpc_listen
         );
-        let grpc_service = Arc::new(BrokerReplicationServiceImpl::new(
-            self.config.broker.id.clone(),
-        ));
+        let mut grpc_service_impl =
+            BrokerReplicationServiceImpl::new(self.config.broker.id.clone());
+        // Wire epoch fencing so controller leadership RPCs reserve the partition epoch
+        // (cloud deployments only; `None` for local/dev).
+        if let (Some(reservation), Some(leadership)) = (&self.reservation, &self.leadership) {
+            grpc_service_impl =
+                grpc_service_impl.with_fencing(reservation.clone(), leadership.clone());
+        }
+        let grpc_service = Arc::new(grpc_service_impl);
 
         // Create shutdown channel
         let (grpc_shutdown_tx, grpc_shutdown_rx) = oneshot::channel::<()>();
