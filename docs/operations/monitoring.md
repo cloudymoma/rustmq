@@ -19,9 +19,19 @@ Each RustMQ component exposes a `/metrics` HTTP endpoint for scraping:
 - `rustmq_fetch_latency_ms`: Fetch operation latency histogram.
 
 ### Storage
-- `rustmq_wal_append_latency_us`: WAL write latency (Direct I/O).
-- `rustmq_object_storage_upload_bytes_total`: Data uploaded to GCS.
-- `rustmq_cache_hit_ratio`: LruCache efficiency.
+> **Serving model:** the WAL is durability/recovery-only — consumer fetches are served
+> from the **in-memory hot tier** (recent, un-tiered records) and **object storage** (cold),
+> never from the WAL. The hot tier is bounded by `cache.write_cache_size_bytes`: when it
+> fills, appends apply backpressure (soft limit force-seals + tiers to evict; hard limit
+> blocks until tiering frees memory). Cold reads use a separate `cache.read_cache_size_bytes`
+> download cache. Background tiering uploads sealed segments and compacts small cold objects;
+> a durable broker-local cold index keeps cold data readable after restart/failover.
+
+- `rustmq_wal_append_latency_us`: WAL write (durability) latency — Direct I/O on the active segment.
+- `rustmq_object_storage_upload_bytes_total`: Data tiered (uploaded) to object storage.
+- `rustmq_cache_hit_ratio`: Cold-read download-cache (LruCache) efficiency. A low ratio with
+  rising fetch latency suggests the hot-tier budget is too small (records tier before consumers
+  catch up, pushing reads to object storage).
 
 ### Reliability
 - `rustmq_replication_lag_bytes`: Replication offset lag between leader and followers.

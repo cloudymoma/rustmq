@@ -56,7 +56,7 @@ RustMQ implements a **storage-compute separation architecture** with stateless b
 ### Key Architectural Principles
 
 1. **Storage-Compute Separation**: Brokers are stateless; all persistent data in shared object storage
-2. **Intelligent Tiered Storage**: Hot data in WAL/cache, cold data in object storage
+2. **Intelligent Tiered Storage**: Recent data is served from an in-memory hot tier; cold data lives in object storage. The local WAL is **durability/recovery-only** — consumer reads are never served from it (AutoMQ-style separation, keeping RustMQ's sub-ms local-WAL write latency)
 3. **Replication Without Data Movement**: Shared storage enables instant failover
 4. **QUIC/HTTP3 Protocol**: Modern transport for reduced latency and head-of-line blocking elimination
 5. **Raft Consensus**: Distributed coordination for metadata and cluster management
@@ -69,7 +69,7 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 - **🔵 Client Layer** - Production-ready SDKs (Rust, Go) with mTLS support and comprehensive admin CLI with complete security management suite
 - **🟡 Enterprise Security Layer** - Zero Trust architecture with mTLS authentication, multi-level ACL cache (547ns/1310ns/754ns), certificate management, and 2M+ ops/sec authorization capacity
 - **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore, enhanced QUIC/gRPC servers featuring circuit breaker patterns, connection pooling, and real-time health monitoring
-- **🟠 Tiered Storage** - Intelligent WAL with upload triggers, workload-isolated caching (hot/cold), and optimized object storage with bandwidth limiting
+- **🟠 Tiered Storage** - Durability-only segmented WAL (append + sequential recovery; O_DIRECT active segment), a memory-bounded in-memory hot serving tier (byte budget + append backpressure), background tiering with small-object compaction, a durable broker-local cold index for restart/failover, and object storage with bandwidth limiting + object-level epoch fencing (split-brain safety)
 - **🟣 Controller Cluster** - Raft consensus with distributed ACL storage, metadata management, cluster coordination, and comprehensive admin REST API with advanced rate limiting
 - **🔴 Operational Layer** - Production-ready operations with zero-downtime rolling upgrades, automated scaling with partition rebalancing, consumer group coordination, and Kubernetes integration with volume recovery
 - **🟦 Integration Layer** - WebAssembly ETL processing with sandboxing, BigQuery streaming with schema mapping, and comprehensive monitoring infrastructure
@@ -77,8 +77,8 @@ The diagram above illustrates RustMQ's enhanced layered architecture with enterp
 ### Data Flow Patterns
 
 #### Core Message Flows
-- **Write Path**: `Client → QUIC → Broker → WAL → Cache → Object Storage`
-- **Read Path**: `Client ← QUIC ← Broker ← Cache ← Object Storage (if cache miss)`
+- **Write Path**: `Client → QUIC → Broker → WAL (durability) + in-memory hot tier`; background tiering seals/uploads sealed segments `→ Object Storage`
+- **Read Path**: `Client ← QUIC ← Broker ← in-memory hot tier` (un-tiered offsets) `← Object Storage` (cold) — **never from the WAL**
 - **Replication**: `Leader → Followers (Metadata Only)` - no data movement due to shared storage
 
 #### Security & Authentication Flows
