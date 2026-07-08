@@ -60,14 +60,13 @@ impl ObjectStorageConfig {
     /// Validate storage configuration for security issues.
     pub fn validate(&self) -> crate::Result<()> {
         // Reject static credentials for GCS in production (mandate Workload Identity)
-        if matches!(self.storage_type, StorageType::Gcs) {
-            if self.access_key.as_ref().is_some_and(|k| !k.is_empty())
-                || self.secret_key.as_ref().is_some_and(|k| !k.is_empty())
-            {
-                return Err(crate::error::RustMqError::InvalidConfig(
-                    "object_storage.access_key/secret_key are strictly forbidden with GCS storage type.                      On GKE, use Workload Identity (DefaultCredentialProvider).".to_string()
-                ));
-            }
+        if matches!(self.storage_type, StorageType::Gcs)
+            && (self.access_key.as_ref().is_some_and(|k| !k.is_empty())
+                || self.secret_key.as_ref().is_some_and(|k| !k.is_empty()))
+        {
+            return Err(crate::error::RustMqError::InvalidConfig(
+                "object_storage.access_key/secret_key are strictly forbidden with GCS storage type.                      On GKE, use Workload Identity (DefaultCredentialProvider).".to_string()
+            ));
         }
 
         // Validate S3 credentials are present when using S3

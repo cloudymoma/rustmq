@@ -213,7 +213,7 @@ impl Broker {
                 .network
                 .rpc_listen
                 .split(':')
-                .last()
+                .next_back()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(9093),
         );
@@ -398,7 +398,7 @@ impl Broker {
             .network
             .rpc_listen
             .split(':')
-            .last()
+            .next_back()
             .and_then(|s| s.parse::<u16>().ok())
             .map(|p| p + 550)
             .unwrap_or(9643);
@@ -889,7 +889,6 @@ mod tests {
     }
 }
 
-use crate::consumer_group::coordinator::GroupCoordinatorManager;
 use crate::network::quic_server::ConsumerGroupHandler;
 
 #[async_trait]
@@ -926,7 +925,7 @@ impl ConsumerGroupHandler for BrokerHandler {
             .network
             .quic_listen
             .split(':')
-            .last()
+            .next_back()
             .and_then(|s| s.parse().ok())
             .unwrap_or(9092);
 

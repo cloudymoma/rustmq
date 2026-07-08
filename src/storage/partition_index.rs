@@ -108,10 +108,10 @@ impl PartitionIndex {
     /// the resulting gap return `Empty`).
     pub fn remove_hot(&self, tp: &TopicPartition, offset: Offset) {
         let mut guard = self.inner.write();
-        if let Some(entries) = guard.get_mut(tp) {
-            if let Some(old) = entries.hot.remove(&offset) {
-                self.hot_bytes.fetch_sub(old.size as u64, Ordering::Relaxed);
-            }
+        if let Some(entries) = guard.get_mut(tp)
+            && let Some(old) = entries.hot.remove(&offset)
+        {
+            self.hot_bytes.fetch_sub(old.size as u64, Ordering::Relaxed);
         }
     }
 
@@ -269,14 +269,14 @@ impl PartitionIndex {
         }
 
         // Cold path: floor-lookup the uploaded range covering `offset`.
-        if let Some((&start, range)) = entries.cold.range(..=offset).next_back() {
-            if offset < range.end_offset {
-                return ReadPlan::Cold {
-                    object_key: range.object_key.clone(),
-                    start_offset: start,
-                    end_offset: range.end_offset,
-                };
-            }
+        if let Some((&start, range)) = entries.cold.range(..=offset).next_back()
+            && offset < range.end_offset
+        {
+            return ReadPlan::Cold {
+                object_key: range.object_key.clone(),
+                start_offset: start,
+                end_offset: range.end_offset,
+            };
         }
 
         ReadPlan::Empty

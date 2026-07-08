@@ -2,8 +2,8 @@ mod common;
 
 use bytes::Bytes;
 use common::gcs::GcsTestConfig;
-use object_store::ObjectStore;
 use object_store::gcp::{GoogleCloudStorage, GoogleCloudStorageBuilder};
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::sync::Arc;
 
 #[tokio::test]

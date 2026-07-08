@@ -47,6 +47,10 @@ GEMINI.md
 *-credentials.json
 service-account*.json
 
+# Cargo registry credentials (never commit; .cargo/config.toml + audit.toml stay tracked)
+.cargo/credentials
+.cargo/credentials.toml
+
 # RustMQ Runtime & Test Artifacts
 data/
 logs/

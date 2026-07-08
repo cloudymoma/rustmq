@@ -206,14 +206,14 @@ impl Config {
         }
 
         // Create WAL directory if it doesn't exist
-        if !self.wal.path.exists() {
-            if let Err(e) = std::fs::create_dir_all(&self.wal.path) {
-                return Err(crate::error::RustMqError::InvalidConfig(format!(
-                    "Cannot create wal.path {}: {}",
-                    self.wal.path.display(),
-                    e
-                )));
-            }
+        if !self.wal.path.exists()
+            && let Err(e) = std::fs::create_dir_all(&self.wal.path)
+        {
+            return Err(crate::error::RustMqError::InvalidConfig(format!(
+                "Cannot create wal.path {}: {}",
+                self.wal.path.display(),
+                e
+            )));
         }
 
         Ok(())
@@ -284,16 +284,15 @@ impl Config {
             ));
         }
 
-        if let crate::config::StorageType::Local { path } = &self.object_storage.storage_type {
-            if !path.exists() {
-                if let Err(e) = std::fs::create_dir_all(path) {
-                    return Err(crate::error::RustMqError::InvalidConfig(format!(
-                        "Cannot create object_storage.storage_type.Local.path {}: {}",
-                        path.display(),
-                        e
-                    )));
-                }
-            }
+        if let crate::config::StorageType::Local { path } = &self.object_storage.storage_type
+            && !path.exists()
+            && let Err(e) = std::fs::create_dir_all(path)
+        {
+            return Err(crate::error::RustMqError::InvalidConfig(format!(
+                "Cannot create object_storage.storage_type.Local.path {}: {}",
+                path.display(),
+                e
+            )));
         }
 
         Ok(())
@@ -490,13 +489,13 @@ impl Config {
 
             let mut prev_priority = None;
             for stage in &pipeline.stages {
-                if let Some(prev) = prev_priority {
-                    if stage.priority <= prev {
-                        return Err(crate::error::RustMqError::InvalidConfig(format!(
-                            "etl.pipelines[{}] stages must have increasing priority values",
-                            i
-                        )));
-                    }
+                if let Some(prev) = prev_priority
+                    && stage.priority <= prev
+                {
+                    return Err(crate::error::RustMqError::InvalidConfig(format!(
+                        "etl.pipelines[{}] stages must have increasing priority values",
+                        i
+                    )));
                 }
                 prev_priority = Some(stage.priority);
 

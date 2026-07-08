@@ -1106,9 +1106,7 @@ impl GrpcNetworkHandler {
 
         // Initialize health tracking for the broker
         let mut health = self.health_tracker.write();
-        health
-            .entry(broker_id)
-            .or_insert_with(BrokerHealth::default);
+        health.entry(broker_id).or_default();
     }
 
     /// Remove a broker from the registry and close its connection
@@ -1225,9 +1223,7 @@ impl GrpcNetworkHandler {
     /// Update broker health state based on request outcome
     fn update_broker_health(&self, broker_id: &internal::BrokerId, success: bool) {
         let mut health = self.health_tracker.write();
-        let broker_health = health
-            .entry(broker_id.clone())
-            .or_insert_with(BrokerHealth::default);
+        let broker_health = health.entry(broker_id.clone()).or_default();
 
         broker_health.total_requests += 1;
 

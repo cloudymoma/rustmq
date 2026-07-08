@@ -155,9 +155,9 @@ impl WasmInstancePool {
             // Enable async support for non-blocking execution
             wasm_config.async_support(true);
 
-            // Set memory limits (will be overridden per-instance)
-            wasm_config.static_memory_maximum_size(512 * 1024 * 1024); // 512MB max per instance
-            wasm_config.static_memory_guard_size(128 * 1024); // 128KB guard pages
+            // Set memory limits (will be overridden per-instance via StoreLimits)
+            wasm_config.memory_reservation(512 * 1024 * 1024); // 512MB reserved per instance
+            wasm_config.memory_guard_size(128 * 1024); // 128KB guard pages
 
             // Enable fuel metering for CPU limits
             wasm_config.consume_fuel(true);

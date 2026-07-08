@@ -8,7 +8,7 @@ use crate::config::CompactionConfig;
 use crate::storage::cold_index::{ColdIndexManifest, ColdSegment};
 use crate::storage::partition_index::PartitionIndex;
 use crate::storage::traits::{UploadManager, WalSegment};
-use crate::types::{Offset, TopicPartition, WalRecord};
+use crate::types::{TopicPartition, WalRecord};
 use bytes::Bytes;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -185,9 +185,9 @@ fn plan_partition_compaction(
 
     for seg in segments {
         let is_small = seg.size_bytes < config.small_threshold_bytes;
-        let is_contiguous = current_run.last().map_or(true, |last: &ColdSegment| {
-            last.end_offset == seg.start_offset
-        });
+        let is_contiguous = current_run
+            .last()
+            .is_none_or(|last: &ColdSegment| last.end_offset == seg.start_offset);
 
         if !is_small || !is_contiguous {
             if current_run.len() >= 2 {

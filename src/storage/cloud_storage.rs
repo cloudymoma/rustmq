@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::TryStreamExt;
 use futures::stream::StreamExt;
 use object_store::buffered::BufWriter;
-use object_store::{ObjectStore, PutPayload, path::Path};
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -20,12 +20,6 @@ fn validate_key(key: &str) -> Result<()> {
     }
     Ok(())
 }
-
-use std::time::Duration;
-use tokio::time::sleep;
-
-const MAX_RETRIES: u32 = 3;
-const BASE_RETRY_DELAY_MS: u64 = 500;
 
 pub struct CloudObjectStorage {
     store: Arc<dyn ObjectStore>,
@@ -172,21 +166,8 @@ impl ObjectStorage for CloudObjectStorage {
 
     async fn get_range(&self, key: &str, range: Range<u64>) -> Result<Bytes> {
         validate_key(key)?;
-        let start = usize::try_from(range.start).map_err(|_| {
-            crate::error::RustMqError::Storage(format!(
-                "Range start {} exceeds platform capacity",
-                range.start
-            ))
-        })?;
-        let end = usize::try_from(range.end).map_err(|_| {
-            crate::error::RustMqError::Storage(format!(
-                "Range end {} exceeds platform capacity",
-                range.end
-            ))
-        })?;
-
         let options = object_store::GetOptions {
-            range: Some(object_store::GetRange::Bounded(start..end)),
+            range: Some(object_store::GetRange::Bounded(range.start..range.end)),
             ..Default::default()
         };
         let result = self
@@ -281,9 +262,7 @@ impl ObjectStorage for CloudObjectStorage {
                 }
                 e => crate::error::RustMqError::Storage(e.to_string()),
             })?;
-        let stream = get_result
-            .into_stream()
-            .map_err(|e| std::io::Error::other(e));
+        let stream = get_result.into_stream().map_err(std::io::Error::other);
         Ok(Box::new(StreamReader::new(stream)))
     }
 

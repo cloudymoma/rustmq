@@ -297,10 +297,10 @@ impl PartitionStore {
                 }
                 ReadPlan::Cold { object_key, .. } => {
                     let cache_key = format!("{tp}:{offset}");
-                    if let Some(bytes) = self.cache.get(&cache_key).await? {
-                        if let Ok(records) = bincode::deserialize::<Vec<WalRecord>>(&bytes) {
-                            return Ok(records);
-                        }
+                    if let Some(bytes) = self.cache.get(&cache_key).await?
+                        && let Ok(records) = bincode::deserialize::<Vec<WalRecord>>(&bytes)
+                    {
+                        return Ok(records);
                     }
 
                     match self.upload_manager.download_segment(&object_key).await {
@@ -424,6 +424,21 @@ impl PartitionStore {
     /// Idempotent: re-uploading the same key, re-registering the same range in the
     /// manifest, and re-flipping the same range are all no-ops, so a crash anywhere in
     /// this sequence is safely retried after recovery re-indexes the segment as hot.
+    /// True iff this node may tier `tp` right now. Fencing off (no reservation/epoch
+    /// source) is always allowed; otherwise this node must still hold `tp`'s reservation
+    /// at its current epoch. Re-reads the reservation object so a takeover is observed.
+    async fn may_tier(&self, tp: &TopicPartition) -> Result<bool> {
+        match self.reservation.as_ref().zip(self.epoch_source.as_ref()) {
+            Some((reservation, epoch_source)) => match epoch_source.current_epoch(tp) {
+                Some(epoch) => reservation.verify(tp, epoch_source.node_id(), epoch).await,
+                // Not leader for this partition → must not tier its data.
+                None => Ok(false),
+            },
+            // Fencing disabled → single-broker/local dev; always allowed.
+            None => Ok(true),
+        }
+    }
+
     async fn tier_segment(&self, seq: u64) -> Result<()> {
         let records = self.wal.read_segment_records(seq).await?;
         if records.is_empty() {
@@ -441,31 +456,22 @@ impl PartitionStore {
                 .push(record);
         }
 
-        // Epoch fencing: only active when both a reservation service and an epoch source
-        // are configured (cloud/multi-broker). When active, a partition group is uploaded
-        // only if this node still leads it at its current epoch — preventing a stale
-        // leader from clobbering the real leader's cold object.
-        let fencing = self.reservation.as_ref().zip(self.epoch_source.as_ref());
+        // Epoch fencing (active only when a reservation service + epoch source are
+        // configured — cloud/multi-broker): a partition group is committed only if this
+        // node still leads it at its current epoch, preventing a stale leader from
+        // clobbering the real leader's cold data. Verified twice — before the upload
+        // (cheap reject) and again after it (closes the verify-then-upload TOCTOU on the
+        // durable-commit side).
         let mut fenced_any = false;
 
         for (tp, recs) in groups {
-            if let Some((reservation, epoch_source)) = fencing {
-                let allowed = match epoch_source.current_epoch(&tp) {
-                    Some(epoch) => {
-                        reservation
-                            .verify(&tp, epoch_source.node_id(), epoch)
-                            .await?
-                    }
-                    // Not leader for this partition → must not tier its data.
-                    None => false,
-                };
-                if !allowed {
-                    tracing::warn!(
-                        "tiering fenced for {tp}: stale/invalid leadership; skipping upload"
-                    );
-                    fenced_any = true;
-                    continue;
-                }
+            // Fence BEFORE the upload: cheap reject for a stale/non-leader node.
+            if !self.may_tier(&tp).await? {
+                tracing::warn!(
+                    "tiering fenced (pre-upload) for {tp}: stale/invalid leadership; skipping"
+                );
+                fenced_any = true;
+                continue;
             }
 
             // A partition's records within a single segment are a contiguous offset run.
@@ -481,6 +487,20 @@ impl PartitionStore {
                 topic_partition: tp.clone(),
             };
             let object_key = self.upload_manager.upload_segment(segment).await?;
+
+            // Fence AGAIN after the (slow) upload, before the durable commit: if leadership
+            // changed mid-upload, do not register the cold-index mapping or reclaim the WAL.
+            // The uploaded bytes are safe to leave — object key + body are deterministic
+            // across replicas, so a competing write is byte-identical; only the durable
+            // index and WAL reclaim must be gated on still leading.
+            if !self.may_tier(&tp).await? {
+                tracing::warn!(
+                    "tiering fenced (post-upload) for {tp}: leadership changed mid-upload; not committing"
+                );
+                fenced_any = true;
+                continue;
+            }
+
             // Durably record the tiered range BEFORE evicting its in-memory copy, so a
             // crash can never leave cold data without an offset→object mapping.
             self.cold_index
