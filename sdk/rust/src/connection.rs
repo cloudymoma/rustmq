@@ -3,6 +3,8 @@ use crate::{
     error::{ClientError, Result},
     security::{SecurityContext, SecurityManager},
 };
+use rustmq::network::{MetadataRequest, MetadataResponse};
+use rustmq::types::BrokerInfo;
 use quinn::{
     ClientConfig as QuinnClientConfig, Connection as QuicConnection, Endpoint, TransportConfig,
     VarInt,
@@ -514,6 +516,86 @@ impl Connection {
         Ok(())
     }
 
+    /// Query metadata from an active broker to discover the cluster topology
+    pub async fn discover_brokers(&self) -> Result<Vec<BrokerInfo>> {
+        let request = MetadataRequest { topics: vec![] };
+        let request_bytes = bincode::serialize(&request)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
+        // Send request using RequestType::Metadata (3)
+        let response_bytes = self
+            .send_request(rustmq::types::RequestType::Metadata as u8, request_bytes)
+            .await?;
+
+        let response: MetadataResponse = bincode::deserialize(&response_bytes)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
+        Ok(response.brokers)
+    }
+
+    /// Update the connection pool with the new list of brokers
+    pub async fn update_connections(&self, active_brokers: Vec<BrokerInfo>) -> Result<()> {
+        let mut target_addrs = std::collections::HashSet::new();
+
+        for broker in &active_brokers {
+            let addr_str = format!("{}:{}", broker.host, broker.port_quic);
+            if let Ok(addrs) = addr_str.to_socket_addrs() {
+                for addr in addrs {
+                    target_addrs.insert(addr);
+                }
+            }
+        }
+
+        let mut connections = self.connections.write().await;
+        let current_addrs: Vec<SocketAddr> = connections.keys().copied().collect();
+
+        // 1. Remove connections to brokers no longer in the active set
+        for addr in &current_addrs {
+            if !target_addrs.contains(addr) {
+                if let Some(entry) = connections.remove(addr) {
+                    info!("Removing decommissioned broker connection: {}", addr);
+                    entry.connection.close(0u8.into(), b"Broker decommissioned");
+                }
+            }
+        }
+
+        let server_name = self.config
+            .tls_config
+            .as_ref()
+            .and_then(|tls| tls.server_name.clone())
+            .unwrap_or_else(|| "localhost".to_string());
+
+        // 2. Add connections to newly discovered brokers
+        for addr in target_addrs {
+            if !connections.contains_key(&addr) {
+                info!("Discovering new broker: {}", addr);
+                match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    Self::connect_with_retry(
+                        &self.endpoint,
+                        addr,
+                        &server_name,
+                        self.config.connect_timeout,
+                        &self.config,
+                    )
+                ).await {
+                    Ok(Ok(conn_entry)) => {
+                        connections.insert(addr, conn_entry);
+                        info!("Successfully connected to discovered broker: {}", addr);
+                    }
+                    Ok(Err(e)) => {
+                        error!("Failed to connect to discovered broker {}: {}", addr, e);
+                    }
+                    Err(_) => {
+                        error!("Connection to discovered broker {} timed out", addr);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Send a request and wait for response with security context
     #[instrument(skip(self, request))]
     pub async fn send_request(&self, request_type: u8, request: Vec<u8>) -> Result<Vec<u8>> {
@@ -575,7 +657,7 @@ impl Connection {
         // Read response with timeout
         let recv_result = timeout(
             self.config.request_timeout,
-            Self::read_response(&mut recv_stream, request_id),
+            Self::read_response(&mut recv_stream, request_type, request_id),
         )
         .await;
 
@@ -598,6 +680,7 @@ impl Connection {
     /// Read response from stream
     async fn read_response(
         recv_stream: &mut quinn::RecvStream,
+        expected_type: u8,
         _expected_request_id: Uuid, // Not used in simplified protocol
     ) -> Result<Vec<u8>> {
         // Read response type byte (1 = Produce response)
@@ -628,10 +711,11 @@ impl Connection {
             return Err(ClientError::Broker(format!("Broker error: {}", error_msg)));
         }
 
-        // Verify it's a Produce response (type 1)
-        if type_byte[0] != 1 {
+        // Verify it matches expected type
+        if type_byte[0] != expected_type {
             return Err(ClientError::Protocol(format!(
-                "Unexpected response type: expected 1 (Produce), got {}",
+                "Unexpected response type: expected {}, got {}",
+                expected_type,
                 type_byte[0]
             )));
         }
