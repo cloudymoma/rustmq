@@ -755,12 +755,43 @@ impl MetadataHandler for BrokerHandler {
         &self,
         _request: crate::network::quic_server::MetadataRequest,
     ) -> Result<crate::network::quic_server::MetadataResponse> {
+        let quic_port = self
+            .config
+            .network
+            .quic_listen
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9092);
+            
+        let rpc_port = self
+            .config
+            .network
+            .rpc_listen
+            .split(':')
+            .next_back()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9093);
+            
+        let mut host = self
+            .config
+            .network
+            .quic_listen
+            .split(':')
+            .next()
+            .unwrap_or("localhost")
+            .to_string();
+            
+        if host == "0.0.0.0" {
+            host = "127.0.0.1".to_string();
+        }
+
         Ok(crate::network::quic_server::MetadataResponse {
             brokers: vec![BrokerInfo {
                 id: self.config.broker.id.clone(),
-                host: "localhost".to_string(),
-                port_quic: 9092,
-                port_rpc: 9093,
+                host,
+                port_quic: quic_port,
+                port_rpc: rpc_port,
                 rack_id: self.config.broker.rack_id.clone(),
             }],
             topics_metadata: vec![],
@@ -886,6 +917,27 @@ mod tests {
         // Try to start again (should fail)
         let result = broker.start().await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata_handler_returns_configured_ports() {
+        ensure_crypto_provider();
+        let mut config = get_test_config();
+        config.network.quic_listen = "127.0.0.1:19092".to_string();
+        config.network.rpc_listen = "127.0.0.1:19093".to_string();
+        
+        let broker = Broker::from_config(config).await.unwrap();
+        let handler = broker.broker_handler.clone();
+        
+        let request = crate::network::quic_server::MetadataRequest {
+            topics: vec![],
+        };
+        
+        let response = handler.handle_metadata(request).await.unwrap();
+        assert_eq!(response.brokers.len(), 1);
+        assert_eq!(response.brokers[0].port_quic, 19092);
+        assert_eq!(response.brokers[0].port_rpc, 19093);
+        assert_eq!(response.brokers[0].host, "127.0.0.1");
     }
 }
 
