@@ -36,6 +36,9 @@ pub struct ClientConfig {
 
     /// Authentication settings
     pub auth: Option<AuthConfig>,
+
+    /// Dynamic broker discovery interval (None to disable)
+    pub discovery_interval: Option<Duration>,
 }
 
 /// TLS configuration for secure RustMQ connections
@@ -404,6 +407,7 @@ impl Default for ClientConfig {
             retry_config: RetryConfig::default(),
             compression: CompressionConfig::default(),
             auth: None,
+            discovery_interval: Some(Duration::from_secs(30)),
         }
     }
 }
