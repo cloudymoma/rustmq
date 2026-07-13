@@ -20,6 +20,7 @@ fn create_test_configs() -> (ClientConfig, ProducerConfig) {
         retry_config: RetryConfig::default(),
         compression: Default::default(),
         auth: None,
+        ..Default::default()
     };
 
     let producer_config = ProducerConfig {

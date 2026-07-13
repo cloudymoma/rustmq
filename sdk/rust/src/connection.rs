@@ -99,6 +99,11 @@ impl Connection {
         // Start background health check task
         connection.start_health_check_task();
 
+        // Start discovery task if configured
+        if let Some(interval) = config.discovery_interval {
+            connection.start_discovery_task(interval);
+        }
+
         Ok(connection)
     }
 
@@ -909,6 +914,31 @@ impl Connection {
             Ok(Err(_)) => Ok(false),
             Err(_) => Ok(false), // Timeout
         }
+    }
+
+    /// Start background broker discovery task
+    fn start_discovery_task(&self, interval: Duration) {
+        let connection_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+            // Skip first tick because we just connected
+            interval_timer.tick().await;
+
+            loop {
+                interval_timer.tick().await;
+                debug!("Running background broker discovery...");
+                match connection_clone.discover_brokers().await {
+                    Ok(brokers) => {
+                        if let Err(e) = connection_clone.update_connections(brokers).await {
+                            error!("Failed to update connections after discovery: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to discover brokers: {}", e);
+                    }
+                }
+            }
+        });
     }
 
     /// Start background health check task

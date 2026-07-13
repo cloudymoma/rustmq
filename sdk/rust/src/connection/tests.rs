@@ -27,6 +27,7 @@ mod tests {
             },
             compression: Default::default(),
             auth: None,
+            ..Default::default()
         }
     }
 
