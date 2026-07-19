@@ -125,35 +125,11 @@ impl BigQueryWriter for StreamingInsertsClient {
             return Ok(InsertResult::failure(transformation_errors, stats));
         }
 
-        // TODO: Implement proper BigQuery insert_all API call
-        // For now, return a placeholder result to fix compilation
-        let api_start = Instant::now();
-
-        // Simulate successful insert for compilation
-        let _result: Result<()> = Ok(());
-        let api_time = api_start.elapsed();
-        let total_time = start_time.elapsed();
-
-        let stats = InsertStats {
-            duration_ms: total_time.as_millis() as u64,
-            transformation_time_ms: transformation_time.as_millis() as u64,
-            api_time_ms: api_time.as_millis() as u64,
-            bytes_sent: batch.metadata.size_bytes,
-            retry_count: batch.metadata.retry_attempt,
-        };
-
-        // Return success for now - this needs proper BigQuery API implementation
-        let rows_inserted = batch.messages.len() - transformation_errors.len();
-        info!(
-            "Mock: Successfully would insert {} rows to {}.{}.{} in {}ms",
-            rows_inserted,
-            self.config.project_id,
-            self.config.dataset,
-            self.config.table,
-            stats.duration_ms
-        );
-
-        Ok(InsertResult::success(rows_inserted, stats))
+        // Real BigQuery insert_all API call is pending implementation (Phase 1.1)
+        Err(BigQueryError::Config(
+            "BigQuery insert_all API call is not yet implemented. Set up real BigQuery API streaming or disable subscriber."
+                .to_string(),
+        ))
     }
 
     async fn validate_table(&self) -> Result<()> {

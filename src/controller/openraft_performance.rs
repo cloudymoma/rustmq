@@ -391,40 +391,13 @@ impl BatchWorker {
         );
     }
 
-    async fn apply_single_operation(&self, data: RustMqAppData) -> RustMqAppDataResponse {
-        // This would integrate with the actual state machine
-        // For now, return a mock response
-        match data {
-            RustMqAppData::CreateTopic { name, .. } => RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(format!("Topic {} created", name)),
-            },
-            RustMqAppData::DeleteTopic { name } => RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(format!("Topic {} deleted", name)),
-            },
-            RustMqAppData::AddBroker { broker } => RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(format!("Broker {} added", broker.id)),
-            },
-            RustMqAppData::RemoveBroker { broker_id } => RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(format!("Broker {} removed", broker_id)),
-            },
-            RustMqAppData::UpdatePartitionAssignment {
-                topic_partition, ..
-            } => RustMqAppDataResponse {
-                success: true,
-                error_message: None,
-                data: Some(format!(
-                    "Partition assignment updated for {}",
-                    topic_partition
-                )),
-            },
+    async fn apply_single_operation(&self, _data: RustMqAppData) -> RustMqAppDataResponse {
+        RustMqAppDataResponse {
+            success: false,
+            error_message: Some(
+                "apply_single_operation not implemented: real state machine integration pending (Phase 3.21)".to_string(),
+            ),
+            data: None,
         }
     }
 
@@ -756,7 +729,7 @@ mod tests {
         let response_rx = batcher.submit_operation(data).await;
         let response = response_rx.await.unwrap();
 
-        assert!(response.success);
+        assert!(!response.success);
 
         batcher.stop().await;
     }

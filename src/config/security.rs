@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 /// Comprehensive security configuration for RustMQ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
+    /// Allow insecure operation (TLS or ACL disabled)
+    #[serde(default)]
+    pub allow_insecure: bool,
     /// TLS/mTLS configuration
     pub tls: TlsConfig,
     /// ACL configuration
@@ -148,6 +151,7 @@ pub struct AuditConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
+            allow_insecure: false,
             tls: TlsConfig::default(),
             acl: AclConfig::default(),
             certificate_management: CertificateManagementConfig::default(),
@@ -159,7 +163,7 @@ impl Default for SecurityConfig {
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {
-            enabled: false, // Disabled by default for development
+            enabled: true, // Enabled by default for Zero-Trust security
             ca_cert_path: "/etc/rustmq/ca.pem".to_string(),
             ca_cert_chain_path: None,
             server_cert_path: "/etc/rustmq/server.pem".to_string(),
@@ -224,6 +228,28 @@ impl Default for AuditConfig {
 impl SecurityConfig {
     /// Validate the security configuration
     pub fn validate(&self) -> crate::Result<()> {
+        if !self.tls.enabled || !self.acl.enabled {
+            let allowed = self.allow_insecure
+                || std::env::var("RUSTMQ_ALLOW_INSECURE")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+                || std::env::args().any(|arg| arg == "--insecure");
+
+            if !allowed {
+                return Err(crate::error::RustMqError::InvalidConfig(
+                    "Refusing startup: TLS and ACL authorization must be enabled. \
+                     To run in insecure mode for testing, pass --insecure, set RUSTMQ_ALLOW_INSECURE=1, or set security.allow_insecure = true."
+                        .to_string(),
+                ));
+            } else {
+                tracing::warn!(
+                    "⚠️  SECURITY WARNING: Running in INSECURE mode! TLS (enabled={}) or ACL (enabled={}) is disabled.",
+                    self.tls.enabled,
+                    self.acl.enabled
+                );
+            }
+        }
+
         self.tls.validate()?;
         self.acl.validate()?;
         self.certificate_management.validate()?;
@@ -382,5 +408,54 @@ impl AuditConfig {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_refuses_disabled_tls_without_allow_insecure() {
+        let mut config = SecurityConfig::default();
+        config.tls.enabled = false;
+        config.allow_insecure = false;
+
+        let res = config.validate();
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("Refusing startup"));
+    }
+
+    #[test]
+    fn test_security_allows_disabled_tls_with_allow_insecure() {
+        let mut config = SecurityConfig::default();
+        config.tls.enabled = false;
+        config.allow_insecure = true;
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_security_refuses_disabled_acl_without_allow_insecure() {
+        let mut config = SecurityConfig::default();
+        config.tls.enabled = true;
+        config.acl.enabled = false;
+        config.allow_insecure = false;
+
+        let res = config.validate();
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("Refusing startup"));
+    }
+
+    #[test]
+    fn test_security_allows_enabled_tls_and_acl() {
+        let mut config = SecurityConfig::default();
+        config.tls.enabled = true;
+        config.acl.enabled = true;
+        config.allow_insecure = false;
+
+        assert!(config.validate().is_ok());
     }
 }

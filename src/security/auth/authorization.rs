@@ -791,7 +791,7 @@ impl BatchedAclFetcher {
 
                         // Process each key in the batch (simplified)
                         for (key, senders) in batch {
-                            let result = true; // Placeholder - would normally check ACL storage
+                            let result = false; // Fail closed by default if ACL storage check is unhandled
                             for sender in senders {
                                 let _ = sender.send(result);
                             }
@@ -882,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result); // Read should be allowed by our simulation
+        assert!(!result); // Read is denied (fail closed) by default when unruled
 
         // Second check should hit L1 cache
         let result2 = auth_mgr

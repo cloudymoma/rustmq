@@ -3,7 +3,7 @@
 [![Build Status](https://github.com/cloudymoma/rustmq/actions/workflows/rust.yml/badge.svg)](https://github.com/cloudymoma/rustmq/actions)
 [![License: BDL 1.0](https://img.shields.io/badge/License-BDL%201.0-red.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/cloudymoma/rustmq)
+[![Version](https://img.shields.io/badge/version-0.9.0--dev-yellow.svg)](https://github.com/cloudymoma/rustmq)
 
 RustMQ is a next-generation, cloud-native distributed message queue system that combines the high-performance characteristics of Apache Kafka with the cost-effectiveness and operational simplicity of modern cloud architectures. Built from the ground up in Rust, RustMQ leverages a shared-storage architecture that decouples compute from storage, enabling unprecedented elasticity, cost savings, and operational efficiency.
 
@@ -66,12 +66,12 @@ RustMQ implements a **storage-compute separation architecture** with stateless b
 
 The diagram above illustrates RustMQ's enhanced layered architecture with enterprise security:
 
-- **🔵 Client Layer** - Production-ready SDKs (Rust, Go) with mTLS support and comprehensive admin CLI with complete security management suite
+- **🔵 Client Layer** - Client SDKs (Rust, Go) with mTLS support and admin CLI for security and cluster management
 - **🟡 Enterprise Security Layer** - Zero Trust architecture with mTLS authentication, multi-level ACL cache (547ns/1310ns/754ns), certificate management, and 2M+ ops/sec authorization capacity
 - **🟢 Broker Cluster** - Stateless compute nodes with MessageBrokerCore, enhanced QUIC/gRPC servers featuring circuit breaker patterns, connection pooling, and real-time health monitoring
 - **🟠 Tiered Storage** - Durability-only segmented WAL (append + sequential recovery; O_DIRECT active segment), a memory-bounded in-memory hot serving tier (byte budget + append backpressure), background tiering with small-object compaction, a durable broker-local cold index for restart/failover, and object storage with bandwidth limiting + object-level epoch fencing (split-brain safety)
 - **🟣 Controller Cluster** - Raft consensus with distributed ACL storage, metadata management, cluster coordination, and comprehensive admin REST API with advanced rate limiting
-- **🔴 Operational Layer** - Production-ready operations with zero-downtime rolling upgrades, automated scaling with partition rebalancing, consumer group coordination, and Kubernetes integration with volume recovery
+- **🔴 Operational Layer** - Cluster operations with rolling upgrades, automated scaling with partition rebalancing, consumer group coordination, and Kubernetes integration with volume recovery
 - **🟦 Integration Layer** - WebAssembly ETL processing with sandboxing, BigQuery streaming with schema mapping, and comprehensive monitoring infrastructure
 
 ### Data Flow Patterns
@@ -195,7 +195,7 @@ cargo test --release
 
 ### Client SDK Usage
 
-#### Rust SDK (Production-Ready)
+#### Rust SDK
 ```bash
 cd sdk/rust
 
@@ -209,7 +209,7 @@ cargo run --example secure_consumer
 cargo run --example token_authentication
 ```
 
-#### Go SDK (Production-Ready)
+#### Go SDK
 ```bash
 cd sdk/go
 
