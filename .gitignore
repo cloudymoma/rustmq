@@ -63,3 +63,6 @@ sdk/go/admin_api_example
 
 .jetskicli
 .codegraph
+
+# https://github.com/Graphify-Labs/graphify
+graphify-out/
